@@ -7,6 +7,7 @@
 - 已更新 `src/lib/instance-account-policy.js`、`src/server.js`、`src/desktop/main.js`、`src/public/app.js`、A-D 启动脚本和相关 UI/策略测试；新增 `src/instance-startup.test.js` 验证四脚本隔离元组。
 - 当前代码验证：`node --check`（受影响 JS）通过；`node --test --test-concurrency=1 instance-startup.test.js public/workbench-ui.test.js` 为 506 项、505 通过、1 跳过、0 失败。未启动 B/C/D，未登录、迁移 Cookie 或发送 GPT 请求；四窗口真实桌面验收仍待后续安全安排。
 - 项目内独立 Git 仓库与四个 worktree 的建立在本轮文档/静态检查完成后执行；父级 `D:\AICode\工具开发` 的 `experiments\dashi-upstream-original\` 未触碰。
+- 已实际建立项目内独立 Git 仓库 `main @ a4cf5bd` 及四个 worktree：`D:\AICode\工具开发\content-production-app-instances\A` 至 `D`，对应支线 `instance-a-account-1` 至 `instance-d-account-4`；四个 worktree 的 `src\node_modules` 通过 Junction 指向主项目的可重建依赖目录，运行/登录/任务状态不共享。
 
 # 2026-08-28 / 内容生产 B 预览保护补全与运行复核
 
