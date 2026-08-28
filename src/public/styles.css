@@ -14077,10 +14077,26 @@ button {
 
 .rail-brand {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 34px 34px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 0 4px 18px;
+}
+
+.content-instance-badge {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--line));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+  color: var(--accent);
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--accent) 16%, transparent);
+  font-size: 18px;
+  font-weight: 850;
+  line-height: 1;
+  user-select: none;
 }
 
 .rail-brand-copy {
@@ -14186,11 +14202,18 @@ body.rail-collapsed .workflow-rail {
 }
 
 body.rail-collapsed .rail-brand {
-  grid-template-columns: 1fr;
+  grid-template-columns: 24px 24px;
   justify-items: center;
   gap: 0;
   padding-left: 0;
   padding-right: 0;
+}
+
+body.rail-collapsed .rail-collapse-button,
+body.rail-collapsed .content-instance-badge {
+  width: 24px;
+  height: 30px;
+  border-radius: 8px;
 }
 
 body.rail-collapsed .rail-brand-copy,

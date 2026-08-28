@@ -5341,6 +5341,24 @@ function contentInstanceDisplayLabel() {
   return accountIds?.size ? `${instanceLabel} · ${[...accountIds].join("、")}` : instanceLabel;
 }
 
+function applyContentInstanceIdentity() {
+  const instance = contentInstanceId() || "?";
+  const accountId = CONTENT_INSTANCE_ACCOUNT_BY_ID[instance] || [...(contentInstanceAccountIds() || [])][0] || "";
+  const appName = `内容生产 ${instance}`;
+  const badge = document.getElementById("contentInstanceBadge");
+  const brand = document.getElementById("contentInstanceBrand");
+  const title = document.getElementById("contentInstanceTitle");
+  if (badge) {
+    badge.textContent = instance;
+    badge.setAttribute("aria-label", `${appName}，${accountId || "未绑定账号"}`);
+    badge.title = `${appName} · ${accountId || "未绑定账号"}`;
+  }
+  if (brand) brand.textContent = appName;
+  if (title) title.textContent = appName;
+  document.title = accountId ? `${appName} · ${accountId}` : appName;
+  document.body.dataset.contentInstance = instance;
+}
+
 function filterContentInstanceAccounts(accounts = []) {
   const assigned = contentInstanceAccountIds();
   if (!assigned) return accounts;
@@ -32086,10 +32104,12 @@ window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change"
   applyTheme(event.matches ? "midnight" : "neo", { persist: false });
 });
 startContentInstanceServiceStatusMonitor();
+applyContentInstanceIdentity();
 reconcileRuntimeVersion()
   .then((reloaded) => reloaded ? null : loadDashboard())
   .then(async () => {
     if (!dashboard) return;
+    applyContentInstanceIdentity();
     await hydrateGptBrowserProfiles();
     const runtimeReconciliation = await reconcileGptRuntimeState();
     const adoptedRuntimeQueueTasks = adoptGptRuntimeQueueIntoWindowWorkers(runtimeReconciliation?.state);
