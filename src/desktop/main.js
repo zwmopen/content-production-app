@@ -84,7 +84,7 @@ const APP_URL = `http://127.0.0.1:${APP_PORT}/`;
 // the account instead of deferring forever behind the pending request.
 const GPT_PRE_SUBMIT_DISPATCH_GRACE_MS = 180_000;
 const RUNTIME_ROOT = process.env.TEAMBUILDING_DASHBOARD_RUNTIME || DEFAULT_INSTANCE_RUNTIME;
-const APP_TITLE = `内容生产 · ${CONTENT_INSTANCE_LABEL}`;
+const APP_TITLE = `内容生产 ${CONTENT_INSTANCE_ID} · ${String(process.env.CONTENT_ACCOUNT_IDS || INSTANCE_CONFIG.defaultAccountId || "").trim()}`;
 const ASSIGNED_ACCOUNT_IDS = new Set(
   resolveAssignedAccountIds(CONTENT_INSTANCE_ID, process.env.CONTENT_ACCOUNT_IDS, { contentOnlyMode: CONTENT_ONLY_MODE })
 );
@@ -4513,6 +4513,10 @@ async function createWindow() {
     }
   });
   mainWindow = window;
+  window.on("page-title-updated", (event) => {
+    event.preventDefault();
+    window.setTitle(APP_TITLE);
+  });
   window.on("minimize", () => {
     hideAllGptViews();
     hideOnlinePlatformViews();
