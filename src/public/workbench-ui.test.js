@@ -3862,6 +3862,18 @@ test("GPT production attachments use the exact Electron WebContents native file 
   assert.doesNotMatch(nativeBranch, /new DataTransfer|loadFiles\(|dispatchEvent\(/);
 });
 
+test("content production instances expose a permanent A-D identity badge and native window title", () => {
+  assert.match(html, /id="contentInstanceBadge"/);
+  assert.match(html, /id="contentInstanceBrand"/);
+  assert.match(html, /id="contentInstanceTitle"/);
+  assert.match(css, /\.content-instance-badge/);
+  assert.match(app, /function applyContentInstanceIdentity\(\)/);
+  assert.match(app, /document\.body\.dataset\.contentInstance = instance/);
+  assert.match(desktopMain, /const APP_TITLE = `内容生产 \$\{CONTENT_INSTANCE_ID\}/);
+  assert.match(desktopMain, /page-title-updated/);
+  assert.match(desktopMain, /window\.setTitle\(APP_TITLE\)/);
+});
+
 test("scheduled web cache cleanup never clears GPT production partitions", () => {
   assert.match(desktopMain, /async function clearReproducibleWebCaches\(reason = "manual", options = \{\}\)/);
   assert.match(desktopMain, /const includeGpt = options\.includeGpt !== false/);

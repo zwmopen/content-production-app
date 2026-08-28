@@ -19,8 +19,9 @@
           <button class="rail-collapse-button" id="railCollapseBtn" type="button" aria-label="收起侧边栏" aria-controls="workflowRail" aria-expanded="true" title="收起侧边栏">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>
+          <div class="content-instance-badge" id="contentInstanceBadge" aria-label="当前内容生产实例">?</div>
           <div class="rail-brand-copy">
-            <strong>内容生产</strong>
+            <strong id="contentInstanceBrand">内容生产</strong>
             <span>素材库 · 采集 · 预览 · 整理</span>
           </div>
         </div>
@@ -76,7 +77,7 @@
       </nav>
       <header class="topbar glass">
         <section>
-          <h1>内容生产</h1>
+          <h1 id="contentInstanceTitle">内容生产</h1>
           <div class="subtitle">素材采集 · 本地预览 · 技能整理 · 可追溯维护</div>
         </section>
         <div class="topbar-status" id="localTopbarStatus" data-service-status="unknown" aria-live="polite"><span class="status-dot"></span><span>本地已连接</span></div>
