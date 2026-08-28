@@ -1,0 +1,184 @@
+{
+  "_meta": {
+    "description": "工作流环节分发测试数据 v0.14.52 — 覆盖分离模式、合并模式、工具步骤、检测模块、时间控制",
+    "version": "0.14.52",
+    "created": "2026-08-06",
+    "usage": "通过 test-workflow-runner.html 加载此文件，或在应用 DevTools Console 中执行 inject-test-data.js 导入"
+  },
+
+  "profiles": {
+
+    "separated-archive": {
+      "name": "分离归档模式（测试）",
+      "description": "save-text → download-images → move-archive 三步独立归档，验证 handleArchive 按 action 分发",
+      "useCurrentSession": true,
+      "confirmText": "1",
+      "copyPrompt": "给我一份小红书文案",
+      "steps": [
+        { "action": "upload-material", "text": "请读取全部附件，先输出逐页迁移计划，等待我回复 1。", "timeoutSeconds": 120, "enabled": true, "autoDetect": true },
+        { "action": "wait-random", "text": "", "enabled": true, "minSeconds": 2, "maxSeconds": 5 },
+        { "action": "wait-plan", "text": "", "timeoutSeconds": 480, "enabled": true, "autoDetect": true, "quietSeconds": 8, "keywordPattern": "迁移计划|逐页|P\\s*1" },
+        { "action": "send-confirm", "text": "1", "timeoutSeconds": 20, "enabled": true, "autoDetect": false },
+        { "action": "wait-random", "text": "", "enabled": true, "minSeconds": 1, "maxSeconds": 3 },
+        { "action": "wait-images", "text": "", "timeoutSeconds": 900, "enabled": true, "autoDetect": true, "minImages": 4, "quietSeconds": 3, "keywordPattern": "出图完毕|图片完成" },
+        { "action": "request-copy", "text": "给我一份小红书文案", "timeoutSeconds": 20, "enabled": true, "autoDetect": false },
+        { "action": "wait-random", "text": "", "enabled": true, "minSeconds": 1, "maxSeconds": 3 },
+        { "action": "wait-copy", "text": "", "timeoutSeconds": 480, "enabled": true, "autoDetect": true, "minCopyLength": 300, "quietSeconds": 3, "keywordPattern": "文案完成|文案已完成" },
+        { "action": "save-text", "text": "", "timeoutSeconds": 60, "enabled": true, "autoDetect": true },
+        { "action": "download-images", "text": "", "timeoutSeconds": 600, "enabled": true, "autoDetect": true },
+        { "action": "move-archive", "text": "", "timeoutSeconds": 120, "enabled": true, "autoDetect": false }
+      ]
+    },
+
+    "combined-archive": {
+      "name": "合并归档模式（测试）",
+      "description": "package-archive 一步完成保存+下载+打包，验证 handleArchive 合并分支",
+      "useCurrentSession": true,
+      "confirmText": "1",
+      "copyPrompt": "给我一份小红书文案",
+      "steps": [
+        { "action": "upload-material", "text": "请读取全部附件，先输出逐页迁移计划，等待我回复 1。", "timeoutSeconds": 120, "enabled": true, "autoDetect": true },
+        { "action": "wait-plan", "text": "", "timeoutSeconds": 480, "enabled": true, "autoDetect": true, "quietSeconds": 8 },
+        { "action": "send-confirm", "text": "1", "timeoutSeconds": 20, "enabled": true, "autoDetect": false },
+        { "action": "wait-images", "text": "", "timeoutSeconds": 900, "enabled": true, "autoDetect": true, "minImages": 4 },
+        { "action": "request-copy", "text": "给我一份小红书文案", "timeoutSeconds": 20, "enabled": true, "autoDetect": false },
+        { "action": "wait-copy", "text": "", "timeoutSeconds": 480, "enabled": true, "autoDetect": true, "minCopyLength": 300 },
+        { "action": "package-archive", "text": "", "timeoutSeconds": 600, "enabled": true, "autoDetect": false }
+      ]
+    },
+
+    "mixed-utility-steps": {
+      "name": "混合工具步骤（测试）",
+      "description": "在主流程中穿插 wait-fixed / send-text / clipboard-copy / detect-* / time-window / retry，验证 executeUtilityStep 分发",
+      "useCurrentSession": true,
+      "confirmText": "1",
+      "copyPrompt": "给我一份小红书文案",
+      "steps": [
+        { "action": "time-window", "text": "", "enabled": true, "timeStart": "00:00", "timeEnd": "23:59" },
+        { "action": "upload-material", "text": "请读取全部附件，先输出逐页迁移计划。", "timeoutSeconds": 120, "enabled": true, "autoDetect": true },
+        { "action": "wait-fixed", "text": "", "timeoutSeconds": 3, "enabled": true },
+        { "action": "detect-plan", "text": "", "enabled": true, "pattern": "迁移计划|逐页|P\\s*1" },
+        { "action": "wait-plan", "text": "", "timeoutSeconds": 480, "enabled": true, "autoDetect": true },
+        { "action": "send-text", "text": "好的，请继续出图", "enabled": true },
+        { "action": "send-confirm", "text": "1", "timeoutSeconds": 20, "enabled": true, "autoDetect": false },
+        { "action": "wait-random", "text": "", "enabled": true, "minSeconds": 2, "maxSeconds": 6 },
+        { "action": "detect-generating", "text": "", "enabled": true },
+        { "action": "wait-images", "text": "", "timeoutSeconds": 900, "enabled": true, "autoDetect": true, "minImages": 4 },
+        { "action": "detect-images", "text": "", "enabled": true, "minImages": 1 },
+        { "action": "request-copy", "text": "给我一份小红书文案", "timeoutSeconds": 20, "enabled": true, "autoDetect": false },
+        { "action": "wait-copy", "text": "", "timeoutSeconds": 480, "enabled": true, "autoDetect": true, "minCopyLength": 300 },
+        { "action": "detect-copy", "text": "", "enabled": true, "minCopyLength": 100 },
+        { "action": "clipboard-copy", "text": "", "enabled": true },
+        { "action": "retry", "text": "", "timeoutSeconds": 60, "enabled": true, "retryEnabled": true, "retryCount": 3, "retryDelayMin": 120, "retryDelayMax": 300 },
+        { "action": "save-text", "text": "", "timeoutSeconds": 60, "enabled": true, "autoDetect": true },
+        { "action": "download-images", "text": "", "timeoutSeconds": 600, "enabled": true, "autoDetect": true },
+        { "action": "move-archive", "text": "", "timeoutSeconds": 120, "enabled": true, "autoDetect": false }
+      ]
+    },
+
+    "partial-disabled": {
+      "name": "部分禁用步骤（测试）",
+      "description": "禁用 request-copy 和 wait-copy，仅出图+下载+归档，验证 wfEnabled 跳过逻辑",
+      "useCurrentSession": true,
+      "confirmText": "1",
+      "copyPrompt": "给我一份小红书文案",
+      "steps": [
+        { "action": "upload-material", "text": "请读取全部附件，先输出逐页迁移计划。", "timeoutSeconds": 120, "enabled": true, "autoDetect": true },
+        { "action": "wait-plan", "text": "", "timeoutSeconds": 480, "enabled": true, "autoDetect": true },
+        { "action": "send-confirm", "text": "1", "timeoutSeconds": 20, "enabled": true, "autoDetect": false },
+        { "action": "wait-images", "text": "", "timeoutSeconds": 900, "enabled": true, "autoDetect": true, "minImages": 4 },
+        { "action": "request-copy", "text": "给我一份小红书文案", "timeoutSeconds": 20, "enabled": false, "autoDetect": false },
+        { "action": "wait-copy", "text": "", "timeoutSeconds": 480, "enabled": false, "autoDetect": true },
+        { "action": "save-text", "text": "", "timeoutSeconds": 60, "enabled": false, "autoDetect": true },
+        { "action": "download-images", "text": "", "timeoutSeconds": 600, "enabled": true, "autoDetect": true },
+        { "action": "move-archive", "text": "", "timeoutSeconds": 120, "enabled": true, "autoDetect": false }
+      ]
+    },
+
+    "combined-with-autopackage-off": {
+      "name": "合并模式+关闭自动打包（测试）",
+      "description": "package-archive 启用但 autoPackage=false，验证 earlyReturn 分支",
+      "useCurrentSession": true,
+      "confirmText": "1",
+      "copyPrompt": "给我一份小红书文案",
+      "autoPackage": false,
+      "steps": [
+        { "action": "upload-material", "text": "请读取全部附件，先输出逐页迁移计划。", "timeoutSeconds": 120, "enabled": true, "autoDetect": true },
+        { "action": "wait-plan", "text": "", "timeoutSeconds": 480, "enabled": true, "autoDetect": true },
+        { "action": "send-confirm", "text": "1", "timeoutSeconds": 20, "enabled": true, "autoDetect": false },
+        { "action": "wait-images", "text": "", "timeoutSeconds": 900, "enabled": true, "autoDetect": true, "minImages": 4 },
+        { "action": "request-copy", "text": "给我一份小红书文案", "timeoutSeconds": 20, "enabled": true, "autoDetect": false },
+        { "action": "wait-copy", "text": "", "timeoutSeconds": 480, "enabled": true, "autoDetect": true, "minCopyLength": 300 },
+        { "action": "package-archive", "text": "", "timeoutSeconds": 600, "enabled": true, "autoDetect": false }
+      ]
+    }
+
+  },
+
+  "expectedDispatchOrder": {
+    "separated-archive": [
+      "upload-material → handleUploadMaterial",
+      "wait-random → executeUtilityStep (随机等待)",
+      "wait-plan → handleWaitPlan",
+      "send-confirm → handleSendConfirm",
+      "wait-random → executeUtilityStep (随机等待)",
+      "wait-images → handleWaitImages",
+      "request-copy → handleRequestCopy",
+      "wait-random → executeUtilityStep (随机等待)",
+      "wait-copy → handleWaitCopy",
+      "save-text → handleArchive(step) [action=save-text]",
+      "download-images → handleArchive(step) [action=download-images]",
+      "move-archive → handleArchive(step) [action=move-archive → archivePackageReply]"
+    ],
+    "combined-archive": [
+      "upload-material → handleUploadMaterial",
+      "wait-plan → handleWaitPlan",
+      "send-confirm → handleSendConfirm",
+      "wait-images → handleWaitImages",
+      "request-copy → handleRequestCopy",
+      "wait-copy → handleWaitCopy",
+      "package-archive → handleArchive(step) [action=package-archive → save TXT + download + archivePackageReply]"
+    ],
+    "mixed-utility-steps": [
+      "time-window → executeUtilityStep (时间窗口检查)",
+      "upload-material → handleUploadMaterial",
+      "wait-fixed → executeUtilityStep (固定等待 3s)",
+      "detect-plan → executeUtilityStep (瞬间检测计划)",
+      "wait-plan → handleWaitPlan",
+      "send-text → executeUtilityStep (发送文字)",
+      "send-confirm → handleSendConfirm",
+      "wait-random → executeUtilityStep (随机等待 2-6s)",
+      "detect-generating → executeUtilityStep (检测GPT生成中)",
+      "wait-images → handleWaitImages",
+      "detect-images → executeUtilityStep (瞬间检测图片)",
+      "request-copy → handleRequestCopy",
+      "wait-copy → handleWaitCopy",
+      "detect-copy → executeUtilityStep (瞬间检测文案)",
+      "clipboard-copy → executeUtilityStep (复制到剪贴板)",
+      "retry → executeUtilityStep (重试配置)",
+      "save-text → handleArchive(step) [action=save-text]",
+      "download-images → handleArchive(step) [action=download-images]",
+      "move-archive → handleArchive(step) [action=move-archive → archivePackageReply]"
+    ],
+    "partial-disabled": [
+      "upload-material → handleUploadMaterial",
+      "wait-plan → handleWaitPlan",
+      "send-confirm → handleSendConfirm",
+      "wait-images → handleWaitImages",
+      "request-copy → 跳过 (enabled=false)",
+      "wait-copy → 跳过 (enabled=false)",
+      "save-text → 跳过 (enabled=false)",
+      "download-images → handleArchive(step) [action=download-images]",
+      "move-archive → handleArchive(step) [action=move-archive → archivePackageReply]"
+    ],
+    "combined-with-autopackage-off": [
+      "upload-material → handleUploadMaterial",
+      "wait-plan → handleWaitPlan",
+      "send-confirm → handleSendConfirm",
+      "wait-images → handleWaitImages",
+      "request-copy → handleRequestCopy",
+      "wait-copy → handleWaitCopy",
+      "package-archive → handleArchive(step) [action=package-archive → earlyReturn: packageSkipped=true]"
+    ]
+  }
+}

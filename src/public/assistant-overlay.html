@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>小猫助手</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bubble-bg: rgba(255, 255, 255, .97);
+      --bubble-fg: #1d302b;
+      --bubble-border: #d7e1e8;
+      --bubble-shadow: 0 14px 32px rgba(26, 52, 44, .16);
+      --menu-bg: rgba(255, 255, 255, .98);
+      --menu-fg: #243832;
+      --menu-hover: rgba(70, 112, 98, .1);
+      --cat-shadow: rgba(20, 32, 28, .25);
+      --scroll-thumb: rgba(71, 101, 91, .28);
+    }
+    :root[data-theme="midnight"],
+    :root[data-theme="midnight-glass"] {
+      color-scheme: dark;
+      --bubble-bg: rgba(14, 31, 43, .96);
+      --bubble-fg: #e9f2f7;
+      --bubble-border: rgba(161, 193, 211, .24);
+      --bubble-shadow: 0 16px 36px rgba(0, 7, 12, .42);
+      --menu-bg: rgba(12, 27, 38, .98);
+      --menu-fg: #edf5f8;
+      --menu-hover: rgba(196, 222, 235, .12);
+      --cat-shadow: rgba(0, 6, 10, .48);
+      --scroll-thumb: rgba(183, 210, 224, .3);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; font-family: "Microsoft YaHei UI", sans-serif; }
+    .dock { position: relative; display: flex; align-items: flex-start; justify-content: flex-end; width: 100%; height: 100%; padding: 37px 4px 10px 8px; pointer-events: none; }
+    :root[data-side="right"] .dock { justify-content: flex-start; padding: 37px 8px 10px 4px; }
+    .bubble { position: relative; width: 348px; max-height: 166px; margin-right: 2px; overflow: visible; color: var(--bubble-fg); border: 1px solid var(--bubble-border); border-radius: 20px; background: var(--bubble-bg); box-shadow: var(--bubble-shadow); pointer-events: auto; }
+    :root[data-side="right"] .bubble { order: 2; margin-right: 0; margin-left: 2px; }
+    .bubble::after { content: ""; position: absolute; right: -7px; top: 50%; width: 13px; height: 13px; background: var(--bubble-bg); border-top: 1px solid var(--bubble-border); border-right: 1px solid var(--bubble-border); transform: translateY(-50%) rotate(45deg); }
+    .bubble::before { content: ""; position: absolute; left: -7px; top: 50%; display: none; width: 13px; height: 13px; background: var(--bubble-bg); border-left: 1px solid var(--bubble-border); border-bottom: 1px solid var(--bubble-border); transform: translateY(-50%) rotate(45deg); }
+    :root[data-side="right"] .bubble::after { display: none; }
+    :root[data-side="right"] .bubble::before { display: block; }
+    .message { max-height: 162px; overflow-y: auto; overflow-x: hidden; padding: 13px 15px; font-size: 13px; line-height: 1.55; scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; user-select: text; }
+    .cat { width: 96px; height: 116px; padding: 0; border: 0; background: transparent; cursor: grab; touch-action: none; pointer-events: auto; }
+    :root[data-side="right"] .cat { order: 1; }
+    .cat:active { cursor: grabbing; }
+    .cat-figure { position: relative; display: block; width: 100%; height: 100%; animation: bounce 4.8s ease-in-out infinite; }
+    .cat-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; backface-visibility: hidden; pointer-events: none; }
+    .cat-body { clip-path: inset(66% 0 0 0); filter: drop-shadow(0 10px 14px var(--cat-shadow)); }
+    .cat-head { clip-path: inset(0 0 33% 0); transform-origin: 50% 63%; transform: translate(var(--head-x, 0px), var(--head-y, 0px)) rotate(var(--head-angle, 0deg)); transition: transform 140ms cubic-bezier(.2,.75,.25,1); will-change: transform; filter: drop-shadow(0 5px 8px var(--cat-shadow)); }
+    @keyframes bounce { 0%,100%{transform:translateY(0) rotate(0deg)} 25%{transform:translateY(-1px) rotate(-.6deg)} 50%{transform:translateY(-2px) rotate(0deg)} 75%{transform:translateY(-1px) rotate(.6deg)} }
+    .menu { position: absolute; z-index: 5; left: 30px; top: 8px; display: grid; width: 318px; gap: 8px; padding: 14px; color: var(--menu-fg); border: 1px solid var(--bubble-border); border-radius: 16px; background: var(--menu-bg); box-shadow: var(--bubble-shadow); pointer-events: auto; }
+    :root[data-side="right"] .menu { left: 108px; }
+    .menu[hidden], .dock[hidden] { display: none; }
+    .menu h2 { margin: 0; font-size: 15px; }
+    .menu p { margin: 0 0 2px; opacity: .7; font-size: 11px; line-height: 1.45; }
+    .menu label { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+    .menu label input[type="number"] { width: 70px; padding: 5px 7px; color: var(--menu-fg); border: 1px solid var(--bubble-border); border-radius: 7px; background: transparent; }
+    .menu-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 3px; }
+    .menu button { padding: 7px 10px; color: var(--menu-fg); border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+    .menu button:hover { background: var(--menu-hover); }
+  </style>
+</head>
+<body>
+  <main class="dock" id="dock">
+    <section class="bubble" id="bubble"><div class="message" id="message">图文工作台已就绪</div></section>
+    <button class="cat" id="cat" type="button" aria-label="打开小猫助手"><span class="cat-figure"><img class="cat-layer cat-body" src="assets/assistant-black-cat-v3.png" alt="" /><img class="cat-layer cat-head" src="assets/assistant-black-cat-v3.png" alt="" /></span></button>
+    <div class="menu" id="menu" hidden>
+      <h2>小猫与通知</h2>
+      <p>当前界面重点显示；其他界面只作短提醒。六边形项链会完整跟随头颈层。</p>
+      <label><span>显示通知</span><input id="menuNotificationsEnabled" type="checkbox" checked /></label>
+      <label><span>保持气泡打开</span><input id="menuBubblePinned" type="checkbox" checked /></label>
+      <label><span>动态跟随</span><input id="menuMotionEnabled" type="checkbox" checked /></label>
+      <label><span>脱离工作台显示</span><input id="menuDetached" type="checkbox" /></label>
+      <label><span>脱离后始终置顶</span><input id="menuAlwaysOnTop" type="checkbox" disabled /></label>
+      <label><span>当前界面（秒）</span><input id="menuCurrentSeconds" type="number" min="1" max="30" value="9" /></label>
+      <label><span>其他界面（秒）</span><input id="menuOtherSeconds" type="number" min="1" max="30" value="3" /></label>
+      <label><span>其他界面每批最多</span><input id="menuOtherMax" type="number" min="0" max="5" value="1" /></label>
+      <div class="menu-actions"><button id="openFullSettings" type="button">完整设置</button><button id="hideCat" type="button">隐藏小猫</button><button id="saveSettings" type="button">保存</button></div>
+    </div>
+  </main>
+  <script>
+    const dock = document.getElementById("dock");
+    const bubble = document.getElementById("bubble");
+    const message = document.getElementById("message");
+    const cat = document.getElementById("cat");
+    const menu = document.getElementById("menu");
+    let drag = null;
+    let suppressClickUntil = 0;
+    let settings = {};
+    window.assistantOverlay?.onState((state) => {
+      settings = state.settings || settings;
+      dock.hidden = state.catVisible === false;
+      bubble.hidden = state.bubbleVisible === false;
+      document.documentElement.dataset.theme = state.theme || "neo";
+      document.documentElement.dataset.side = state.dockSide === "right" ? "right" : "left";
+      const cursorX = state.settings?.motionEnabled === false ? 0 : Number(state.cursorX || 0);
+      const cursorY = state.settings?.motionEnabled === false ? 0 : Number(state.cursorY || 0);
+      document.documentElement.style.setProperty("--head-x", `${(cursorX * 1.8).toFixed(2)}px`);
+      document.documentElement.style.setProperty("--head-y", `${(cursorY * .8).toFixed(2)}px`);
+      document.documentElement.style.setProperty("--head-angle", `${(cursorX * 3).toFixed(2)}deg`);
+      document.getElementById("menuNotificationsEnabled").checked = settings.notificationsEnabled !== false;
+      document.getElementById("menuBubblePinned").checked = settings.bubblePinned !== false;
+      document.getElementById("menuMotionEnabled").checked = settings.motionEnabled !== false;
+      document.getElementById("menuDetached").checked = settings.detached === true;
+      document.getElementById("menuAlwaysOnTop").checked = settings.alwaysOnTop === true;
+      document.getElementById("menuAlwaysOnTop").disabled = settings.detached !== true;
+      document.getElementById("menuCurrentSeconds").value = String(Number(settings.currentDurationMs || 9000) / 1000);
+      document.getElementById("menuOtherSeconds").value = String(Number(settings.otherDurationMs || 3000) / 1000);
+      document.getElementById("menuOtherMax").value = String(Number(settings.otherMaxPerBatch ?? 1));
+      if (state.message) message.textContent = state.message;
+    });
+    cat.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      drag = { id: event.pointerId, x: event.screenX, y: event.screenY, moved: false };
+      cat.setPointerCapture?.(event.pointerId);
+    });
+    cat.addEventListener("pointermove", (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      const dx = event.screenX - drag.x;
+      const dy = event.screenY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+      drag.moved = true;
+      drag.x = event.screenX;
+      drag.y = event.screenY;
+      window.assistantOverlay?.move(dx, dy);
+    });
+    cat.addEventListener("pointerup", (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      if (drag.moved) suppressClickUntil = Date.now() + 350;
+      drag = null;
+    });
+    cat.addEventListener("dblclick", () => {
+      if (Date.now() < suppressClickUntil) return;
+      window.assistantOverlay?.action({ type: "chat" });
+    });
+    bubble.addEventListener("click", (event) => event.preventDefault());
+    function openMenu(event) {
+      event.preventDefault();
+      menu.hidden = false;
+    }
+    cat.addEventListener("contextmenu", openMenu);
+    bubble.addEventListener("contextmenu", openMenu);
+    document.getElementById("saveSettings").addEventListener("click", () => {
+      menu.hidden = true;
+      window.assistantOverlay?.action({ type: "settings-update", settings: {
+        notificationsEnabled: document.getElementById("menuNotificationsEnabled").checked,
+        bubblePinned: document.getElementById("menuBubblePinned").checked,
+        motionEnabled: document.getElementById("menuMotionEnabled").checked,
+        detached: document.getElementById("menuDetached").checked,
+        alwaysOnTop: document.getElementById("menuAlwaysOnTop").checked,
+        currentDurationMs: Number(document.getElementById("menuCurrentSeconds").value || 9) * 1000,
+        otherDurationMs: Number(document.getElementById("menuOtherSeconds").value || 3) * 1000,
+        otherMaxPerBatch: Number(document.getElementById("menuOtherMax").value || 0)
+      } });
+    });
+    document.getElementById("menuDetached").addEventListener("change", (event) => {
+      const alwaysOnTop = document.getElementById("menuAlwaysOnTop");
+      alwaysOnTop.disabled = !event.currentTarget.checked;
+      if (!event.currentTarget.checked) alwaysOnTop.checked = false;
+    });
+    document.getElementById("hideCat").addEventListener("click", () => window.assistantOverlay?.action({ type: "settings-update", settings: { catVisible: false } }));
+    document.getElementById("openFullSettings").addEventListener("click", () => {
+      menu.hidden = true;
+      window.assistantOverlay?.action({ type: "open-settings" });
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (!menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+    });
+
+    // 透明区域点击穿透：鼠标进入小猫/气泡/菜单时通知主进程恢复鼠标事件，离开时恢复穿透
+    const interactiveEls = [cat, bubble, menu];
+    for (const el of interactiveEls) {
+      el.addEventListener("mouseenter", () => window.assistantOverlay?.setIgnoreMouseEvents(false));
+      el.addEventListener("mouseleave", () => window.assistantOverlay?.setIgnoreMouseEvents(true));
+    }
+    // 菜单显示时也需要恢复鼠标事件
+    const menuObserver = new MutationObserver(() => {
+      if (!menu.hidden) window.assistantOverlay?.setIgnoreMouseEvents(false);
+    });
+    menuObserver.observe(menu, { attributes: true, attributeFilter: ["hidden"] });
+  </script>
+</body>
+</html>

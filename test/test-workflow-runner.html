@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>工作流分发测试 — v0.14.52</title>
+<style>
+  :root {
+    --bg: #0f1419; --card: #1a2332; --border: rgba(255,255,255,.08);
+    --ink: #e8f1f2; --muted: #8ea0a8; --accent: #4a9eff;
+    --green: #47a17e; --red: #e25555; --yellow: #d4a843; --purple: #9b7dff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--ink); padding: 20px; line-height: 1.5; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  .layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; max-width: 1200px; }
+  .sidebar { display: flex; flex-direction: column; gap: 8px; }
+  .profile-card { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); cursor: pointer; transition: border-color .15s; }
+  .profile-card:hover { border-color: var(--accent); }
+  .profile-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .profile-card b { font-size: 13px; display: block; margin-bottom: 3px; }
+  .profile-card small { color: var(--muted); font-size: 10px; line-height: 1.4; display: block; }
+  .profile-card .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; margin-top: 5px; }
+  .badge-separated { background: rgba(74,158,255,.15); color: var(--accent); }
+  .badge-combined { background: rgba(155,125,255,.15); color: var(--purple); }
+  .badge-mixed { background: rgba(71,161,126,.15); color: var(--green); }
+  .badge-partial { background: rgba(226,85,85,.15); color: var(--red); }
+
+  .main-panel { display: flex; flex-direction: column; gap: 16px; }
+  .section { border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; }
+  .section-header { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .section-header .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .section-body { padding: 10px 14px; }
+
+  .steps-list { display: flex; flex-direction: column; gap: 4px; }
+  .step-row { display: grid; grid-template-columns: 28px 120px 1fr auto; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px; font-size: 12px; transition: background .2s; }
+  .step-row:hover { background: rgba(255,255,255,.03); }
+  .step-row.skipped { opacity: .4; }
+  .step-row.executing { background: rgba(74,158,255,.08); box-shadow: inset 2px 0 0 var(--accent); }
+  .step-row.done { background: rgba(71,161,126,.06); }
+  .step-num { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; font-size: 10px; font-weight: 800; color: var(--muted); background: rgba(255,255,255,.05); }
+  .step-row.done .step-num { color: var(--green); background: rgba(71,161,126,.12); }
+  .step-row.skipped .step-num { color: var(--red); background: rgba(226,85,85,.08); }
+  .step-action { font-family: ui-monospace, monospace; font-size: 11px; color: var(--accent); }
+  .step-route { font-size: 11px; color: var(--muted); }
+  .step-route .handler { color: var(--yellow); }
+  .step-route .utility { color: var(--purple); }
+  .step-route .skip { color: var(--red); }
+  .step-status { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 700; }
+  .status-pending { background: rgba(255,255,255,.05); color: var(--muted); }
+  .status-executing { background: rgba(74,158,255,.15); color: var(--accent); }
+  .status-done { background: rgba(71,161,126,.15); color: var(--green); }
+  .status-skipped { background: rgba(226,85,85,.1); color: var(--red); }
+
+  .btn { padding: 8px 16px; border: 0; border-radius: 8px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; transition: all .15s; }
+  .btn-primary { color: #fff; background: var(--accent); }
+  .btn-primary:hover { background: #3a8eef; }
+  .btn-secondary { color: var(--ink); background: rgba(255,255,255,.06); }
+  .btn-secondary:hover { background: rgba(255,255,255,.1); }
+  .btn-row { display: flex; gap: 8px; }
+
+  .log-box { background: rgba(0,0,0,.3); border-radius: 8px; padding: 10px 12px; font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.6; max-height: 240px; overflow-y: auto; }
+  .log-box .log-line { color: var(--muted); }
+  .log-box .log-line.info { color: var(--ink); }
+  .log-box .log-line.warn { color: var(--yellow); }
+  .log-box .log-line.error { color: var(--red); }
+  .log-box .log-line.success { color: var(--green); }
+  .log-box .log-line .ts { color: var(--muted); opacity: .5; margin-right: 6px; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .stat-card { padding: 10px; border: 1px solid var(--border); border-radius: 8px; text-align: center; }
+  .stat-card b { font-size: 22px; display: block; }
+  .stat-card small { font-size: 10px; color: var(--muted); }
+  .stat-card.green b { color: var(--green); }
+  .stat-card.red b { color: var(--red); }
+  .stat-card.blue b { color: var(--accent); }
+  .stat-card.yellow b { color: var(--yellow); }
+
+  .legend { display: flex; gap: 14px; font-size: 10px; color: var(--muted); flex-wrap: wrap; }
+  .legend span { display: flex; align-items: center; gap: 4px; }
+  .legend i { width: 10px; height: 10px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<h1>工作流环节分发测试</h1>
+<p class="subtitle">v0.14.52 — 模拟 mainFlowHandlers + executeUtilityStep 分发逻辑，验证 handleArchive 统一入口</p>
+
+<div class="layout">
+  <div class="sidebar" id="profileList">
+    <!-- profile cards injected here -->
+  </div>
+
+  <div class="main-panel">
+    <div class="section">
+      <div class="section-header">
+        <span class="dot" style="background:var(--accent)"></span>
+        当前配置：<span id="currentProfileName">—</span>
+      </div>
+      <div class="section-body">
+        <div class="stats" id="statsBar">
+          <div class="stat-card blue"><b id="statTotal">0</b><small>总步骤</small></div>
+          <div class="stat-card green"><b id="statEnabled">0</b><small>启用</small></div>
+          <div class="stat-card yellow"><b id="statArchive">0</b><small>归档步骤</small></div>
+          <div class="stat-card red"><b id="statDisabled">0</b><small>禁用</small></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="dot" style="background:var(--green)"></span>
+        分发模拟
+        <div style="margin-left:auto" class="btn-row">
+          <button class="btn btn-secondary" onclick="resetSim()">重置</button>
+          <button class="btn btn-primary" onclick="runSim()">▶ 执行模拟</button>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="legend" style="margin-bottom:8px">
+          <span><i style="background:var(--yellow)"></i> mainFlowHandler</span>
+          <span><i style="background:var(--purple)"></i> executeUtilityStep</span>
+          <span><i style="background:var(--red)"></i> 跳过 (disabled)</span>
+          <span><i style="background:var(--green)"></i> 归档步骤 → handleArchive</span>
+        </div>
+        <div class="steps-list" id="stepsList">
+          <!-- steps injected here -->
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="dot" style="background:var(--purple)"></span>
+        执行日志
+      </div>
+      <div class="section-body">
+        <div class="log-box" id="logBox"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 模拟 sidebar.js 中的分发逻辑 ──
+const ARCHIVE_ACTIONS = new Set(["save-text", "download-images", "move-archive", "package-archive"]);
+const MAIN_FLOW_ACTIONS = new Set(["upload-material", "wait-plan", "send-confirm", "wait-images", "request-copy", "wait-copy"]);
+const UTILITY_ACTIONS = new Set(["wait-fixed", "wait-random", "send-text", "clipboard-copy", "detect-plan", "detect-images", "detect-copy", "detect-state", "detect-generating", "detect-limit", "time-window", "loop-daily", "retry", "insert-prompt"]);
+
+let testData = null;
+let currentProfileKey = null;
+let simRunning = false;
+
+// 加载测试数据
+async function loadData() {
+  try {
+    const res = await fetch('workflow-test-data.json');
+    testData = await res.json();
+    renderProfileList();
+    if (Object.keys(testData.profiles).length > 0) {
+      selectProfile(Object.keys(testData.profiles)[0]);
+    }
+  } catch (e) {
+    log('error', '加载 workflow-test-data.json 失败：' + e.message);
+  }
+}
+
+function renderProfileList() {
+  const container = document.getElementById('profileList');
+  container.innerHTML = '';
+  for (const [key, profile] of Object.entries(testData.profiles)) {
+    const card = document.createElement('div');
+    card.className = 'profile-card';
+    card.dataset.key = key;
+    const badge = getBadge(key);
+    card.innerHTML = `
+      <b>${profile.name}</b>
+      <small>${profile.description}</small>
+      <span class="badge ${badge.cls}">${badge.label}</span>
+    `;
+    card.onclick = () => selectProfile(key);
+    container.appendChild(card);
+  }
+}
+
+function getBadge(key) {
+  if (key === 'separated-archive') return { cls: 'badge-separated', label: '分离归档' };
+  if (key === 'combined-archive') return { cls: 'badge-combined', label: '合并归档' };
+  if (key === 'combined-with-autopackage-off') return { cls: 'badge-combined', label: '合并+跳过打包' };
+  if (key === 'mixed-utility-steps') return { cls: 'badge-mixed', label: '混合工具' };
+  if (key === 'partial-disabled') return { cls: 'badge-partial', label: '部分禁用' };
+  return { cls: '', label: '' };
+}
+
+function selectProfile(key) {
+  currentProfileKey = key;
+  document.querySelectorAll('.profile-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.key === key);
+  });
+  const profile = testData.profiles[key];
+  document.getElementById('currentProfileName').textContent = profile.name;
+  renderSteps(profile);
+  renderStats(profile.steps);
+  clearLog();
+  log('info', `已加载配置: ${profile.name}`);
+  log('info', `步骤数: ${profile.steps.length}，归档模式: ${detectArchiveMode(profile.steps)}`);
+}
+
+function detectArchiveMode(steps) {
+  const enabled = new Set(steps.filter(s => s.enabled !== false).map(s => s.action));
+  if (enabled.has("package-archive")) return "合并模式 (package-archive)";
+  if (enabled.has("save-text") || enabled.has("download-images") || enabled.has("move-archive")) return "分离模式 (save-text + download-images + move-archive)";
+  return "无归档步骤";
+}
+
+function getRouteInfo(action) {
+  if (ARCHIVE_ACTIONS.has(action)) {
+    return { type: 'handler', label: `handleArchive(step)`, detail: getArchiveDetail(action), cls: 'handler' };
+  }
+  if (MAIN_FLOW_ACTIONS.has(action)) {
+    const handlerName = 'handle' + action.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('');
+    return { type: 'handler', label: handlerName + '()', detail: '主流程 handler', cls: 'handler' };
+  }
+  if (UTILITY_ACTIONS.has(action)) {
+    return { type: 'utility', label: 'executeUtilityStep(step)', detail: getUtilityDetail(action), cls: 'utility' };
+  }
+  return { type: 'unknown', label: '???', detail: '未识别', cls: 'skip' };
+}
+
+function getArchiveDetail(action) {
+  const map = {
+    'save-text': 'action=save-text → 保存文案 TXT',
+    'download-images': 'action=download-images → 下载图片',
+    'move-archive': 'action=move-archive → archivePackageReply()',
+    'package-archive': 'action=package-archive → save TXT + download + archivePackageReply()'
+  };
+  return map[action] || '';
+}
+
+function getUtilityDetail(action) {
+  const map = {
+    'wait-fixed': '固定等待',
+    'wait-random': '随机等待',
+    'send-text': '发送文字',
+    'insert-prompt': '插入提示词',
+    'clipboard-copy': '复制到剪贴板',
+    'detect-plan': '瞬间检测计划',
+    'detect-images': '瞬间检测图片',
+    'detect-copy': '瞬间检测文案',
+    'detect-state': '检测会话状态',
+    'detect-generating': '检测GPT生成中',
+    'detect-limit': '检测额度限制',
+    'time-window': '时间窗口检查',
+    'loop-daily': '每日定时',
+    'retry': '失败重试配置'
+  };
+  return map[action] || action;
+}
+
+function renderSteps(profile) {
+  const container = document.getElementById('stepsList');
+  container.innerHTML = '';
+  profile.steps.forEach((step, i) => {
+    const route = getRouteInfo(step.action);
+    const enabled = step.enabled !== false;
+    const isArchive = ARCHIVE_ACTIONS.has(step.action);
+    const row = document.createElement('div');
+    row.className = 'step-row' + (!enabled ? ' skipped' : '');
+    row.dataset.index = i;
+    row.dataset.action = step.action;
+    row.dataset.enabled = enabled;
+
+    let extraInfo = '';
+    if (step.text) extraInfo += ` text="${step.text.slice(0, 40)}"`;
+    if (step.timeoutSeconds) extraInfo += ` timeout=${step.timeoutSeconds}s`;
+    if (step.minSeconds && step.maxSeconds) extraInfo += ` range=${step.minSeconds}-${step.maxSeconds}s`;
+    if (step.minImages) extraInfo += ` minImg=${step.minImages}`;
+    if (step.minCopyLength) extraInfo += ` minCopy=${step.minCopyLength}`;
+    if (step.quietSeconds) extraInfo += ` quiet=${step.quietSeconds}s`;
+
+    row.innerHTML = `
+      <div class="step-num">${String(i + 1).padStart(2, '0')}</div>
+      <div class="step-action">${step.action}</div>
+      <div class="step-route">
+        <span class="${route.cls}">${route.label}</span>
+        <span style="opacity:.6"> — ${route.detail}${extraInfo}</span>
+        ${isArchive ? '<span style="color:var(--green);margin-left:4px">[归档]</span>' : ''}
+      </div>
+      <div class="step-status ${enabled ? 'status-pending' : 'status-skipped'}">${enabled ? '待执行' : '禁用'}</div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function renderStats(steps) {
+  const total = steps.length;
+  const enabled = steps.filter(s => s.enabled !== false).length;
+  const disabled = total - enabled;
+  const archive = steps.filter(s => ARCHIVE_ACTIONS.has(s.action) && s.enabled !== false).length;
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statEnabled').textContent = enabled;
+  document.getElementById('statArchive').textContent = archive;
+  document.getElementById('statDisabled').textContent = disabled;
+}
+
+// ── 模拟执行 ──
+async function runSim() {
+  if (simRunning) return;
+  simRunning = true;
+  const profile = testData.profiles[currentProfileKey];
+  const steps = profile.steps;
+  const options = { autoPackage: profile.autoPackage !== false };
+  const wfSteps = steps; // 模拟 options.workflowSteps
+  const wfStepMap = new Map(wfSteps.map(s => [s.action, s]));
+  const wfEnabled = (action) => !wfStepMap.has(action) || wfStepMap.get(action)?.enabled !== false;
+
+  // 模拟 mainFlowHandlers 分发表
+  const mainFlowHandlers = {
+    "upload-material": () => 'handleUploadMaterial',
+    "wait-plan": () => 'handleWaitPlan',
+    "send-confirm": () => 'handleSendConfirm',
+    "wait-images": () => 'handleWaitImages',
+    "request-copy": () => 'handleRequestCopy',
+    "wait-copy": () => 'handleWaitCopy',
+    "save-text": (step) => `handleArchive(step) [action=${step.action}]`,
+    "download-images": (step) => `handleArchive(step) [action=${step.action}]`,
+    "move-archive": (step) => `handleArchive(step) [action=${step.action} → archivePackageReply]`,
+    "package-archive": (step) => `handleArchive(step) [action=${step.action} → save+download+archivePackageReply]`,
+  };
+
+  let earlyReturn = null;
+  log('info', '═══ 开始模拟执行 ═══');
+  log('info', `归档模式: ${detectArchiveMode(steps)}`);
+  log('info', `autoPackage: ${options.autoPackage}`);
+
+  for (let i = 0; i < wfSteps.length; i++) {
+    const step = wfSteps[i];
+    if (step.enabled === false) {
+      log('warn', `[${String(i+1).padStart(2,'0')}] ${step.action} → 跳过 (enabled=false)`);
+      markStep(i, 'skipped');
+      continue;
+    }
+    if (earlyReturn) {
+      log('warn', `[${String(i+1).padStart(2,'0')}] ${step.action} → 跳过 (earlyReturn 已触发)`);
+      markStep(i, 'skipped');
+      continue;
+    }
+
+    markStep(i, 'executing');
+    const handler = mainFlowHandlers[step.action];
+
+    if (handler) {
+      const result = handler(step);
+      log('success', `[${String(i+1).padStart(2,'0')}] ${step.action} → ${result}`);
+
+      // 模拟 package-archive 的 earlyReturn 逻辑
+      if (step.action === 'package-archive' && !options.autoPackage) {
+        earlyReturn = { packageSkipped: true };
+        log('warn', `  ⚠ earlyReturn 触发: packageSkipped=true (autoPackage=false)`);
+      }
+      // 模拟 move-archive / package-archive 查重跳过
+      if (step.action === 'move-archive' || step.action === 'package-archive') {
+        log('info', `  → archivePackageReply() → packageDownloadedReply() → 归档完成`);
+      }
+    } else {
+      // 工具步骤
+      const detail = getUtilityDetail(step.action);
+      log('info', `[${String(i+1).padStart(2,'0')}] ${step.action} → executeUtilityStep → ${detail}`);
+
+      // 模拟 time-window 返回 false
+      if (step.action === 'time-window') {
+        const now = new Date();
+        const currentMin = now.getHours() * 60 + now.getMinutes();
+        const [sh, sm] = (step.timeStart || '00:00').split(':').map(Number);
+        const [eh, em] = (step.timeEnd || '23:59').split(':').map(Number);
+        const startMin = (sh||0)*60 + (sm||0);
+        const endMin = (eh||23)*60 + (em||59);
+        if (currentMin < startMin || currentMin > endMin) {
+          log('error', `  ⚠ 时间窗口外，返回 false → 暂停执行`);
+          earlyReturn = { paused: true };
+        }
+      }
+    }
+
+    await sleep(250); // 可视化延迟
+    markStep(i, 'done');
+  }
+
+  if (earlyReturn) {
+    log('warn', `═══ 执行结束 (earlyReturn: ${JSON.stringify(earlyReturn)}) ═══`);
+  } else {
+    log('success', `═══ 执行完成，所有步骤已处理 ═══`);
+  }
+  simRunning = false;
+}
+
+function markStep(index, status) {
+  const rows = document.querySelectorAll('.step-row');
+  const row = rows[index];
+  if (!row) return;
+  const statusEl = row.querySelector('.step-status');
+  row.classList.remove('executing', 'done', 'skipped');
+  if (status === 'executing') {
+    row.classList.add('executing');
+    statusEl.className = 'step-status status-executing';
+    statusEl.textContent = '执行中';
+  } else if (status === 'done') {
+    row.classList.add('done');
+    statusEl.className = 'step-status status-done';
+    statusEl.textContent = '完成';
+  } else if (status === 'skipped') {
+    row.classList.add('skipped');
+    statusEl.className = 'step-status status-skipped';
+    statusEl.textContent = '跳过';
+  }
+}
+
+function resetSim() {
+  if (simRunning) return;
+  const profile = testData.profiles[currentProfileKey];
+  renderSteps(profile);
+  clearLog();
+  log('info', '已重置模拟状态');
+}
+
+// ── 日志 ──
+function log(level, msg) {
+  const box = document.getElementById('logBox');
+  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  const line = document.createElement('div');
+  line.className = 'log-line ' + level;
+  line.innerHTML = `<span class="ts">[${time}]</span>${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('logBox').innerHTML = '';
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// ── 启动 ──
+loadData();
+</script>
+</body>
+</html>

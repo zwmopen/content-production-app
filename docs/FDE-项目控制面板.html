@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>江湖有旅人｜FDE 项目控制面板</title>
+  <style>
+    :root { color-scheme: light; --bg:#eef3f8; --panel:#fff; --ink:#17283b; --muted:#607287; --line:#d8e2ec; --blue:#2f6fed; --green:#16845b; --amber:#a66a00; --shadow:0 12px 30px rgba(42,72,105,.10); }
+    * { box-sizing:border-box; }
+    body { margin:0; font:15px/1.65 "Microsoft YaHei", system-ui, sans-serif; color:var(--ink); background:linear-gradient(135deg,#f5f8fb,var(--bg)); }
+    main { max-width:1220px; margin:0 auto; padding:28px; }
+    header { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:22px; }
+    h1,h2,h3 { margin:0 0 8px; line-height:1.25; }
+    h1 { font-size:30px; letter-spacing:.02em; }
+    h2 { font-size:20px; }
+    h3 { font-size:16px; }
+    p { margin:5px 0; }
+    .muted { color:var(--muted); }
+    .status { min-width:250px; padding:14px 16px; background:var(--panel); border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow); }
+    .status strong { display:block; color:var(--green); font-size:19px; }
+    .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:14px 0; }
+    .panel { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:18px; padding:18px; box-shadow:var(--shadow); }
+    .wide { grid-column:1 / -1; }
+    .metric { font-size:26px; font-weight:700; color:var(--blue); }
+    .label { color:var(--muted); font-size:13px; }
+    .flow { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+    .flow div { padding:12px; border:1px solid var(--line); border-radius:12px; background:#f9fbfd; }
+    .flow b { display:block; margin-bottom:3px; }
+    .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+    .skill { border:1px solid var(--line); border-radius:14px; padding:14px; background:#fbfdff; }
+    .skill[data-status="active"] { border-left:4px solid var(--green); }
+    .skill[data-status="planned"] { border-left:4px solid var(--amber); }
+    .tag { display:inline-block; margin:4px 5px 0 0; padding:2px 8px; border-radius:999px; background:#e7f0ff; color:#2a5eaf; font-size:12px; }
+    a { color:#205bb5; text-decoration:none; }
+    a:hover, a:focus { text-decoration:underline; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+    .actions a { display:inline-block; padding:8px 12px; border-radius:10px; background:#e7f0ff; }
+    input { width:100%; padding:11px 13px; border:1px solid var(--line); border-radius:10px; font:inherit; color:var(--ink); background:#fff; }
+    .note { padding:11px 13px; border-radius:10px; background:#fff8e8; color:#76521d; border:1px solid #f1d99f; }
+    footer { margin-top:20px; color:var(--muted); font-size:13px; }
+    @media (max-width: 850px) { header { display:block; } .status { margin-top:14px; } .grid,.cards { grid-template-columns:1fr; } .flow { grid-template-columns:repeat(2,1fr); } }
+    @media (max-width: 520px) { main { padding:16px; } .flow { grid-template-columns:1fr; } h1 { font-size:25px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="muted">FDE / 江湖有旅人团建项目</p>
+        <h1>技能、软件与交付控制面板</h1>
+        <p class="muted">先判断业务环节，再调用对应 Skill；软件只承载状态、队列、连接和恢复。</p>
+      </div>
+      <div class="status" aria-label="当前项目状态">
+        <span class="label">当前基线</span>
+        <strong>可用，持续沉淀</strong>
+        <span class="muted">2026-08-15 · 本地文档版</span>
+      </div>
+    </header>
+
+    <section class="grid" aria-label="项目概览">
+      <article class="panel"><span class="label">业务项目</span><div class="metric">1</div><p>江湖有旅人团建</p></article>
+      <article class="panel"><span class="label">软件入口</span><div class="metric">6</div><p>内容制作、作品库、设备分发、在线分发、流量转化、设置中心</p></article>
+      <article class="panel"><span class="label">已验证核心 Skill</span><div class="metric">5</div><p>客资、内容、分发、文档同步、技能孵化</p></article>
+    </section>
+
+    <section class="panel wide">
+      <h2>业务闭环</h2>
+      <div class="flow">
+        <div><b>1. 流量</b><span class="muted">来源、选题、平台反馈</span></div>
+        <div><b>2. 内容</b><span class="muted">素材、模板、提示词、生产</span></div>
+        <div><b>3. 发布</b><span class="muted">成品、库存、设备、平台</span></div>
+        <div><b>4. 转化</b><span class="muted">私信、客资、跟进、复盘</span></div>
+      </div>
+    </section>
+
+    <section class="panel wide">
+      <h2>现在该调用哪个技能？</h2>
+      <input id="skillSearch" type="search" placeholder="搜索：客资、模板、生产、设备、Skill、复盘……" aria-label="搜索技能">
+      <div class="cards" id="skillCards" style="margin-top:12px">
+        <article class="skill" data-status="active" data-search="客资 统计 微信 WeFlow 飞书 去重">
+          <h3>团建客资统计技能</h3><p><code>wechat-teambuilding-conversion</code></p>
+          <p class="muted">读取授权 WeFlow 会话，区分本人和同事，提取人数/地点/联系方式/要求，去重后更新飞书。</p>
+          <span class="tag">已验证</span><span class="tag">10人及以上</span><span class="tag">不猜联系人</span>
+        </article>
+        <article class="skill" data-status="active" data-search="内容 生产 小红书 素材 模板 提示词 GPT">
+          <h3>团建图文生产技能</h3><p><code>teambuilding-xhs-workflow</code></p>
+          <p class="muted">从本地素材和模板生成出图计划、图片、文案、生产记录，并支持断点恢复。</p>
+          <span class="tag">内容制作</span><span class="tag">模板仓库</span><span class="tag">状态机</span>
+        </article>
+        <article class="skill" data-status="active" data-search="设备 手机 分发 传输 库存 作品">
+          <h3>设备与作品分发技能</h3><p><code>device-folder-transfer</code></p>
+          <p class="muted">发现设备、选择作品、传输、等待接收确认、更新阶段并防止重复分发。</p>
+          <span class="tag">设备</span><span class="tag">回执</span><span class="tag">防重复</span>
+        </article>
+        <article class="skill" data-status="active" data-search="技能 创建 沉淀 业务 配置 密钥">
+          <h3>业务技能孵化器</h3><p><code>business-skill-builder</code></p>
+          <p class="muted">把真实重复流程变成可迁移 Skill，分离通用规则、专属配置和密钥运行态。</p>
+          <span class="tag">FDE</span><span class="tag">跨AI</span><span class="tag">三层边界</span>
+        </article>
+        <article class="skill" data-status="active" data-search="飞书 文档 同步 多维表 Base Sheet">
+          <h3>飞书连接与同步</h3><p><code>feishu-doc-sync</code> + <code>lark-base</code></p>
+          <p class="muted">负责资源解析、字段/记录读写和回读校验，不决定业务资格。</p>
+          <span class="tag">连接器</span><span class="tag">只读优先</span><span class="tag">回读</span>
+        </article>
+        <article class="skill" data-status="planned" data-search="FDE 经验 复盘 企业 交付 项目开发">
+          <h3>FDE 交付复盘技能</h3><p><code>fde-delivery-review</code>（候选）</p>
+          <p class="muted">把一次客户项目提炼成需求访谈、流程模型、验收证据、培训和可复用经验卡。</p>
+          <span class="tag">待孵化</span><span class="tag">企业服务</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel"><h2>人负责</h2><p>目标、审美、商务承诺、最终发布、低置信度身份裁决、合同和成交。</p></article>
+      <article class="panel"><h2>Skill 负责</h2><p>规则、抽取、分流、去重、提示词编排、报告和可复用流程。</p></article>
+      <article class="panel"><h2>软件负责</h2><p>状态机、队列、文件/接口操作、权限、可观察性、恢复和审计。</p></article>
+    </section>
+
+    <section class="panel wide">
+      <h2>交付入口</h2>
+      <div class="actions">
+        <a href="团建项目技能地图.md">查看完整技能地图</a>
+        <a href="HANDOFF.md">查看软件开发交接</a>
+        <a href="file:///D:/AICode/项目推进/方法论/FDE-企业交付经验库/README.md">查看 FDE 经验库</a>
+        <a href="file:///D:/AICode/项目推进/方法论/FDE-企业交付经验库/经验卡模板.md">新建经验卡</a>
+        <a href="file:///D:/AICode/AI/skills/技能包/技能/wechat-teambuilding-conversion/SKILL.md">查看客资技能规则</a>
+      </div>
+      <p class="note" style="margin-top:14px">本面板是静态导航，不读取实时飞书或 WeFlow，也不会触发外部写入。需要执行客资统计时，调用“团建客资统计技能”；需要改软件时，先阅读 HANDOFF 和项目 Git 现场。</p>
+    </section>
+
+    <footer>维护原则：业务项目是总账，软件是执行层，Skill 是语义能力，连接器是适配器，密钥只在受保护运行态中存在。</footer>
+  </main>
+  <script>
+    const input = document.getElementById('skillSearch');
+    const cards = [...document.querySelectorAll('#skillCards .skill')];
+    input.addEventListener('input', () => {
+      const query = input.value.trim().toLowerCase();
+      cards.forEach(card => { card.hidden = query && !card.dataset.search.toLowerCase().includes(query) && !card.textContent.toLowerCase().includes(query); });
+    });
+  </script>
+</body>
+</html>

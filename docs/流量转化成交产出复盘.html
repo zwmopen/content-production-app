@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>流量转化成交产出复盘｜2026-08-21</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1722;
+      --panel: #142b3c;
+      --panel-2: #18384d;
+      --line: rgba(157, 214, 239, .2);
+      --text: #edf8ff;
+      --muted: #a7c3d2;
+      --brand: #61e5d0;
+      --warn: #ffd38a;
+      --danger: #ffb2a4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 15% 0%, #1c4961 0, transparent 34%), var(--bg);
+      color: var(--text);
+      font: 15px/1.65 "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    }
+    .wrap { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 42px 0 64px; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: clamp(28px, 5vw, 46px); letter-spacing: -.04em; line-height: 1.15; }
+    h2 { margin-bottom: 8px; font-size: 22px; }
+    h3 { font-size: 17px; }
+    .eyebrow { color: var(--brand); font-size: 12px; font-weight: 800; letter-spacing: .12em; }
+    .date { color: var(--muted); text-align: right; white-space: nowrap; }
+    .notice, .panel, .kpi { border: 1px solid var(--line); border-radius: 18px; background: rgba(20, 43, 60, .92); box-shadow: 0 18px 45px rgba(0, 0, 0, .16); }
+    .notice { padding: 18px 20px; margin-bottom: 18px; color: var(--muted); }
+    .notice strong { color: var(--warn); margin-right: 8px; }
+    .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .kpi { padding: 16px; }
+    .kpi span { display: block; color: var(--muted); font-size: 12px; }
+    .kpi b { display: block; margin: 4px 0; color: var(--brand); font-size: 27px; line-height: 1.25; }
+    .kpi small { color: var(--muted); }
+    .panel { padding: 22px; margin-bottom: 18px; }
+    .panel-head { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
+    .panel-head p { color: var(--muted); font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; font-weight: 700; }
+    td strong { color: var(--brand); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .card { padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(24, 56, 77, .72); }
+    .card p { color: var(--muted); }
+    .card strong { display: block; margin-bottom: 4px; color: var(--text); }
+    .warn { color: var(--warn) !important; }
+    .danger { color: var(--danger) !important; }
+    footer { color: var(--muted); font-size: 12px; }
+    @media (max-width: 720px) {
+      .wrap { width: min(100% - 20px, 560px); padding-top: 24px; }
+      header, .panel-head { align-items: start; flex-direction: column; }
+      .date { text-align: left; }
+      .kpis, .grid { grid-template-columns: 1fr 1fr; }
+      table { min-width: 700px; }
+      .table-scroll { overflow-x: auto; }
+    }
+    @media (max-width: 420px) { .kpis, .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <div>
+        <div class="eyebrow">图文工作台 · 流量转化 · HTML REPORT</div>
+        <h1>成交产出复盘</h1>
+      </div>
+      <div class="date">核算截至 2026-08-21<br>按实际执行月份归属</div>
+    </header>
+
+    <section class="notice">
+      <strong>数据边界</strong>
+      本页只统计有合同、发票、定金或执行记录等硬证据的成交。原 HTML 历史快照截至 2026-07-31；WeFlow 已于 2026-08-21 16:30 恢复，最新增量仍停留在候选层，需审核后再补核成交。
+    </section>
+
+    <section class="kpis" aria-label="核心指标">
+      <article class="kpi"><span>已确认成交</span><b>11 单</b><small>硬证据案例</small></article>
+      <article class="kpi"><span>总产出</span><b>¥308,263</b><small>确认营业额</small></article>
+      <article class="kpi"><span>平均客单</span><b>¥28,024</b><small>总额 ÷ 11 单</small></article>
+      <article class="kpi"><span>毛利估算</span><b>¥30,826–77,066</b><small>按 10%–25% 毛利率</small></article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div><div class="eyebrow">MONTHLY OUTPUT</div><h2>2026 年 6–9 月成交产出</h2></div>
+        <p>9 月是未来月份，不用计划数冒充成交。</p>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>月份</th><th>确认成交</th><th>营业额</th><th>归属说明</th></tr></thead>
+          <tbody>
+            <tr><td>2026-06</td><td>0 单</td><td><strong>¥0</strong></td><td>6 月 30 日有成交前沟通，但没有确证执行产出。</td></tr>
+            <tr><td>2026-07</td><td>9 单</td><td><strong>¥211,403</strong></td><td>当前已确认成交的主体月份。</td></tr>
+            <tr><td>2026-08（截至 21 日）</td><td>2 单</td><td><strong>¥96,860</strong></td><td>已知两单执行日在 8 月 1–2 日；后续待实时同步。</td></tr>
+            <tr><td>2026-09</td><td>0 单</td><td><strong>¥0</strong></td><td>未来月份，暂无真实成交证据。</td></tr>
+            <tr><td><strong>合计</strong></td><td><strong>11 单</strong></td><td><strong>¥308,263</strong></td><td>按执行月份统计。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div><div class="eyebrow">CONVERSION SIGNALS</div><h2>本月目前可用的转化信号</h2></div>
+        <p>最近可用增量快照：2026-08-21 16:30 · 候选层</p>
+      </div>
+      <div class="grid">
+        <article class="card"><strong>677 个变化会话</strong><p>WeFlow 候选累计变化会话，尚未写入正式 SOP。</p></article>
+        <article class="card"><strong>25,706 条消息</strong><p>候选聊天增量，formalWrite=false，尚未写入正式 SOP。</p></article>
+        <article class="card"><strong>79 条新线索 · 178 条方案</strong><p>运营与策划阶段信号，不等于成交。</p></article>
+        <article class="card"><strong>6 条合格 · 179 条报价 · 17 条 won_signal</strong><p class="warn">报价或 won_signal 只能作为跟进优先级，不能直接计入营业额。</p></article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div><div class="eyebrow">GROSS PROFIT ESTIMATE</div><h2>毛利区间与经营提醒</h2></div>
+        <p>这是估算，不是财务实绩。</p>
+      </div>
+      <div class="grid">
+        <article class="card"><strong>毛利估算</strong><p>按 10%–25% 毛利率，约为 <strong>¥30,826–¥77,066</strong>。</p></article>
+        <article class="card"><strong>直接成本估算</strong><p>对应约 <strong>¥231,197–¥277,437</strong>，实际要按供应商结算核对。</p></article>
+        <article class="card"><strong>最大 3 单</strong><p>合计约占总产出 <strong>64.4%</strong>，要同时守住大单交付质量和中小单标准化效率。</p></article>
+        <article class="card"><strong>不能直接称为净利润</strong><p class="danger">车、餐、住、玩、教练、税费、退款和人工成本未完整核算前，只能称为毛利估算。</p></article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div><div class="eyebrow">CONTINUOUS CALIBRATION</div><h2>持续更新与行业校准</h2></div>
+        <p>由维护技能触发，不后台偷偷改正式资料。</p>
+      </div>
+      <div class="grid">
+        <article class="card"><strong>1. 每月读增量</strong><p>按游标读取新聊天、报价、成交、流失和交付记录，保留来源指针；API 不可用时保留快照并标记待补同步。</p></article>
+        <article class="card"><strong>2. 对照真实结果</strong><p>把线索、方案、报价和 <code>won_signal</code> 与合同、定金、执行结果分开比较，避免把意向误算成产出。</p></article>
+        <article class="card"><strong>3. 校准行业判断</strong><p>连续观察客群、季节、目的地、预算、供应商、竞争报价和毛利变化；证据足够后再调整判断。</p></article>
+        <article class="card"><strong>4. 分层写回</strong><p>新发现先停留在候选层；人工确认且证据充分后，才重建正式 SOP、话术、决策树和本 HTML。</p></article>
+      </div>
+    </section>
+
+    <footer>
+      来源：图文工作台流量转化复盘快照、已确认成交案例库及 2026-08-19 工作台增量快照。维护入口：工作台 → 流量转化 → HTML复盘 → 流量转化模块维护。更新原则：持续读增量、对照真实结果、行业校准、人工确认后写回。
+    </footer>
+  </main>
+</body>
+</html>

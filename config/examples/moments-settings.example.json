@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "description": "朋友圈采集整理与发布的脱敏可分享配置模板。真实账号、UID、Token 和作品数据请在本机设置。",
+  "moments": {
+    "enabled": true,
+    "libraryRoot": "D:\\朋友圈weflow",
+    "autoOpenWeChat": true,
+    "collectionAccount": "",
+    "collectionWxid": "",
+    "collectionLimit": "10",
+    "requireWechatReady": true,
+    "collectionScheduleEnabled": false,
+    "collectionScheduleDay": 1,
+    "collectionScheduleTime": "10:20",
+    "collectionScheduleCatchUpDays": 7,
+    "triggerMode": "manual",
+    "scheduleTimes": ["10:20"],
+    "dailyAutoLimit": 1,
+    "selectionRule": "anniversary"
+  }
+}

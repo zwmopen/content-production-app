@@ -1,0 +1,44 @@
+# 唯一可整体删除的人工临时工作区
+/.work/*
+!/.work/README.md
+
+# 可重建构建产物
+/build/
+/dist/
+/out/
+/coverage/
+
+# 依赖和缓存
+node_modules/
+/.venv/
+/venv/
+/src/.venv-moments/
+/__pycache__/
+*.py[cod]
+*.cache
+*.tmp
+*.log
+
+# 密钥与本地配置
+.env
+.env.*
+!.env.example
+config/local.*
+secrets/
+
+# 最终安装包默认不进 Git，但保留发布说明和清单
+/releases/*
+!/releases/README.md
+!/releases/manifest.json
+
+.DS_Store
+Thumbs.db
+
+# 测试产物（自动生成的临时目录和输出）
+/src/.test-success-*/
+/src/.test-rollback-*/
+/src/workbench-test-output.txt
+*.bak.*
+
+# 技能工作目录（含本地端口与令牌）
+/.superpowers/

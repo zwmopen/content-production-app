@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#e8edf3" />
+  <title>团建准话助手</title>
+  <style>
+    :root {
+      --bg: #e8edf3;
+      --panel: #e2eaf2;
+      --soft: #dce4ec;
+      --line: #d1dbe4;
+      --ink: #242422;
+      --muted: #61758a;
+      --accent: #1f2937;
+      --selection: #d7e4ef;
+      --good: #33745a;
+      --danger: #9d4f55;
+      --shadow: 8px 8px 20px #c8d0d8, -8px -8px 20px #fbfdff;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    }
+    button, textarea { font: inherit; }
+    .app {
+      width: min(100%, 680px);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: max(18px, env(safe-area-inset-top)) 14px max(26px, env(safe-area-inset-bottom));
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 2px 2px 18px;
+    }
+    h1 { margin: 0; font-size: 22px; letter-spacing: -.03em; }
+    header p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--good);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .card {
+      margin-bottom: 14px;
+      padding: 16px;
+      border: 0;
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .role-switch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+      margin-bottom: 13px;
+      padding: 5px;
+      border-radius: 13px;
+      background: var(--soft);
+    }
+    .role-switch button {
+      min-height: 38px;
+      border: 0;
+      border-radius: 10px;
+      color: var(--muted);
+      background: transparent;
+    }
+    .role-switch button.active {
+      color: var(--ink);
+      background: var(--selection);
+      box-shadow: 3px 3px 8px #c6ced6, -3px -3px 8px #f7f9fb;
+      font-weight: 700;
+    }
+    label { display: block; margin: 0 0 8px; font-size: 13px; font-weight: 700; }
+    textarea {
+      width: 100%;
+      min-height: 126px;
+      padding: 13px 14px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      outline: none;
+      color: var(--ink);
+      background: rgba(255,255,255,.38);
+    }
+    textarea:focus { box-shadow: 0 0 0 3px rgba(47,127,245,.12); }
+    .primary {
+      width: 100%;
+      min-height: 44px;
+      margin-top: 11px;
+      border: 0;
+      border-radius: 12px;
+      color: white;
+      background: var(--accent);
+      font-weight: 750;
+    }
+    .primary:disabled { opacity: .55; }
+    .hint { margin: 9px 2px 0; color: var(--muted); font-size: 12px; }
+    #result[hidden] { display: none; }
+    .result-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .result-head h2 { margin: 0; font-size: 17px; }
+    .copy {
+      min-width: 66px;
+      min-height: 34px;
+      border: 0;
+      border-radius: 10px;
+      color: var(--ink);
+      background: var(--selection);
+    }
+    .reply {
+      padding: 13px 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.48);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .reply.primary-reply { border-left: 4px solid var(--good); font-size: 16px; }
+    .section { margin-top: 14px; }
+    .section b { display: block; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { padding: 4px 9px; border-radius: 999px; background: var(--selection); font-size: 12px; }
+    .alternative { margin-top: 7px; padding: 11px 12px; border-radius: 12px; background: var(--soft); white-space: pre-wrap; }
+    .error { color: var(--danger); }
+    .loading::after {
+      content: "";
+      display: inline-block;
+      width: 13px;
+      height: 13px;
+      margin-left: 8px;
+      border: 2px solid rgba(255,255,255,.38);
+      border-top-color: #fff;
+      border-radius: 50%;
+      vertical-align: -2px;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div><h1>团建准话助手</h1><p>电脑知识库计算 · 手机直接复制</p></div>
+      <span class="status">本机已连接</span>
+    </header>
+    <section class="card">
+      <div class="role-switch" aria-label="当前身份">
+        <button class="active" type="button" data-role="前端运营">前端运营</button>
+        <button type="button" data-role="后端转化">后端转化</button>
+      </div>
+      <label for="question">粘贴客户原话</label>
+      <textarea id="question" placeholder="例如：我们公司20人，杭州出发，想找轻松一点的一日团建"></textarea>
+      <button class="primary" id="search" type="button">生成回复</button>
+      <p class="hint">只发送这一条问题给电脑端，不读取手机聊天记录。</p>
+    </section>
+    <section class="card" id="result" hidden aria-live="polite">
+      <div class="result-head"><h2>建议回复</h2><button class="copy" id="copy" type="button">复制</button></div>
+      <div id="resultBody"></div>
+    </section>
+  </main>
+  <script>
+    let role = "前端运营";
+    let copyText = "";
+    const $ = (selector) => document.querySelector(selector);
+    document.querySelectorAll("[data-role]").forEach((button) => button.addEventListener("click", () => {
+      role = button.dataset.role;
+      document.querySelectorAll("[data-role]").forEach((item) => item.classList.toggle("active", item === button));
+    }));
+    function line(value) { return String(value == null ? "" : value); }
+    function list(value) { return Array.isArray(value) ? value.filter(Boolean) : value ? [value] : []; }
+    function addSection(root, title, value, className = "") {
+      if (!value) return;
+      const section = document.createElement("div");
+      section.className = "section";
+      const label = document.createElement("b");
+      label.textContent = title;
+      const content = document.createElement("div");
+      content.className = className || "reply";
+      content.textContent = line(value);
+      section.append(label, content);
+      root.append(section);
+    }
+    function render(payload) {
+      const result = payload.结果 || payload.result || payload;
+      const root = $("#resultBody");
+      root.replaceChildren();
+      const preferred = line(result.首选回复 || result.preferred || result.reply);
+      addSection(root, "首选回复", preferred, "reply primary-reply");
+      const alternatives = list(result.备用回复 || result.alternatives);
+      if (alternatives.length) {
+        const section = document.createElement("div");
+        section.className = "section";
+        const label = document.createElement("b");
+        label.textContent = "备用回复";
+        section.append(label);
+        alternatives.forEach((text) => {
+          const item = document.createElement("div");
+          item.className = "alternative";
+          item.textContent = line(text);
+          section.append(item);
+        });
+        root.append(section);
+      }
+      addSection(root, "下一步", result.下一步 || result.next);
+      const confirmations = list(result.还要确认 || result.confirm);
+      if (confirmations.length) {
+        const section = document.createElement("div");
+        section.className = "section";
+        const label = document.createElement("b");
+        label.textContent = "还要确认";
+        const chips = document.createElement("div");
+        chips.className = "chips";
+        confirmations.forEach((text) => {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.textContent = line(text);
+          chips.append(chip);
+        });
+        section.append(label, chips);
+        root.append(section);
+      }
+      addSection(root, "提醒", result.提醒 || result.warning);
+      copyText = preferred;
+      $("#result").hidden = false;
+      $("#result").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    $("#search").addEventListener("click", async () => {
+      const question = $("#question").value.trim();
+      if (!question) {
+        $("#question").focus();
+        return;
+      }
+      const button = $("#search");
+      button.disabled = true;
+      button.classList.add("loading");
+      button.textContent = "正在匹配";
+      try {
+        const response = await fetch("/mobile-conversion/api/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, role })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "暂时无法生成回复");
+        render(payload);
+      } catch (error) {
+        $("#result").hidden = false;
+        $("#resultBody").innerHTML = "";
+        const message = document.createElement("div");
+        message.className = "error";
+        message.textContent = error.message || "暂时无法生成回复";
+        $("#resultBody").append(message);
+      } finally {
+        button.disabled = false;
+        button.classList.remove("loading");
+        button.textContent = "生成回复";
+      }
+    });
+    $("#copy").addEventListener("click", async () => {
+      if (!copyText) return;
+      await navigator.clipboard.writeText(copyText);
+      $("#copy").textContent = "已复制";
+      setTimeout(() => { $("#copy").textContent = "复制"; }, 1800);
+    });
+  </script>
+</body>
+</html>

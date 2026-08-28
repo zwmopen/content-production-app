@@ -1,0 +1,57 @@
+{
+  "name": "jianghu-content-production-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "江湖有旅人独立内容生产工作台，支持隔离的 A-D 生产实例",
+  "main": "desktop/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "desktop": "electron desktop/main.js",
+    "dist:portable": "node node_modules/electron-builder/out/cli/cli.js --win portable",
+    "test": "node --test --test-concurrency=1 device-status.test.js package-build.test.js path-security.test.js material-scanner.test.js material-lifecycle.integration.test.js lib/material-lifecycle.test.js lib/material-collection-keywords.test.js lib/instance-account-policy.test.js instance-startup.test.js lib/gpt-session-guard.test.js lib/temporary-web-cache-schedule.test.js lib/gpt-view-continuity.test.js lib/gpt-production-evidence.test.js production-calibration.test.js integrations/gpt-production-extension/gpt-automation-core.test.js integrations/gpt-production-extension/patrol-stage.test.js integrations/gpt-production-extension/sidebar-regression.test.js lib/dedup-ledger.test.js lib/distribution-data.test.js lib/distribution-scan-validity.test.js lib/transfer-progress.test.js lib/gpt-production-orchestrator.test.js lib/gpt-runtime-state.test.js lib/work-package-locator.test.js lib/work-distribution-ledger.test.js lib/work-tags.test.js lib/image-generation.test.js lib/platform-publishing.test.js lib/production-recipes.test.js lib/production-quality.test.js lib/template-registry.test.js lib/template-metadata.test.js lib/template-repository.test.js lib/xhs-template-collector.test.js scripts/analyze-no-text-materials.test.js scripts/generate-template-catalog.test.js scripts/sync-global-template-repository.test.js lib/webdav-backup.test.js lib/wechat-draft.test.js lib/wechat-web-automation.test.js lib/workbench-settings.test.js lib/moments-scheduler.test.js lib/work-package-title.test.js lib/workbench-port.test.js lib/junction-removal.test.js desktop/gpt-theme.test.js server/routes/distribution.test.js server/routes/platform-publishing.test.js server/routes/skills.test.js server/routes/material-ingestion.test.js server/routes/material-download.test.js public/assistant-notification-policy.test.js public/gpt-production-status.test.js public/gpt-progress-display.test.js public/gpt-window-worker-state.test.js public/gpt-startup-stagger.test.js public/gpt-history-status.test.js public/gpt-account-rotation.test.js public/gpt-runtime-recovery.test.js public/gpt-patrol-scheduler.test.js public/distribution-ui.test.js public/material-workspace.test.js public/skills-ui.test.js",
+    "test:gpt-page-recovery": "node --test lib/gpt-page-recovery.test.js",
+    "sync:template-registry": "node scripts/sync-template-registry.js",
+    "maintain:template-repository": "node scripts/sync-template-registry.js",
+    "maintain:global-template-repository": "node scripts/sync-global-template-repository.js",
+    "sync:template-catalog": "node scripts/generate-template-catalog.js",
+    "analyze:no-text-materials": "node scripts/analyze-no-text-materials.js",
+    "mcp:juguang": "node mcp/juguang-mcp.js",
+    "check:juguang": "node -e \"const d=require('./lib/juguang-data').getJuguangSnapshot(); console.log(JSON.stringify({mode:d.mode,counts:d.counts,recommendations:d.recommendations.length},null,2))\""
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.jianghuyoulvren.content.production",
+    "productName": "内容生产",
+    "asar": false,
+    "files": [
+      "desktop/**/*",
+      "integrations/**/*",
+      "lib/**/*",
+      "public/**/*",
+      "server/**/*",
+      "server.js",
+      "package.json"
+    ],
+    "directories": {
+    "output": "../releases/0.1.0"
+    },
+    "win": {
+      "icon": "desktop/团建工作台.ico",
+      "target": [
+        "portable"
+      ],
+      "signExecutable": false
+    },
+    "portable": {
+      "artifactName": "内容生产-${version}-便携版.exe"
+    }
+  },
+  "dependencies": {
+    "sharp": "^0.34.5",
+    "undici": "^7.29.0"
+  }
+}

@@ -1,0 +1,1237 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>内容生产</title>
+  <link rel="stylesheet" href="/styles.css?v=0.1.0" />
+  </head>
+  <body>
+    <div class="liquid-bg">
+      <span class="stream stream-a"></span>
+      <span class="stream stream-b"></span>
+      <span class="stream stream-c"></span>
+    </div>
+
+    <main class="app-shell">
+      <nav class="workflow-rail glass" id="workflowRail" aria-label="工作流导航">
+        <div class="rail-brand">
+          <button class="rail-collapse-button" id="railCollapseBtn" type="button" aria-label="收起侧边栏" aria-controls="workflowRail" aria-expanded="true" title="收起侧边栏">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+          </button>
+          <div class="rail-brand-copy">
+            <strong>内容生产</strong>
+            <span>素材库 · 采集 · 预览 · 整理</span>
+          </div>
+        </div>
+        <button class="tab rail-tab rail-tab-material-library active" data-tab="materialLibrary" type="button" title="素材库：采集、预览、整理和维护本地图文素材" aria-label="素材库">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5v-11Z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11"/><path d="M8 5.25 16 8.75"/></svg>
+          <span>素材库</span>
+        </button>
+        <button class="tab rail-tab rail-tab-test" data-tab="gptProductionTest" type="button" title="内容制作" aria-label="内容制作">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 4v-14Z"/><path d="m10 8 1 2.6 2.6 1-2.6 1L10 15l-1-2.4-2.6-1 2.6-1L10 8Z"/><path d="M15 8h2M15 11h2"/></svg>
+          <span>内容制作</span>
+        </button>
+        <button class="tab rail-tab" data-tab="skills" type="button" title="技能中心：运行已连接的可执行技能" aria-label="技能中心">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 14 8l4.5 2-4.5 2-2 4.5-2-4.5-4.5-2 4.5-2L12 3.5Z"/><path d="m18.5 15 .9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1Z"/></svg>
+          <span>技能中心</span>
+        </button>
+        <button class="tab rail-tab rail-tab-template-repository" data-tab="templateRepository" data-open-template-repository="true" type="button" title="打开图文模板仓库：全局唯一模板台账与预览" aria-label="打开图文模板仓库">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 4l8 3.5v9L12 20l-8-3.5v-9Z"/><path d="M4.5 7.5 12 11l7.5-3.5M12 11v9"/><path d="M8 5.75v4.5M16 5.75v4.5"/></svg>
+          <span>模板仓库</span>
+        </button>
+        <button class="tab rail-tab" data-tab="works" type="button" title="作品仓库" aria-label="作品仓库">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+          <span>作品仓库</span>
+        </button>
+        <button class="tab rail-tab" data-tab="moments" type="button" title="朋友圈采集整理与发布：筛选素材、预览九宫格并准备到微信发表前" aria-label="朋友圈采集整理与发布">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 4v-14Z"/><circle cx="9" cy="10" r="1"/><circle cx="12" cy="10" r="1"/><circle cx="15" cy="10" r="1"/><path d="M8 14h8"/></svg>
+          <span>朋友圈</span>
+        </button>
+        <button class="tab rail-tab" data-tab="distribution" type="button" title="文件传输" aria-label="文件传输">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M10 6h4M11 18h2"/><path d="m3 9 2-2 2 2M21 13l-2 2-2-2"/></svg>
+          <span>文件传输</span>
+        </button>
+        <button class="tab rail-tab" data-tab="publishing" type="button" title="在线分发" aria-label="在线分发">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8 7h8M8 11h8M8 15h5"/><path d="m15 14 2 2 3-4"/></svg>
+          <span>在线分发</span>
+        </button>
+        <button class="tab rail-tab" data-tab="conversion" type="button" title="流量转化" aria-label="流量转化">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v12H9l-4 4V4Z"/><path d="M8 8h8M8 12h5"/></svg>
+          <span>流量转化</span>
+        </button>
+        <button class="tab rail-tab" data-tab="settings" type="button" title="设置中心" aria-label="设置中心">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6A7 7 0 0 0 8.8 7L6.5 6.1l-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1A7 7 0 0 0 10.4 18l.3 2.6h4L15 18a7 7 0 0 0 1.5-1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg>
+          <span>设置中心</span>
+        </button>
+        <div class="rail-service">
+          <p><span class="status-dot"></span><span class="rail-service-label" id="localServiceStatus" data-service-status="unknown" aria-live="polite">本地服务已连接</span></p>
+          <div class="rail-theme-switch" aria-label="视觉主题">
+            <button id="globalThemeCycleBtn" class="theme-cycle-button" type="button" aria-label="切换视觉主题">
+              <span class="theme-cycle-icon" aria-hidden="true"><i></i><i></i></span>
+              <span id="globalThemeName">拟态</span>
+            </button>
+          </div>
+        </div>
+      </nav>
+      <header class="topbar glass">
+        <section>
+          <h1>内容生产</h1>
+          <div class="subtitle">素材采集 · 本地预览 · 技能整理 · 可追溯维护</div>
+        </section>
+        <div class="topbar-status" id="localTopbarStatus" data-service-status="unknown" aria-live="polite"><span class="status-dot"></span><span>本地已连接</span></div>
+        <section class="top-actions">
+          <button class="icon-button" id="refreshBtn" title="刷新本地数据库">↻</button>
+          <span class="root-path">D:\AICode\项目推进\projects\江湖有旅人\主项目</span>
+        </section>
+      </header>
+
+      <section class="view active" id="materialLibraryView" aria-labelledby="materialLibraryTitle">
+        <section class="material-library-shell">
+          <header class="material-library-heading">
+            <div>
+              <p class="label">内容生产 · 素材区</p>
+              <h2 id="materialLibraryTitle">素材库</h2>
+              <p>江湖工具箱下载后，从这里采集、预览、整理和维护本地图文素材。所有移动、命名和标签动作都调用同一个本地技能。</p>
+              <small class="material-library-path-line" id="materialLibraryPathLine">正在读取素材库路径…</small>
+            </div>
+            <div class="detail-button-row material-library-heading-actions">
+              <span class="workbench-engine-state" id="materialLibraryStatus">正在读取本地素材索引…</span>
+              <button class="secondary-button" id="materialLibraryRefreshBtn" type="button" title="重新扫描素材库索引">刷新</button>
+              <button class="secondary-button" id="materialLibraryOpenRootBtn" type="button" title="打开素材库根目录">打开素材库</button>
+              <button class="page-settings-button" id="materialLibrarySettingsBtn" type="button" title="设置素材下载区和成品素材库路径" aria-label="打开素材库路径设置"><svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6A7 7 0 0 0 8.8 7L6.5 6.1l-2 3.4 2 1.5a7 7 0 0 0 0 2l2 1.5 2.3-1A7 7 0 0 0 10.4 18l.3 2.6h4L15 18a7 7 0 0 0 1.5-1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg></button>
+            </div>
+          </header>
+
+          <section class="material-library-command-grid" aria-label="素材库操作">
+            <article class="material-library-command-card material-library-collector-card" data-material-library-context="download" title="悬停查看采集说明；右键打开素材下载设置">
+              <div class="material-library-command-copy"><span class="workbench-step">01</span><div><strong>素材采集</strong><small>粘贴江湖工具箱公开分享链接，调用现有下载技能保存到下载区。</small></div></div>
+              <div class="material-library-input-row"><input id="materialLibraryCollectInput" type="text" placeholder="粘贴小红书链接或分享口令…" aria-label="素材采集链接" /><button class="primary-button" id="materialLibraryCollectBtn" type="button">采集素材</button></div>
+              <div id="materialLibraryCollectResult" class="material-library-command-result" aria-live="polite"><span>采集完成后会显示成功、失败和保存目录。</span></div>
+            </article>
+            <article class="material-library-command-card material-library-maintainer-card" data-material-library-context="ingestion" title="悬停查看整理说明；右键打开素材处理路径和开关设置">
+              <div class="material-library-command-copy"><span class="workbench-step">02</span><div><strong>素材维护</strong><small>扫描完整图文帖，按 20 字命名、规范指标、生成标签并预览移动计划。</small></div></div>
+              <div class="material-library-maintenance-actions"><button class="secondary-button" id="materialLibraryPreviewBtn" type="button">预览维护</button><button class="primary-button" id="materialLibraryCommitBtn" type="button" disabled>确认整理</button><span id="materialLibraryMaintenanceState">必须先预览，确认后才会移动或清理空目录。</span></div>
+              <div id="materialLibraryMaintenanceResult" class="material-library-command-result" aria-live="polite"><span>视频、散落 TXT 和超相似候选会保留给人工判断。</span></div>
+            </article>
+          </section>
+
+          <section class="material-library-browser" aria-label="素材库浏览器">
+            <aside class="material-library-filter-panel">
+              <div class="material-library-panel-head"><div><span class="label">本地索引</span><strong id="materialLibrarySummary">等待读取</strong></div><button class="icon-button" id="materialLibraryClearFilterBtn" type="button" title="清除搜索">×</button></div>
+              <input id="materialLibrarySearch" class="search-input" type="search" placeholder="搜索地点、玩法、文件夹或标签…" aria-label="搜索素材库" />
+              <label class="material-library-field"><span>素材分类</span><select id="materialLibraryCategoryFilter"><option value="">全部素材分类</option></select></label>
+              <div class="material-library-filter-hint" id="materialLibraryFilterHint">地点、人数、天数、季节等标签来自帖子目录和 TXT。</div>
+              <div class="material-library-category-list" id="materialLibraryCategoryList" aria-label="素材分类列表"></div>
+            </aside>
+            <main class="material-library-list-panel">
+              <div class="material-library-list-head"><div><span class="label">图文帖子</span><strong id="materialLibraryListTitle">全部素材</strong></div><span id="materialLibraryListMeta">—</span></div>
+              <div class="material-library-list" id="materialLibraryList"><div class="empty-state"><strong>正在读取素材库</strong><p>首次打开会读取本地素材索引。</p></div></div>
+            </main>
+            <aside class="material-library-preview-panel" id="materialLibraryPreviewPanel" aria-live="polite"><div class="material-library-preview-empty"><span class="preview-empty-icon">⌁</span><strong>选择一个帖子</strong><p>右侧会显示图片、文案、标签和本地路径。</p></div></aside>
+          </section>
+        </section>
+      </section>
+
+      <section class="view active" id="dashboardView">
+        <section class="production-workbench-shell">
+          <header class="production-workbench-heading">
+            <div>
+              <p class="label">生产（暂停）</p>
+              <h2>选素材 → 选模板 → 生产 → 打包待发</h2>
+              <p>一个页面完成一次作品生产。素材和模板是输入，中间对话负责调整，右侧只看真实成品文件夹。</p>
+            </div>
+            <div class="detail-button-row">
+              <span class="workbench-engine-state" id="workbenchEngineState">正在读取本地生产引擎…</span>
+              <button class="page-settings-button" type="button" data-open-page-settings="production" title="生产（暂停）设置" aria-label="打开生产（暂停）设置"><svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6A7 7 0 0 0 8.8 7L6.5 6.1l-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1A7 7 0 0 0 10.4 18l.3 2.6h4L15 18a7 7 0 0 0 1.5-1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg></button>
+              <button class="page-help-button" type="button" data-page-help="dashboardView" title="查看生产（暂停）的使用说明" aria-label="查看生产（暂停）说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button>
+            </div>
+          </header>
+
+          <div class="production-workbench-grid">
+            <aside class="production-library-column">
+              <section class="workbench-card material-picker-card" data-workbench-expandable="material" data-help-module="true" data-help-id="materialPicker" data-tooltip="选择素材：先核对素材，再进入生产">
+                <header class="workbench-card-head workbench-expandable-head" data-workbench-expand-trigger="material" title="点击展开素材工作区">
+                  <div><span class="workbench-step">01</span><strong>选择素材</strong><small id="workbenchMaterialCount">0 个已选</small></div>
+                  <div class="workbench-card-actions">
+                    <span class="workbench-auto-collapse-hint" data-workbench-collapse-hint="material" hidden>10 秒无操作自动缩小</span>
+                    <button id="workbenchSelectAllBtn" type="button">全选当前</button>
+                    <button class="workbench-expand-button" type="button" data-workbench-expand="material" aria-expanded="false" aria-label="展开素材工作区" title="展开素材区，10 秒无操作自动收起">
+                      <svg class="workbench-expand-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                        <path class="expand-corner expand-corner-tl" d="M8 4H4v4M4 4l5 5" />
+                        <path class="expand-corner expand-corner-br" d="M12 16h4v-4m0 4-5-5" />
+                      </svg>
+                    </button>
+                  </div>
+                </header>
+                <div class="workbench-filter-row" id="workbenchMaterialFilters">
+                  <button class="active" type="button" data-workbench-material-filter="all">全部</button>
+                  <button type="button" data-workbench-material-filter="conversion">精准流量贴</button>
+                  <button type="button" data-workbench-material-filter="traffic">泛流量贴</button>
+                  <button type="button" data-workbench-material-filter="unclassified">未分类</button>
+                </div>
+                <input id="workbenchMaterialSearch" class="workbench-search" type="search" placeholder="搜索地点、玩法或文件夹名称" />
+                <div class="workbench-asset-browser" aria-label="素材目录与帖子">
+                  <nav class="workbench-folder-list" id="workbenchMaterialFolders" aria-label="素材分类目录"></nav>
+                </div>
+              </section>
+
+              <section class="workbench-card template-picker-card" data-workbench-expandable="template" data-help-module="true" data-help-id="templatePicker" data-tooltip="选择模板：先锁定母版，再替换素材">
+                <header class="workbench-card-head workbench-expandable-head" data-workbench-expand-trigger="template" title="点击展开模板工作区">
+                  <div><span class="workbench-step">02</span><strong>选择模板</strong><small id="workbenchTemplateTypeLabel">转化模板</small></div>
+                  <div class="workbench-card-actions">
+                    <span class="workbench-auto-collapse-hint" data-workbench-collapse-hint="template" hidden>10 秒无操作自动缩小</span>
+                    <button id="workbenchOpenTemplateBtn" type="button">打开模板</button>
+                    <button class="workbench-expand-button" type="button" data-workbench-expand="template" aria-expanded="false" aria-label="展开模板工作区" title="展开模板区，10 秒无操作自动收起">
+                      <svg class="workbench-expand-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                        <path class="expand-corner expand-corner-tl" d="M8 4H4v4M4 4l5 5" />
+                        <path class="expand-corner expand-corner-br" d="M12 16h4v-4m0 4-5-5" />
+                      </svg>
+                    </button>
+                  </div>
+                </header>
+                <div class="template-type-switch" role="tablist">
+                  <button class="active" type="button" data-template-type="conversion">转化模板</button>
+                  <button type="button" data-template-type="game">游戏模板</button>
+                </div>
+                <div class="workbench-asset-browser template-asset-browser" aria-label="模板目录与母版图">
+                  <nav class="workbench-template-list workbench-folder-list" id="workbenchTemplateList" aria-label="模板列表"></nav>
+                </div>
+              </section>
+            </aside>
+
+            <main class="production-dialog-column">
+              <section class="workbench-card production-dialog-card" data-help-module="true" data-help-id="productionDialog" data-tooltip="生产规则与提示词：核对本次生成的输入和边界">
+                <header class="workbench-card-head production-dialog-head">
+                  <div><span class="workbench-step">03</span><strong id="workbenchDialogTitle">生产规则与提示词</strong><small id="workbenchDialogMeta">规则跟随当前模板，本批要求单独追加</small></div>
+                </header>
+                <div class="prompt-version-bar">
+                  <div><strong>当前生产规则</strong><span id="workbenchPromptVersion">模板默认规则</span></div>
+                  <button id="workbenchSavePromptBtn" type="button">保存规则</button>
+                </div>
+                <textarea id="workbenchPromptEditor" class="workbench-prompt-editor" rows="7" placeholder="这里保存当前模板的长期规则。系统会自动叠加母版锁定、事实校验、独立3:4图片、文案和自检规则。"></textarea>
+                <div class="production-conversation" id="workbenchConversation"></div>
+                <div class="production-conversation-input">
+                  <textarea id="workbenchConversationInput" rows="3" placeholder="直接说本次要求，例如：图上文字少一点；只做前10套；保留真实场景；失败项重做。"></textarea>
+                  <button id="workbenchSendRequirementBtn" type="button">加入本次要求</button>
+                </div>
+                <div class="workbench-run-settings compact">
+                  <label>生图平台<select id="workbenchImageProvider"><option value="local-openai">本地 GPT 生图</option><option value="bytecat">ByteCat</option><option value="minimax">MiniMax</option></select></label>
+                  <label>生图模型<select id="workbenchImageModel" aria-label="选择生图模型"><option value="gpt-image-2">gpt-image-2</option></select></label>
+                  <label>文案模型<select id="workbenchTextModel" aria-label="选择文案模型"><option value="MiniMax-M2.7">MiniMax-M2.7</option></select></label>
+                  <label>页数<select id="workbenchPageCount"><option value="">按素材自动</option><option>3</option><option>5</option><option>7</option><option>9</option><option>10</option></select></label>
+                  <label>质量<select id="workbenchQuality"><option value="严格母版">严格母版</option><option value="高质量">高质量</option><option value="标准">标准</option></select></label>
+                </div>
+                <div class="workbench-model-row"><span id="workbenchModelStatus">图片与文案模型分别运行，可随时切换</span><button id="workbenchRefreshModelsBtn" type="button">刷新可用模型</button></div>
+                <div id="workbenchLatestOutputs" class="production-output-grid"></div>
+                <div class="workbench-action-dock">
+                  <section id="workbenchPlanPanel" class="production-plan-panel" hidden></section>
+                  <div class="workbench-primary-actions">
+                    <button id="workbenchEditPlanBtn" type="button" hidden>返回调整</button>
+                    <button id="workbenchStartProductionBtn" class="primary-button workbench-start-button" type="button">开始生产</button>
+                  </div>
+                  <section class="workbench-production-feedback" aria-live="polite">
+                    <div class="workbench-progress-head">
+                      <strong id="workbenchProgressPhase">等待开始</strong>
+                      <span id="workbenchProgressPercent">0%</span>
+                    </div>
+                    <div class="workbench-progress-track" role="progressbar" aria-label="生产进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                      <span id="workbenchProgressBar"></span>
+                    </div>
+                    <div id="workbenchProductionStatus" class="workbench-production-status">请选择素材和模板。</div>
+                    <div id="workbenchTaskActions" class="workbench-task-actions" hidden></div>
+                    <div id="workbenchQualitySummary" class="workbench-quality-summary" hidden></div>
+                    <ol id="workbenchProductionLog" class="workbench-production-log">
+                      <li>等待选择素材与模板</li>
+                    </ol>
+                  </section>
+                </div>
+              </section>
+            </main>
+
+            <aside class="production-output-column">
+              <section class="workbench-card output-library-card" data-help-module="true" data-help-id="outputLibrary" data-tooltip="成品待审区：检查结果后再打包入库">
+                <header class="workbench-card-head">
+                  <div><span class="workbench-step">04</span><strong>成品待审区</strong><small id="workbenchProductCount">0 个帖子</small></div>
+                  <button id="workbenchRefreshProductsBtn" type="button">刷新</button>
+                </header>
+                <div class="workbench-output-tabs">
+                  <button class="active" type="button" data-workbench-output-filter="unpacked">未打包</button>
+                  <button type="button" data-workbench-output-filter="packed">已打包</button>
+                  <button type="button" data-workbench-output-filter="history">打包记录</button>
+                </div>
+                <div class="workbench-output-path" id="workbenchOutputPath"></div>
+                <div class="workbench-product-list" id="workbenchProductList"></div>
+                <div class="workbench-pack-bar">
+                  <div><strong id="workbenchSelectedProductCount">已选 0 个</strong><small>每个作品保持独立文件夹，图片和文案一起复制。</small></div>
+                  <button id="workbenchPackBtn" class="primary-button" type="button">打包成作品集</button>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="dashboardLegacyView" hidden>
+        <section class="production-api-flow" aria-label="API 内容生产流程">
+          <div class="production-api-intro">
+            <span class="api-mode-badge">本地作品生产</span>
+            <strong>模板定样，素材换内容</strong>
+            <small>先锁定视觉模板，再选择素材，生成同风格作品与配套文案。</small>
+            <button class="page-help-button" type="button" data-page-help="dashboardView" title="查看生产（暂停）的使用说明" aria-label="查看生产（暂停）说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button>
+          </div>
+          <div class="production-api-steps">
+            <label class="production-api-step"><b>01</b><span><strong>选择模板</strong><select id="templateQuickSelect" class="search-input compact-select"></select></span></label>
+            <div class="production-api-step"><b>02</b><span><strong>选择素材</strong><small id="pipelineMaterialName">从下方素材库选择</small></span></div>
+            <div class="production-api-step"><b>03</b><span><strong>按模板制作</strong><small id="imageApiStatus">生产引擎待连接</small></span></div>
+            <div class="production-api-step"><b>04</b><span><strong>作品 + 文案</strong><small>先进入待审区，确认后再入库</small></span></div>
+          </div>
+        </section>
+        <section class="production-console glass" aria-label="作品生产">
+          <div class="production-console-head">
+            <div><p class="label">选好素材和模板，直接得到结果</p><h2>处理对象跟随左侧选择</h2><p>左侧勾选哪些帖子文件夹，就按当前模板处理哪些内容；中间不再设置“一套”或“一批”模式。</p></div>
+            <span class="review-only-badge">结果先进入待审区</span>
+          </div>
+          <div class="production-simple-controls">
+            <label><span>页数</span><select id="productionPageCount" class="search-input"><option value="">自动（按素材）</option><option value="3">3 页</option><option value="5">5 页</option><option value="7">7 页</option><option value="9">9 页</option><option value="10">10 页</option></select></label>
+            <label><span>质量</span><select id="productionQuality" class="search-input"><option value="严格母版">严格母版（推荐）</option><option value="高质量">高质量</option><option value="标准">标准</option></select></label>
+          </div>
+          <label class="production-prompt-field"><span>额外要求（可以不填）</span><textarea id="productionPrompt" rows="3" placeholder="例如：本次标题更克制；不要出现篝火。模板规则、事实锁、页数和文案规则已经自动加入，不需要自己写提示词。"></textarea></label>
+          <div class="production-actions primary-production-actions">
+            <button id="createProductionPlanBtn" class="primary-button production-main-button" type="button">开始生产</button>
+            <button id="cancelProductionPlanBtn" type="button" hidden>重新选择</button>
+          </div>
+          <section class="production-plan-panel" id="productionPlanPanel" hidden></section>
+          <div class="production-live-status" id="productionLiveStatus">先选择一个或多个素材文件夹和一个模板，再点击“开始生产”。</div>
+          <div class="production-output-grid" id="productionOutputGrid"></div>
+        </section>
+        <div class="three-pane" id="threePane">
+          <aside class="filter-pane">
+            <div class="stats">
+              <div class="stat"><span>素材分类</span><strong id="statMaterialCategories">--</strong></div>
+              <div class="stat"><span>素材帖子</span><strong id="statMaterialItems">--</strong></div>
+              <div class="stat"><span>模板</span><strong id="statTemplates">--</strong></div>
+              <div class="stat"><span>成品</span><strong id="statProducts">--</strong></div>
+            </div>
+            <label class="check-row">
+              <input id="filterMatchSwitch" type="checkbox" checked />
+              <span>满足全部筛选</span>
+            </label>
+            <label>切换素材库</label>
+            <select id="materialLibraryFilter" class="search-input"></select>
+            <div class="filter-grid">
+              <div>
+                <label>素材类型</label>
+                <select id="materialTypeKeywordFilters" class="search-input"></select>
+              </div>
+              <div>
+                <label>行程天数</label>
+                <select id="durationKeywordFilters" class="search-input"></select>
+              </div>
+              <div>
+                <label>地点</label>
+                <select id="locationKeywordFilters" class="search-input"></select>
+              </div>
+              <div>
+                <label>活动</label>
+                <select id="activityKeywordFilters" class="search-input"></select>
+              </div>
+              <div>
+                <label>季节</label>
+                <select id="seasonKeywordFilters" class="search-input"></select>
+              </div>
+              <div>
+                <label>月份</label>
+                <select id="monthKeywordFilters" class="search-input"></select>
+              </div>
+              <div class="wide-filter">
+                <label>节日</label>
+                <select id="festivalKeywordFilters" class="search-input"></select>
+              </div>
+            </div>
+            <label>搜索素材</label>
+            <input id="materialSearch" class="search-input" placeholder="地区 / 玩法 / 标题" />
+            <div class="filter-note"><b>本地库：</b>顶部刷新会重新扫描素材库、模板库和成品库。当前队列先跑信息流素材，再跑夏季团建和团建合集。</div>
+            <button id="collectFilteredBtn" class="side-action" type="button">整合当前筛选素材</button>
+          </aside>
+          <div class="pane-resizer" data-resizer="left" title="拖动调整左侧宽度"></div>
+
+          <main class="work-canvas">
+            <div class="canvas-head">
+              <div>
+                <p class="label">素材预览</p>
+                <p id="materialPath" class="path-line"></p>
+              </div>
+              <div class="canvas-tools">
+                <select id="materialQuickSelect" class="search-input compact-select"></select>
+                <select id="materialSortSwitch" class="search-input compact-select" aria-label="素材排序"></select>
+              </div>
+            </div>
+            <section class="preview-block material-preview-block">
+              <div id="materialFeed" class="material-feed"></div>
+            </section>
+          </main>
+          <div class="pane-resizer" data-resizer="right" title="拖动调整右侧宽度"></div>
+
+          <aside class="detail-pane">
+            <h2>大图预览</h2>
+            <figure class="focus-preview" id="focusPreview">
+              <img id="focusPreviewImage" alt="当前预览" />
+              <textarea id="focusPreviewText" class="focus-preview-text" spellcheck="false"></textarea>
+              <figcaption>
+                <strong id="focusPreviewTitle">请选择左侧素材或模板</strong>
+              <span id="focusPreviewMeta">图片预览</span>
+              </figcaption>
+            </figure>
+            <section class="production-status" id="productionStatus" aria-live="polite"></section>
+            <textarea id="commandBox" class="command-box">继续：使用模板1 T01，处理素材库1 信息流素材，从未完成/未制作处续接，每轮最多约40张图。</textarea>
+            <div class="detail-actions">
+              <button class="action-button full" id="viewCopyBtn">查看笔记文案</button>
+              <button class="action-button full" id="copyCommandBtn">复制生产指令</button>
+              <button class="action-button full" id="openTemplateBtn">复制当前路径</button>
+              <button class="action-button full" id="copyMaterialBtn">打开所在文件夹</button>
+              <button class="action-button full" id="openProjectBtn">打开项目根目录</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="promptsView">
+        <section class="prompt-layout">
+          <aside class="panel glass prompt-menu">
+            <p class="label">提示词区</p>
+            <h2>SOP / Skills</h2>
+            <div id="promptList" class="prompt-list"></div>
+          </aside>
+          <section class="panel glass prompt-editor">
+            <div class="panel-head">
+              <div>
+                <p class="label">可编辑提示词</p>
+                <h2 id="promptTitle">请选择提示词</h2>
+                <p id="promptRole" class="path-line"></p>
+              </div>
+              <div class="button-row">
+                <select id="promptVersion" class="version-select"></select>
+                <button class="ghost-button" id="copyPromptBtn">复制</button>
+                <button class="primary-button" id="savePromptBtn">保存</button>
+                <button class="page-help-button" type="button" data-page-help="promptsView" title="查看提示词管理说明" aria-label="查看提示词管理说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button>
+              </div>
+            </div>
+            <textarea id="promptContent" class="prompt-textarea" spellcheck="false"></textarea>
+          </section>
+        </section>
+      </section>
+
+      <section class="view active" id="gptProductionTestView">
+        <section class="gpt-production-test-shell">
+          <header class="gpt-production-test-heading">
+            <div>
+              <h2>素材与模板 × GPT 自动生产</h2>
+            </div>
+            <div class="gpt-production-test-actions">
+              <button id="gptProductionHistoryBtn" class="secondary-button" type="button" title="查看生产记录">生产记录</button>
+              <button class="page-help-button" type="button" data-page-help="gptProductionTestView" title="查看内容制作说明" aria-label="查看内容制作说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button>
+              <button class="page-settings-button" type="button" data-open-page-settings="gptAuto" title="自动生产设置" aria-label="打开自动生产设置"><svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6A7 7 0 0 0 8.8 7L6.5 6.1l-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1A7 7 0 0 0 10.4 18l.3 2.6h4L15 18a7 7 0 0 0 1.5-1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg></button>
+            </div>
+          </header>
+
+          <div class="gpt-production-test-grid">
+            <aside class="gpt-production-test-library">
+              <section class="workbench-card gpt-test-material-card" data-help-module="true" data-help-id="materialPicker" data-help-title="选择素材：先核对素材，再进入生产" data-tooltip="素材区读取项目01-素材库。江湖工具箱只负责下载；江湖素材整理技能扫描下载区，将完整图文帖子按20个可见字符规范评论和点赞、同步标签并整包移入素材库。整理完成后点击刷新即可筛选使用；不完整视频或TXT残留不会自动删除。">
+                <header class="workbench-card-head gpt-library-panel-head" title="江湖工具箱下载后，由素材整理技能维护这里">
+                  <div><span class="workbench-step">01</span><strong>素材区</strong><small id="gptTestMaterialCount">0 个已选</small></div>
+                  <div class="workbench-card-actions">
+                    <span class="gpt-library-auto-restore-hint" data-gpt-library-restore-hint="material" hidden>10 秒无操作自动收起</span>
+                    <button id="gptTestMaterialRefreshBtn" class="icon-button" type="button" title="刷新本地素材" aria-label="刷新本地素材">↻</button>
+                    <button class="workbench-expand-button" type="button" data-gpt-library-expand="material" aria-expanded="false" aria-label="展开素材区" title="展开素材区，10 秒无操作自动收起">
+                      <svg class="workbench-expand-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                        <path class="expand-corner expand-corner-tl" d="M8 4H4v4M4 4l5 5" />
+                        <path class="expand-corner expand-corner-br" d="M12 16h4v-4m0 4-5-5" />
+                      </svg>
+                    </button>
+                  </div>
+                </header>
+                <input id="gptTestMaterialSearch" class="workbench-search" type="search" placeholder="搜索帖子文件夹" />
+                <div id="gptMaterialTagFilters" class="tag-filter-bar" aria-label="素材标签筛选"></div>
+                <nav id="gptTestMaterialFolders" class="workbench-folder-list gpt-test-folder-list" aria-label="GPT测试素材区"></nav>
+              </section>
+
+              <section class="workbench-card gpt-test-template-card" data-help-module="true" data-help-id="templatePicker" data-tooltip="选择模板：先锁定母版，再替换素材">
+                <header class="workbench-card-head gpt-library-panel-head">
+                  <div><span class="workbench-step">02</span><strong>模板区</strong><small id="gptTestTemplateName">请选择模板</small></div>
+                  <div class="workbench-card-actions">
+                    <span class="gpt-library-auto-restore-hint" data-gpt-library-restore-hint="template" hidden>10 秒无操作自动收起</span>
+                    <button class="workbench-expand-button" type="button" data-gpt-library-expand="template" aria-expanded="false" aria-label="展开模板区" title="展开模板区，10 秒无操作自动收起">
+                      <svg class="workbench-expand-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                        <path class="expand-corner expand-corner-tl" d="M8 4H4v4M4 4l5 5" />
+                        <path class="expand-corner expand-corner-br" d="M12 16h4v-4m0 4-5-5" />
+                      </svg>
+                    </button>
+                  </div>
+                </header>
+                <div class="gpt-template-category-filter">
+                  <label for="gptTemplateCategoryFilter">模板分类</label>
+                  <select id="gptTemplateCategoryFilter" aria-label="筛选模板分类">
+                    <option value="all">全部模板</option>
+                    <option value="conversion">转化模板</option>
+                    <option value="game">游戏模板</option>
+                    <option value="unclassified">未分类模板</option>
+                  </select>
+                </div>
+                <div id="gptOnlineTemplateForm" class="gpt-online-template-form">
+                  <input id="gptOnlineTemplateName" type="text" placeholder="模板名称" aria-label="模板名称" />
+                  <input id="gptOnlineTemplateUrl" type="url" placeholder="粘贴 ChatGPT 会话/分享链接" aria-label="模板链接" />
+                  <select id="gptOnlineTemplateAccount" aria-label="绑定生产账号" title="把这个原始会话绑定到哪个生产账号窗口">
+                    <option value="">不绑定账号</option>
+                  </select>
+                  <button id="gptSaveOnlineTemplateBtn" type="button" title="保存模板名称、链接和账号绑定；只更新本地模板登记，不会自动发送或生产">上传模板</button>
+                  <small id="gptOnlineTemplateFile">链接模板.txt</small>
+                </div>
+                <nav id="gptTestTemplateList" class="workbench-folder-list gpt-test-template-list" aria-label="GPT测试模板区"></nav>
+              </section>
+
+              <section class="workbench-card gpt-test-send-dock" data-help-module="true" data-help-id="productionDialog" data-tooltip="生产规则与提示词：核对本次生成的输入和边界">
+                <header class="workbench-card-head">
+                  <div><span class="workbench-step">03</span><strong>发送区</strong><small id="gptTestSendHint">选好素材和模板后开始生产</small></div>
+                </header>
+                <div class="gpt-test-send-body">
+                  <div class="gpt-mode-action-row">
+                    <div class="gpt-mode-row">
+                      <select id="gptProductionMode" aria-label="生产模式" title="右键打开当前生产模式设置">
+                        <option value="manual">人工控制</option>
+                        <option value="automatic">选材后自动</option>
+                        <option value="single">单账号全自动</option>
+                        <option value="scheduled">定时单账号全自动</option>
+                        <option value="patrol">单账号多对话巡检</option>
+                        <option value="semi-auto" hidden>半自动（兼容）</option>
+                      </select>
+                      <span class="gpt-current-account-chip" title="当前窗口"> <strong id="gptCockpitAccount">未选择</strong></span>
+                    </div>
+                    <div class="gpt-workflow-variant-row">
+                      <select id="gptWorkflowVariant" aria-label="当前窗口流水线版本" title="每个账号窗口独立保存；切换只影响该窗口后续创建的作品">
+                        <option value="legacy-v1">旧模式｜复用原对话</option>
+                        <option value="fresh-session-fixed-template">新模式｜每套新对话 + 固定模板</option>
+                      </select>
+                      <small id="gptWorkflowVariantHint">按当前账号窗口独立保存</small>
+                    </div>
+                    <div class="gpt-action-row">
+                      <button id="gptTestSendBtn" class="primary-button" type="button" title="按当前生产模式启动；自动模式会从保存的队列和检查点继续，人工模式只上传当前选中的素材" disabled hidden>开始自动生产</button>
+                      <button id="gptManualNextBtn" class="secondary-button" type="button" title="人工模式：确认当前作品已处理完，再上传队列中的下一套；不会自动跳过未确认的作品" hidden>完成当前，上传下一套</button>
+                      <button id="gptSemiAutoResumeBtn" class="secondary-button" type="button" title="半自动模式：确认当前计划后继续当前作品的生图阶段，不会重新上传素材" hidden>确认继续出图</button>
+                    </div>
+                  </div>
+                  <p class="gpt-mode-hint" id="gptModeHint" aria-live="polite"></p>
+                  <div class="gpt-queue-actions">
+                    <button id="gptPauseQueueBtn" type="button" title="暂停当前窗口：停在安全检查点；已完成文件、登录状态和队列都会保留" hidden>暂停</button>
+                    <button id="gptStopQueueBtn" type="button" class="danger-text-button" data-tooltip="停止本窗口：让当前窗口安全收尾并暂停队列，已完成文件和登录状态会保留" hidden>停止本窗口</button>
+                    <button id="gptRetryTaskBtn" type="button" data-tooltip="重试当前步骤：只重新执行当前作品刚才失败的阶段，不重新生成已经完成的内容" hidden>重试当前步骤</button>
+                    <button id="gptSkipTaskBtn" type="button" data-tooltip="跳过此作品并继续队列：当前作品记为跳过，不下载、不归档；原素材不会登记为已完成" hidden>跳过作品</button>
+                    <details id="gptMoreRecovery" class="gpt-recovery-more" hidden>
+                      <summary title="高级恢复：重开当前网页或从头重做当前作品；不会删除本地素材">恢复工具</summary>
+                      <div class="gpt-recovery-more-actions">
+                        <button id="gptReopenWindowBtn" type="button" data-tooltip="重开当前窗口：刷新或重新连接当前账号网页，然后从保存的检查点继续；不会清除登录状态或临时生产记录" hidden>重开当前窗口</button>
+                        <button id="gptResetTaskBtn" type="button" data-tooltip="重做此作品：确认网页没有正在生成后，清理当前作品检查点，从上传素材和生成计划重新开始；不会删除本地文件" hidden>重做此作品</button>
+                      </div>
+                    </details>
+                  </div>
+                  <div class="gpt-auto-progress" aria-label="自动生产进度" hidden>
+                    <span id="gptAutoProgressBar"></span>
+                  </div>
+                  <div id="gptProgressDetail" class="gpt-progress-detail" hidden aria-live="polite">
+                    <div class="gpt-progress-detail-row">
+                      <strong id="gptCurrentTaskProgress">当前作品：准备中</strong>
+                      <span id="gptCurrentStageProgress">当前阶段：准备会话 · 0%</span>
+                    </div>
+                    <div class="gpt-progress-detail-row gpt-progress-detail-muted">
+                      <span id="gptCurrentProgressEvidence">等待生产证据</span>
+                      <span id="gptBatchProgressSummary">当前批次：已完成 0 · 处理中 0 · 暂缓 0 · 失败 0 · 剩余 0</span>
+                    </div>
+                  </div>
+                  <div class="gpt-status-bar" id="gptStatusBar" aria-live="polite">
+                    <span class="gpt-status-badge" id="gptStatusBadge">待机</span>
+                    <span class="gpt-status-msg" id="gptTestQueueStatus">请至少选择一个素材文件夹；模板可以不选</span>
+                    <span class="gpt-status-next-action" id="gptStatusNextAction" hidden></span>
+                  </div>
+                  <details class="gpt-extra-prompt-fold">
+                    <summary>补充要求（可留空）</summary>
+                    <textarea id="gptTestExtraPrompt" rows="3" placeholder="本次额外要求会追加到模板规则之后；不填则仅使用模板自带规则和素材 TXT"></textarea>
+                  </details>
+                </div>
+              </section>
+            </aside>
+
+            <section class="gpt-production-browser-panel">
+              <header class="gpt-browser-toolbar">
+                <div class="gpt-browser-nav" aria-label="网页导航">
+                  <button id="gptBrowserBackBtn" type="button" title="后退" aria-label="后退">←</button>
+                  <button id="gptBrowserForwardBtn" type="button" title="前进" aria-label="前进">→</button>
+                  <button id="gptBrowserReloadBtn" type="button" title="刷新" aria-label="刷新">↻</button>
+                  <button id="gptBrowserHomeBtn" type="button" title="打开 ChatGPT 首页" aria-label="打开 ChatGPT 首页">⌂</button>
+                </div>
+                <nav id="gptAccountTabs" class="gpt-account-tabs" aria-label="账号窗口切换"></nav>
+                  <button id="gptAddAccountBtn" class="gpt-add-account" type="button" title="添加账号窗口" aria-label="添加账号窗口">＋ 添加账号窗口</button>
+              </header>
+              <div id="gptEmbeddedHost" class="gpt-embedded-host" aria-label="当前账号窗口网页">
+                <div class="gpt-embedded-placeholder" data-gpt-preview-placeholder="shared">
+                  <span id="gptEmbeddedState" class="gpt-embedded-state" data-tone="busy" role="status" aria-live="polite">正在检查 GPT 窗口连接</span>
+                  <strong>正在读取 GPT 窗口状态</strong>
+                  <p>页面会根据当前实例和账号的连接状态更新；生产按钮仅在桌面桥接确认后可用。</p>
+                </div>
+              </div>
+              <footer class="gpt-browser-addressbar" aria-label="当前账号窗口地址">
+                <span id="gptBrowserLoadingProgress" class="gpt-browser-loading-progress" role="progressbar" aria-label="网页加载进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="网页加载中" hidden><span id="gptBrowserLoadingBar"></span></span>
+                <label class="sr-only" for="gptBrowserAddressInput">网页地址</label>
+                <input id="gptBrowserAddressInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="默认 ChatGPT，可输入其他网址，按回车访问" aria-label="默认 ChatGPT，可输入其他网址，按回车访问" />
+                <button id="gptBrowserGoBtn" class="secondary-button gpt-browser-go-button" type="button" title="访问当前网址" aria-label="访问当前网址">→</button>
+              </footer>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="worksView">
+        <section class="collection-layout">
+          <header class="page-heading">
+            <div><p class="label">正式内容资产</p><h2>作品库</h2><p>直接读取真实成品文件夹；每篇作品以稳定 workId 保持身份，作品集只作为容器。</p></div>
+             <div class="detail-button-row"><button class="page-help-button" type="button" data-page-help="productsView" title="查看作品集的使用说明" aria-label="查看作品集说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button></div>
+          </header>
+          <section class="folder-source-bar" aria-label="作品库搜索与目录设置">
+            <input id="worksSearchInput" class="search-input" type="search" placeholder="搜索作品名、标签或 workId" />
+            <input id="collectionRootInput" class="search-input" type="text" placeholder="粘贴作品集目录后按回车" />
+             <button id="openCollectionRootBtn" class="ghost-button" type="button" title="打开当前作品仓库目录">打开</button>
+             <button id="chooseCollectionRootBtn" class="ghost-button" type="button">选择</button>
+          </section>
+          <div id="worksTagFilters" class="tag-filter-bar works-tag-filter-bar" aria-label="作品标签筛选"></div>
+          <div class="workflow-stage-toolbar">
+            <div class="workflow-stage-tabs" id="collectionStageTabs" aria-label="作品阶段"></div>
+            <button class="collection-view-toggle" type="button" data-collection-view-toggle title="切换为网格视图" aria-label="切换为网格视图"></button>
+          </div>
+          <p class="path-line" id="collectionStagePath"></p>
+          <div class="collection-workspace">
+            <section class="collection-list" id="worksList"></section>
+          </div>
+          <footer class="works-action-dock"><span id="worksSelectedCount">已选择 0 篇作品</span><button id="addWorksToDistributionBtn" class="primary-button" type="button">加入设备分发</button></footer>
+          <div class="legacy-product-controls" hidden>
+            <select id="productTemplateFilter"></select><input id="productSearch" /><select id="productWorkFilter"></select>
+            <select id="productWorkQuickSelect"></select><div id="productImages"></div><span id="productPath"></span>
+            <span id="productDetailTitle"></span><span id="productDetailMeta"></span>
+            <button id="openProductBtn"></button><button id="copyProductPathBtn"></button>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="distributionView">
+        <section class="distribution-layout">
+          <div class="distribution-sticky-shell">
+          <header class="distribution-command-bar">
+            <h2>文件传输</h2>
+             <section class="distribution-drop-zone" id="distributionDropZone" tabindex="0" aria-label="拖入文件或文件夹" title="拖入文件或文件夹后，在设备卡片上发送" data-tooltip="拖入文件或文件夹"><strong>拖入文件或文件夹</strong><span>拖入后，在设备卡片上发送</span></section>
+            <div class="distribution-command-actions"><button class="refresh-button" id="distributionRefreshBtn" title="刷新设备与库存" aria-label="立即刷新设备与库存"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 8.3A7 7 0 0 1 18.7 7L20 12M4 12l1.3 5A7 7 0 0 0 17.9 15.7"/></svg></button><button class="page-settings-button" type="button" data-open-page-settings="distribution" title="文件传输设置" aria-label="打开文件传输设置"><svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6A7 7 0 0 0 8.8 7L6.5 6.1l-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2.3 3.4 2.3-1A7 7 0 0 0 10.4 18l.3 2.6h4L15 18a7 7 0 0 0 1.5-1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg></button><button class="page-help-button" type="button" data-page-help="distributionView" title="文件传输说明" aria-label="查看文件传输说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button></div>
+          </header>
+          <section id="distributionReserveAlert" class="reserve-floating-alert" hidden aria-live="polite"></section>
+          <div class="segment-tabs distribution-stage-tabs" id="distributionTabs"></div>
+          </div>
+          <section class="distribution-panel active" id="distributionDevices"></section>
+          <section class="distribution-panel" id="distributionMobile"></section>
+          <section class="distribution-panel" id="distributionUsed"></section>
+          <section class="distribution-panel" id="distributionHistory"></section>
+        </section>
+      </section>
+
+      <section class="view" id="momentsView">
+        <section class="moments-publisher-layout">
+          <header class="page-heading moments-heading">
+            <div>
+            <p class="label">朋友圈采集整理与发布</p>
+            <h2>朋友圈采集整理与发布</h2>
+              <p>筛选历史素材，预览原图和原文案；发送只准备到微信发表前，最终点击由你确认。</p>
+            </div>
+            <div class="moments-heading-actions">
+              <span id="momentsLibraryStatus" class="moments-library-status" aria-live="polite">正在读取素材库…</span>
+              <span id="momentsOpenModeStatus" class="moments-open-mode-status">自动打开微信</span>
+              <button id="momentsScheduleStatus" class="moments-open-mode-status moments-mode-control" type="button" data-skill-moments-settings title="在技能中心设置手动触发或定时触发（自动准备）" aria-label="打开技能中心的朋友圈设置">手动触发</button><span id="momentsScheduleNext" class="moments-open-mode-status" aria-live="polite"></span><span id="momentsCollectionScheduleStatus" class="moments-open-mode-status" aria-live="polite"></span>
+              <button id="momentsRefreshBtn" class="refresh-button" type="button" title="重新读取朋友圈采集整理与发布素材，不会修改原素材" aria-label="刷新朋友圈采集整理与发布">↻</button>
+              <button class="page-settings-button" type="button" data-skill-moments-settings title="打开技能中心的朋友圈设置" aria-label="打开技能中心的朋友圈设置"><svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6A7 7 0 0 0 8.8 7L6.5 6.1l-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2.3 3.4 2.3-1A7 7 0 0 0 10.4 18l.3 2.6h4L15 18a7 7 0 0 0 1.5-1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg></button>
+              <button class="page-help-button" type="button" data-page-help="momentsView" title="查看朋友圈采集整理与发布说明" aria-label="查看朋友圈采集整理与发布说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button>
+            </div>
+          </header>
+
+          <section class="moments-filter-bar" aria-label="朋友圈素材筛选" data-tooltip="日期策略用于选材触发；选择标签、分类、季节、地点、活动、使用次数或搜索时，自动浏览全部历史，避免有效标签被默认日期交集遮住。">
+            <label><span>分类</span><select id="momentsCategoryFilter" title="按 asset.json 中的分类筛选"><option value="all">全部分类</option></select></label>
+            <label><span>标签</span><select id="momentsTagFilter" title="按 asset.json 中的标签筛选"><option value="all">全部标签</option></select></label>
+            <label><span>日期策略</span><select id="momentsPolicyFilter" title="按选材策略筛选；技能中心的快捷按钮会直接使用同一规则"><option value="last-year-day" selected>去年今天</option><option value="historical-day">往年今天（随机一年）</option><option value="last-year-month">去年本月</option><option value="anniversary">智能回退：去年今天 → 去年本月随机 → 历史同月随机</option><option value="current-year">今年素材</option><option value="all">全部历史</option></select></label>
+            <label><span>季节</span><select id="momentsSeasonFilter"><option value="all">全部季节</option></select></label>
+            <label><span>地点</span><select id="momentsPlaceFilter"><option value="all">全部地点</option></select></label>
+            <label><span>活动</span><select id="momentsActivityFilter"><option value="all">全部活动</option></select></label>
+            <label><span>使用次数</span><select id="momentsUsageFilter"><option value="all">全部使用次数</option></select></label>
+            <label class="moments-search-field"><span>搜索</span><input id="momentsSearchInput" type="search" placeholder="作品名、文案、标签" title="输入关键词缩小候选，不会改动原文案" /></label>
+          </section>
+
+          <div class="moments-workspace-meta">
+            <p id="momentsResultsSummary">等待读取素材…</p>
+            <span class="moments-safety-note"><i></i>只准备，不自动发表</span>
+          </div>
+
+          <div class="moments-publisher-workspace">
+            <section class="moments-library-pane" aria-label="朋友圈素材列表">
+              <div class="moments-pane-heading"><div><span class="label">素材库</span><h3>历史作品</h3></div><span id="momentsLibraryCount">0 / 0 条</span></div>
+              <div id="momentsAssetGrid" class="moments-asset-grid" aria-live="polite"></div>
+            </section>
+
+            <section class="moments-preview-pane" aria-label="朋友圈预览">
+              <div id="momentsEmptyPreview" class="moments-empty-preview">
+                <span class="moments-empty-mark">◎</span>
+                <strong>选择一条素材开始预览</strong>
+                <p>左侧卡片会显示封面、日期和图片数量；点击后这里展开朋友圈样式预览。</p>
+              </div>
+              <article id="momentsPreviewCard" class="moments-preview-card" hidden>
+                <header class="moments-preview-header">
+                  <div><span class="label">朋友圈预览</span><h3 id="momentsPreviewTitle">朋友圈内容预览</h3><p id="momentsPreviewMeta"></p></div>
+                  <div id="momentsPreviewTags" class="moments-preview-tags"></div>
+                </header>
+                <div id="momentsPreviewGrid" class="moments-preview-grid" aria-label="朋友圈图片九宫格"></div>
+                <div class="moments-copy-preview"><span class="label">原始文案 · content.txt</span><p id="momentsPreviewText"></p></div>
+                <footer class="moments-preview-footer">
+                  <div><strong id="momentsPrepareState">等待操作</strong><small>发送技能会先检查并启动微信；必要时等待你登录，随后停在最终发表之前。</small></div>
+                  <div class="moments-preview-actions">
+                    <button id="momentsOpenFolderBtn" type="button" title="在资源管理器打开当前素材目录，不会移动或删除文件">打开素材目录</button>
+                    <button id="momentsPreflightBtn" type="button" title="只检查状态、文案和图片；不会打开微信、不会写入发布状态">发送前自检</button>
+                    <button id="momentsPreviewSendBtn" class="primary-button" type="button" title="把当前作品的全部图片和 content.txt 文案填入微信发表界面；不会点击最终发表">发送到微信待发布</button>
+                  </div>
+                </footer>
+              </article>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="publishingView">
+        <section class="distribution-layout wechat-publishing-layout">
+          <header class="wechat-publishing-heading">
+            <div><p class="label">外部内容平台统一工作区</p><h2>在线平台分发</h2><p>左侧选择成品，右侧直接打开对应平台网页；上传、粘贴和最终确认都在官方页面完成。</p></div>
+            <button class="page-help-button" type="button" data-page-help="publishingView" title="查看在线平台分发说明" aria-label="查看在线平台分发说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button>
+          </header>
+          <nav class="publishing-platform-tabs" aria-label="在线平台" role="tablist">
+            <button class="active" type="button" role="tab" aria-selected="true" data-publishing-platform="wechat" title="公众号：已接入，可选择作品并保存图文草稿">公众号 <span class="platform-tab-status">已接入</span></button>
+            <button type="button" role="tab" aria-selected="false" data-publishing-platform="xiaohongshu" title="小红书：使用本机 MCP，先检查登录状态">小红书 <span class="platform-tab-status">待实测</span></button>
+            <button type="button" role="tab" aria-selected="false" data-publishing-platform="douyin" title="抖音：准备发布包后打开官方创作者中心">抖音 <span class="platform-tab-status">可手动发布</span></button>
+            <button type="button" role="tab" aria-selected="false" data-publishing-platform="x" title="X / 推特：准备发布包后打开官方发帖页">X / 推特 <span class="platform-tab-status">可手动发布</span></button>
+            <button type="button" role="tab" aria-selected="false" data-publishing-platform="ctrip" title="携程旅行：从左侧勾选成品，批量保存到官方草稿箱">携程旅行 <span class="platform-tab-status">可批量存草稿</span></button>
+          </nav>
+          <div class="publishing-flow-rail" data-publishing-flow-rail aria-label="在线平台三步流程">
+            <div class="publishing-flow-step is-active" data-publishing-flow-step="select"><b>01</b><span>选成品</span><small>左侧素材库</small></div>
+            <div class="publishing-flow-step" data-publishing-flow-step="review"><b>02</b><span>打开网页</span><small>右侧官方页面</small></div>
+            <div class="publishing-flow-step" data-publishing-flow-step="prepare"><b>03</b><span>人工确认</span><small>平台内完成发布</small></div>
+            <p data-publishing-flow-status>公众号 · 先从左侧选择一篇成品</p>
+          </div>
+          <section class="publishing-workbench" id="publishingWorkbench">
+            <aside class="publishing-library-pane" aria-label="现有素材与成品库">
+              <header class="publishing-library-header">
+                <div><span class="publishing-step-label">01 · 选成品</span><span class="publishing-status-kicker">现有成品库</span><h3>成品区</h3><p id="publishingLibrarySummary">正在读取公众号成品库…</p></div>
+                <button class="secondary-button publishing-library-refresh" id="publishingLibraryRefreshBtn" type="button" title="重新读取现有成品和文案">刷新</button>
+              </header>
+              <div class="publishing-library-search">
+                <input id="publishingLibrarySearch" type="search" placeholder="搜索作品集或标题" autocomplete="off" />
+              </div>
+              <nav class="publishing-library-filters" aria-label="成品筛选">
+                <button type="button" class="active" data-publishing-library-filter="all">全部</button>
+                <button type="button" data-publishing-library-filter="traffic">泛流量</button>
+                <button type="button" data-publishing-library-filter="conversion">精准流量</button>
+                <button type="button" data-publishing-library-filter="unclassified">未分类</button>
+              </nav>
+              <nav class="publishing-library-filters publishing-library-availability-filters" aria-label="平台使用状态筛选">
+                <button type="button" class="active" data-publishing-library-availability="available">可用成品</button>
+                <button type="button" data-publishing-library-availability="all">全部成品</button>
+                <button type="button" data-publishing-library-availability="used">已用成品</button>
+              </nav>
+              <section class="publishing-library-section publishing-library-collections">
+                <header class="publishing-library-section-head"><strong>作品集</strong><small id="publishingCollectionHint">—</small></header>
+                <nav id="publishingCollectionList" class="wechat-draft-collection-list" aria-label="可发布作品集"></nav>
+              </section>
+              <section class="publishing-library-section publishing-library-posts">
+                <header class="publishing-library-section-head"><strong>帖子 / 成品</strong><small id="wechatPostsHint">请先选择作品集</small></header>
+                <div class="wechat-batch-bar" id="wechatBatchBar"></div>
+                <div class="wechat-draft-post-panel" id="wechatDraftRight"><div class="empty-state"><strong>选择一个作品集</strong><p>这里会列出该作品集里的真实图片和文案。</p></div></div>
+              </section>
+            </aside>
+            <section class="publishing-right-pane" aria-label="平台发布区">
+              <section class="distribution-panel active publishing-platform-web-panel" id="distributionOfficial" aria-label="当前平台官方网页"></section>
+              <section class="publishing-adapter-panel" id="publishingAdapterPanel" hidden></section>
+            </section>
+          </section>
+        </section>
+      </section>
+
+      <section class="view" id="conversionView">
+        <div class="conversion-native-shell">
+          <aside class="conversion-side">
+            <nav class="conversion-nav conversion-module-tabs" aria-label="流量转化模块">
+              <button class="active" type="button" data-conversion-module="search"><span class="label">搜问题和话术</span></button>
+              <button type="button" data-conversion-module="sop"><span class="label">转化 SOP</span></button>
+              <button type="button" data-conversion-module="proposal"><span class="label">按需求找方案</span></button>
+              <button type="button" data-conversion-module="journey"><span class="label">决策树</span></button>
+              <button type="button" data-conversion-module="analysis"><span class="label">全链路知识库</span></button>
+            </nav>
+            <div class="conversion-side-bottom">
+              <span class="conversion-service-status" id="conversionServiceStatus">
+                <span class="conversion-dot" id="conversionApiDot"></span>
+                <span id="conversionApiText">内置 SOP 已就绪</span>
+              </span>
+              <button class="conversion-mobile-entry" id="conversionMobileEntryBtn" type="button" title="复制安全的手机入口" aria-label="复制安全的手机入口">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M10 6h4M11 18h2"/></svg>
+              </button>
+            </div>
+          </aside>
+          <main class="conversion-main">
+            <header class="conversion-topbar">
+              <div>
+                <h2 id="conversionPageTitle">客户怎么回</h2>
+                <p id="conversionPageSub">选择当前身份，粘贴客户原话，直接得到建议回复和下一步。</p>
+              </div>
+              <div id="conversionCountBox" class="conversion-count" hidden>运营话术 <b id="conversionShotCount">0</b> · 转化话术 <b id="conversionConvertCount">0</b> · 方案 <b id="conversionProposalCount">0</b></div>
+              <button class="page-help-button" type="button" data-page-help="conversionView" title="查看流量转化说明" aria-label="查看流量转化说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button>
+            </header>
+            <section class="conversion-workspace" id="conversionContent" aria-live="polite">
+              <div class="conversion-loading">内置转化 SOP 已就绪，正在展开工作区…</div>
+            </section>
+          </main>
+        </div>
+      </section>
+
+      <section class="view" id="skillsView">
+        <section class="skills-layout">
+          <header class="page-heading skills-heading">
+            <div>
+              <p class="label">可调用能力 · 本地执行</p>
+              <h2>技能中心</h2>
+              <p>把本地技能说明、调用契约和联动关系收进同一个入口：查看背景、用途、输入输出、运行方式和安全边界。只有已绑定安全执行器的技能才会提供运行按钮。</p>
+            </div>
+            <div class="skills-heading-actions">
+              <span class="skills-catalog-status" id="skillsCatalogStatus">正在读取技能目录…</span>
+              <button class="secondary-button" id="refreshSkillsBtn" type="button" title="重新读取技能说明、路径和可运行状态" data-tooltip="重新读取技能说明、路径和可运行状态">刷新技能</button>
+              <button class="secondary-button" id="skillsCenterSettingsBtn" type="button" title="设置技能中心入口；技能专属设置请从对应技能卡打开" data-tooltip="设置技能中心入口；技能专属设置请从对应技能卡打开">中心设置</button>
+              <button class="page-help-button" type="button" data-page-help="skillsView" title="查看技能入口说明" aria-label="查看技能入口说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button>
+            </div>
+          </header>
+          <section class="skills-section skills-executable-section" id="skillsExecutableSection" aria-label="可执行技能">
+            <section class="skills-grid" id="skillsGrid" aria-live="polite">
+              <div class="skills-loading">正在读取可执行技能…</div>
+            </section>
+          </section>
+
+        </section>
+      </section>
+
+      <section class="view" id="settingsView">
+        <section class="settings-layout">
+          <header class="page-heading settings-heading"><div><p class="label">生产控制中心</p><h2>设置中心</h2><p>这里只放跨页面的全局配置；生产、文件传输和在线分发的运行参数，请在对应页面右上角设置。</p></div><button class="page-help-button" type="button" data-page-help="settingsView" title="查看设置中心的使用说明" aria-label="查看设置中心说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button></header>
+          <section class="settings-start-card" id="settingsStartCard" aria-labelledby="settingsStartTitle">
+            <div class="settings-start-copy">
+              <p class="label">第一次使用也能按三步完成设置</p>
+              <h3 id="settingsStartTitle">先确认生产方式，再开始工作</h3>
+              <p>账号、额度、模板和每一步提示词都从真实生产配置读取。修改会自动保存；正在执行的作品继续使用启动时的配置，下一套才应用新设置。</p>
+              <div class="settings-start-actions">
+                <button class="primary-button" type="button" data-settings-jump="gptAuto:mode">生产模式与额度</button>
+                <button type="button" data-settings-jump="gptAuto:workflow">工作流与提示词</button>
+                <button type="button" data-settings-jump="gptAuto:accounts">账号窗口</button>
+              </div>
+            </div>
+            <div class="settings-live-summary" aria-label="当前设置摘要">
+              <article><span>当前模式</span><strong id="settingsCurrentMode">读取中…</strong></article>
+              <article><span>参与账号</span><strong id="settingsAccountSummary">读取中…</strong></article>
+              <article><span>额度边界</span><strong id="settingsQuotaSummary">读取中…</strong></article>
+              <article><span>运行状态</span><strong id="settingsRunSummary">读取中…</strong></article>
+            </div>
+          </section>
+          <section class="settings-onboarding" aria-label="三步设置向导">
+            <button type="button" data-settings-jump="gptAuto:mode"><span>01</span><strong>选择怎么生产</strong><small>人工、单账号、定时或多对话巡检</small></button>
+            <button type="button" data-settings-jump="gptAuto:workflow"><span>02</span><strong>检查工作流</strong><small>每个提示词都能查看、编辑并真实生效</small></button>
+            <button type="button" data-settings-jump="gptAuto:accounts"><span>03</span><strong>配置账号窗口</strong><small>每个账号独立模式、额度和启用状态</small></button>
+          </section>
+          <nav class="settings-section-nav" aria-label="设置分类">
+            <button type="button" data-settings-jump="production">内容制作</button>
+            <button type="button" data-settings-jump="works">作品仓库</button>
+            <button type="button" data-settings-jump="distribution">文件传输</button>
+            <button type="button" data-settings-jump="publishing">在线分发</button>
+            <button type="button" data-settings-jump="assistant">通用设置</button>
+            <button type="button" data-settings-jump="backup">数据与同步</button>
+            <button type="button" data-settings-jump="version">系统与维护</button>
+          </nav>
+          <details class="settings-card assistant-settings-card settings-advanced-card" id="assistantSettingsCard">
+            <summary class="settings-card-heading settings-card-heading-toggle">
+              <div><p class="label">日常体验</p><h3>小猫与通知</h3><small>默认只保留总开关；通知、气泡和显示时长按需展开</small></div>
+              <div class="settings-summary-side">
+                <span class="version-status">右键小猫也可修改</span>
+                <label class="switch-setting settings-summary-switch"><span><b>显示小猫</b></span><input id="assistantCatVisible" type="checkbox" checked /></label>
+              </div>
+            </summary>
+            <p class="path-line">本页面的消息重点显示，跨页面消息只作短暂提醒；关闭通知不会隐藏小猫。</p>
+            <div class="assistant-settings-grid">
+              <label class="switch-setting"><span><b>显示通知</b><small>只关闭气泡，不影响生产和日志</small></span><input id="assistantNotificationsEnabled" type="checkbox" checked /></label>
+              <label class="switch-setting"><span><b>保持气泡打开</b><small>通知结束后保留最后一条状态，不再闪退</small></span><input id="assistantBubblePinned" type="checkbox" checked /></label>
+              <label class="switch-setting"><span><b>动态跟随</b><small>头部随鼠标方向自然转动</small></span><input id="assistantMotionEnabled" type="checkbox" checked /></label>
+              <label class="switch-setting"><span><b>脱离工作台显示</b><small>关闭时切到其他软件会自动隐藏</small></span><input id="assistantDetached" type="checkbox" /></label>
+              <label class="switch-setting"><span><b>脱离后始终置顶</b><small>仅在允许脱离工作台后生效</small></span><input id="assistantAlwaysOnTop" type="checkbox" disabled /></label>
+              <label><span>当前界面（秒）</span><input id="assistantCurrentDurationSeconds" type="number" min="1" max="30" value="9" /></label>
+              <label><span>其他界面（秒）</span><input id="assistantOtherDurationSeconds" type="number" min="1" max="30" value="3" /></label>
+              <label><span>其他界面每批最多</span><input id="assistantOtherMaxPerBatch" type="number" min="0" max="5" value="1" /></label>
+            </div>
+            <p class="settings-footnote">默认：当前界面 9 秒并逐条显示；其他界面 3 秒、同批最多 1 条。相同提醒会自动去重，避免闪烁。</p>
+          </details>
+          <details class="settings-card cloud-backup-card settings-advanced-card" id="settingsBackupSection">
+            <summary class="settings-card-heading">
+              <div><p class="label">安全与维护</p><h3>备份与恢复</h3><small>日常自动运行；只有迁移、恢复或排障时才需要展开</small></div>
+              <span class="version-status" id="cloudBackupStatus">读取中</span>
+            </summary>
+            <p class="path-line">账号和应用密码由 Windows 加密保存。日常记录每天备份；方案大文件按月流量上限增量上传。</p>
+            <details class="cloud-credential-panel">
+              <summary>坚果云连接设置</summary>
+              <div class="cloud-credential-grid">
+                <label><span>WebDAV 地址</span><input id="cloudBackupUrl" type="url" value="https://dav.jianguoyun.com/dav/" /></label>
+                <label><span>坚果云账号</span><input id="cloudBackupUsername" type="text" autocomplete="username" placeholder="邮箱账号" /></label>
+                <label><span>应用密码</span><input id="cloudBackupPassword" type="password" autocomplete="new-password" placeholder="已保存时留空" /></label>
+                <label><span>云端根目录</span><input id="cloudBackupBasePath" type="text" value="/团建工作台备份" /></label>
+              </div>
+              <div class="settings-actions">
+                <button id="saveCloudBackupConfigBtn" class="primary-button" type="button">安全保存并测试</button>
+                <button id="importLifeGameCloudBtn" type="button">读取其他本机配置</button>
+              </div>
+            </details>
+            <div class="cloud-backup-summary">
+              <article><span>配置来源</span><strong id="cloudBackupSource">尚未读取</strong></article>
+              <article><span>云端目录</span><strong id="cloudBackupPath">—</strong></article>
+              <article><span>最近备份</span><strong id="cloudBackupTime">尚未备份</strong></article>
+            </div>
+            <div class="settings-actions">
+              <button id="testCloudBackupBtn" type="button">测试连接</button>
+              <button id="runCloudBackupBtn" class="primary-button" type="button">立即备份</button>
+              <button id="runLargeCloudBackupBtn" type="button">备份方案文件</button>
+              <button id="inspectCloudBackupBtn" type="button">验证可恢复</button>
+              <button id="restoreCloudBackupBtn" type="button">恢复最新记录</button>
+            </div>
+            <div class="settings-actions">
+              <button id="exportLocalSettingsBtn" type="button">导出本地设置</button>
+              <button id="importLocalSettingsBtn" type="button">导入本地设置</button>
+              <input id="importLocalSettingsFile" type="file" accept="application/json,.json" hidden />
+            </div>
+            <div class="settings-actions">
+              <button id="createGptLoginRecoveryBtn" type="button">创建本机 GPT 登录恢复点</button>
+              <button id="restoreGptLoginRecoveryBtn" type="button">恢复当前账号登录档案</button>
+            </div>
+            <p class="settings-footnote" id="gptLoginRecoveryStatus">普通设置备份不包含 GPT/Google Cookie。登录恢复点只保存在这台 Windows 电脑，不上传坚果云，也不能作为普通配置分享。</p>
+            <div class="backup-schedule-grid">
+              <label class="switch-setting"><span><b>自动备份</b><small>默认每天检查一次</small></span><input id="cloudBackupScheduleEnabled" type="checkbox" checked /></label>
+              <label><span>频率</span><select id="cloudBackupFrequency"><option value="daily">每天</option><option value="weekly">每周</option><option value="interval">按小时</option></select></label>
+              <label><span>间隔小时</span><input id="cloudBackupIntervalHours" type="number" min="1" max="744" value="24" /></label>
+              <label><span>每月大文件上限（MB）</span><input id="cloudBackupMonthlyLimitMb" type="number" min="0" max="10240" value="2560" /></label>
+              <label class="backup-source-field"><span>方案/大文件来源</span><span class="path-input-row"><input id="cloudBackupSourceRoot" type="text" placeholder="可粘贴本地方案文件夹；留空只备份设置与记录" /><button id="chooseCloudBackupSourceBtn" type="button">选择</button></span></label>
+            </div>
+            <p class="settings-message" id="cloudBackupMessage">正在读取备份状态…</p>
+            <div class="backup-task-progress" id="largeCloudBackupProgress" hidden>
+              <div><strong id="largeCloudBackupLabel">方案文件备份</strong><span id="largeCloudBackupPercent">0%</span></div>
+              <progress id="largeCloudBackupBar" max="100" value="0"></progress>
+            </div>
+          </details>
+          <details class="settings-card version-card settings-advanced-card" id="settingsVersionSection">
+            <summary class="version-summary settings-card-heading">
+              <div><p class="label">软件与诊断</p><h3 id="settingsVersion">读取中…</h3><p id="settingsVersionChannel">本地开发版</p></div>
+              <span class="version-status" id="settingsVersionStatus">已安装</span>
+            </summary>
+            <div class="settings-actions settings-advanced-body">
+              <button id="checkAppUpdateBtn" type="button">检查更新</button>
+              <button id="openReleaseRootBtn" type="button">打开发布目录</button>
+              <button id="openMobileUpdateUrlBtn" class="version-link-button" type="button"><span class="version-link-icon" aria-hidden="true">↗</span><span>手机端更新</span></button>
+              <button id="copyDiagnosticsBtn" type="button">复制诊断信息</button>
+              <button id="openRuntimeRootBtn" type="button">打开运行数据</button>
+            </div>
+            <p class="path-line" id="settingsUpdateNote">可手动检查桌面版更新，并打开手机端发布页；更新不会清除登录状态和生产数据。</p>
+            <p class="path-line" id="settingsDiagnosticsSummary">版本、数据目录和桌面运行状态会在这里核对。</p>
+          </details>
+        </section>
+      </section>
+
+      <section class="view" id="juguangView">
+        <section class="juguang-layout">
+          <header class="panel glass juguang-hero">
+            <div>
+              <p class="label">聚光运营中枢</p>
+              <h2>选题依据 → AI 复刻 → 投流与线索复盘</h2>
+              <p id="juguangMode" class="path-line">正在读取本地聚光资产…</p>
+            </div>
+            <div class="juguang-hero-actions"><button class="primary-button" id="refreshJuguangBtn">刷新聚光数据</button><button class="page-help-button" type="button" data-page-help="juguangView" title="查看聚光运营说明" aria-label="查看聚光运营说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button></div>
+          </header>
+          <div class="juguang-stats" id="juguangStats"></div>
+          <div class="juguang-grid">
+            <section class="panel glass">
+              <div class="panel-head">
+                <div><p class="label">下一批先做什么</p><h2>团建选题建议</h2></div>
+                <input id="juguangKeywordSearch" class="search-input juguang-search" placeholder="搜索：嘉兴 / 团建 / 心跳乐园" />
+              </div>
+              <div id="juguangRecommendations" class="juguang-list"></div>
+            </section>
+            <aside class="panel glass juguang-side">
+              <div class="detail-card"><span>接入状态</span><strong id="juguangApiStatus">未读取</strong><p id="juguangApiMessage"></p></div>
+              <div class="detail-card"><span>线索闭环（脱敏）</span><strong id="juguangLeadStatus">--</strong><p>只显示数量和笔记归因，不显示昵称、账号、电话或微信。</p></div>
+              <div class="detail-card"><span>你的固定分工</span><strong>你采集，AI 复刻</strong><p>聚光只负责选题排序、关键词匹配和效果复盘，不改变生产主线。</p></div>
+              <div><p class="label">待补齐闭环</p><ol id="juguangNextActions" class="juguang-actions"></ol></div>
+            </aside>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="workflowView">
+        <section class="panel glass workflow-panel">
+          <header class="workflow-panel-heading"><div><p class="label">工作流状态</p><h2>从文件到成品的闭环</h2></div><button class="page-help-button" type="button" data-page-help="workflowView" title="查看自动化工作流说明" aria-label="查看自动化工作流说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button></header>
+          <div class="flow-line">
+            <article class="flow-step"><strong>1</strong><span>读取素材库</span></article>
+            <article class="flow-step"><strong>2</strong><span>锁定模板</span></article>
+            <article class="flow-step"><strong>3</strong><span>写出图计划</span></article>
+            <article class="flow-step"><strong>4</strong><span>调用生图模型</span></article>
+            <article class="flow-step"><strong>5</strong><span>落盘成品包</span></article>
+            <article class="flow-step"><strong>6</strong><span>日志去重续接</span></article>
+          </div>
+          <div id="latestLogs" class="log-list"></div>
+        </section>
+      </section>
+    </main>
+
+    <div class="page-settings-backdrop" id="pageSettingsBackdrop" hidden>
+      <aside class="page-settings-drawer" role="dialog" aria-modal="true" aria-labelledby="pageSettingsTitle">
+        <header>
+          <div><p class="label">当前页面专属</p><h2 id="pageSettingsTitle">页面设置</h2></div>
+          <button class="round-close-button" id="closePageSettingsBtn" type="button" aria-label="关闭设置">×</button>
+        </header>
+        <section id="productionPageSettings" class="page-settings-section" hidden>
+          <div class="settings-group">
+            <h3>来源路径</h3>
+            <label><span>素材库</span><div class="inline-setting-control"><input id="workbenchMaterialRoot" type="text" placeholder="粘贴后回车或点到别处自动保存" /><button id="workbenchChooseMaterialRootBtn" type="button">选择</button></div></label>
+            <label><span>模板库</span><div class="inline-setting-control"><input id="productionTemplateRoot" type="text" placeholder="当前模板来源目录" /><button id="chooseProductionTemplateRootBtn" type="button">选择</button></div></label>
+            <label><span>成品库</span><div class="inline-setting-control"><input id="workbenchProductRoot" type="text" placeholder="粘贴后自动保存" /><button id="workbenchChooseProductRootBtn" type="button">选择</button></div></label>
+            <label><span>已打包库</span><div class="inline-setting-control"><input id="productionPackedRoot" type="text" placeholder="留空则使用成品库内的抖音小红书文件夹" /><button id="chooseProductionPackedRootBtn" type="button">选择</button></div></label>
+          </div>
+          <div class="settings-group">
+            <h3>提示词与作品集</h3>
+            <label><span>生产基础规则</span><textarea id="productionBasePromptRules" rows="5" placeholder="会与当前模板规则、本批要求一起参加生产"></textarea></label>
+            <div class="settings-two-columns">
+              <label><span>储备低于</span><input id="productionReserveThreshold" type="number" min="1" max="500" /></label>
+              <label><span>自动检测分类</span><select id="productionReserveCategory"><option value="conversion">精准流量（业务类）</option><option value="traffic">泛流量类</option><option value="unclassified">未分类</option><option value="all">全部</option></select></label>
+              <label><span>每个作品集页数</span><input id="productionItemsPerCollection" type="number" min="1" max="30" /></label>
+              <label><span>定时运行时间</span><input id="productionScheduleTime" type="time" /></label>
+            </div>
+            <label class="switch-setting"><span><b>库存不足自动制作</b><small>默认关闭，开启后才会自动建立生产任务</small></span><input id="productionAutoProduceEnabled" type="checkbox" /></label>
+            <label class="switch-setting"><span><b>定时运行</b><small>按上面的时间检查一次</small></span><input id="productionScheduleEnabled" type="checkbox" /></label>
+            <label class="switch-setting"><span><b>压缩作品集</b><small>默认不压缩，保留正常作品集文件夹</small></span><input id="productionCompressCollections" type="checkbox" /></label>
+          </div>
+        </section>
+        <section id="distributionPageSettings" class="page-settings-section" hidden>
+          <div class="settings-group">
+            <h3>作品集目录与电脑储备</h3>
+            <label><span>作品集目录</span><div class="inline-setting-control"><input id="distributionCollectionRootInput" type="text" placeholder="粘贴后回车或点到别处自动保存" /><button id="chooseDistributionCollectionRootBtn" type="button">选择</button></div></label>
+            <div class="settings-two-columns">
+              <label><span>低于多少提醒</span><input id="desktopReserveThreshold" type="number" min="1" max="500" /></label>
+              <label><span>检测分类</span><select id="desktopReserveCategory"><option value="conversion">精准流量（业务类）</option><option value="traffic">泛流量类</option><option value="unclassified">未分类</option><option value="all">全部</option></select></label>
+            </div>
+            <label class="switch-setting"><span><b>电脑储备悬浮提醒</b><small>达到阈值后自动消失</small></span><input id="desktopReserveAlertEnabled" type="checkbox" /></label>
+          </div>
+          <div class="settings-group">
+            <h3>自动检测与分发</h3>
+            <div class="settings-two-columns">
+              <label><span>手机低于</span><input id="phoneReserveThreshold" type="number" min="1" max="500" /></label>
+              <label><span>自动推送分类</span><select id="autoDistributionCategory"><option value="conversion">精准流量（业务类）</option><option value="traffic">泛流量类</option><option value="unclassified">未分类</option><option value="all">全部</option></select></label>
+              <label><span>每次补发</span><input id="autoDistributionCount" type="number" min="1" max="1" /></label>
+              <label><span>失败重试</span><input id="autoDistributionRetryLimit" type="number" min="1" max="5" /><small>同一作品包连续失败后暂停本轮；设备重新连接可再次尝试</small></label>
+            </div>
+            <label class="switch-setting"><span><b>每次连接自动检测</b><small>只读取手机端真实回报的分类库存</small></span><input id="detectOnConnection" type="checkbox" /></label>
+            <label class="switch-setting"><span><b>自动分发作品集</b><small>设备上线后自动检测；新设备只在首次自动分发前确认一次</small></span><input id="autoDistributionEnabled" type="checkbox" /></label>
+            <p class="settings-footnote distribution-source-note" data-tooltip="手机补发阈值按当前自动推送分类判断；选择精准流量时读取精准流量库存，选择泛流量时读取泛流量库存，只有选择全部才读取总作品数。旧版曾保存的附加目录仍会被兼容读取，但不再作为日常设置入口。">手机库存按自动推送分类判断；当前默认精准流量低于 5 个才补发，选择全部时才按总作品数判断。</p>
+            <label class="switch-setting"><span><b>完成后悬浮通知</b><small>开始、进度和完成记录始终保留</small></span><input id="completionNotificationEnabled" type="checkbox" /></label>
+          </div>
+          <p class="settings-footnote">所有当前在线设备都可手动发送。新设备确认一次后即可自动补作品；设备离线、分类库存未知时仍不会误发。</p>
+        </section>
+        <section id="gptAutoPageSettings" class="page-settings-section" hidden>
+          <div class="mode-quick-tabs-wrapper">
+            <div class="mode-quick-tabs" id="gptModeQuickTabs" role="tablist" aria-label="生产模式快速切换">
+              <div class="mode-quick-heading"><strong>常用生产方式</strong><small>选一个就能开始；高级参数可以以后再调</small></div>
+              <div class="mode-quick-tabs-primary">
+                <button type="button" class="mode-quick-tab" data-mode="automatic" role="tab"><span>选材后</span><small>选好本批后跑完</small></button>
+                <button type="button" class="mode-quick-tab" data-mode="single" role="tab"><span>单账号</span><small>当前账号不停生产</small></button>
+                <button type="button" class="mode-quick-tab" data-mode="manual" role="tab"><span>人工</span><small>只上传，不自动发送</small></button>
+              </div>
+              <details class="mode-more-modes">
+                <summary><span>更多生产方式</span><small>定时启动、单账号多对话巡检</small></summary>
+                <div class="mode-quick-tabs-secondary">
+                  <button type="button" class="mode-quick-tab" data-mode="scheduled" role="tab"><span>定时</span><small>按计划启动</small></button>
+                  <button type="button" class="mode-quick-tab" data-mode="patrol" role="tab"><span>巡检</span><small>实验模式，识别后续接</small></button>
+                </div>
+              </details>
+            </div>
+            <details class="mode-quick-tabs-actions">
+              <summary title="模式管理" aria-label="展开模式管理">•••</summary>
+              <div>
+                <button type="button" id="gptModeInfoBtn" class="mode-tab-action" title="查看模式说明" aria-label="查看当前模式说明">?</button>
+                <button type="button" id="gptAddModeBtn" class="mode-tab-action" title="新增自定义模式" aria-label="新增模式">+</button>
+                <button type="button" id="gptDeleteModeBtn" class="mode-tab-action danger" title="删除当前模式配置" aria-label="删除模式">−</button>
+              </div>
+            </details>
+          </div>
+          <div class="mode-info-popover" id="gptModeInfoPopover" hidden></div>
+          <section class="gpt-developer-settings" id="gptDeveloperSettings">
+            <input class="gpt-developer-settings-checkbox" id="gptDeveloperSettingsToggle" type="checkbox" checked aria-label="展开高级设置和开发模式" />
+            <label class="gpt-developer-settings-toggle" for="gptDeveloperSettingsToggle" role="button" tabindex="0"><span id="gptDeveloperSettingsSummary">高级设置 / 开发模式</span><small>展开完整工作流、每一步提示词、等待时间、失败重试和并行参数</small></label>
+            <div class="gpt-developer-settings-body">
+              <div class="settings-group mode-specific-group">
+                <h3>模式配置 <small class="scope-tag">本模式专属</small></h3>
+                <div class="settings-group mode-profile-editor" id="gptModeProfileEditor">
+                  <p class="settings-note" id="gptModeProfileLabel">当前模式设置</p>
+                  <div class="gpt-mode-workflow-block">
+                    <div class="settings-inline-heading"><strong>工作流与提示词（本模式专属）</strong><small>每个环节是独立模块，可拖动排序、勾选启用、自由增删。提示词输入框右侧 ✍/📋 可切换自定义/默认。生产间隔已整合为「随机等待」步骤，归档已整合为最后一步「移动到成品库」。修改实时生效，运行中的批次冻结当前快照。</small></div>
+                    <div id="gptModeWorkflowEditor" class="gpt-mode-workflow-editor" aria-label="本模式工作流环节"></div>
+                    <button id="gptAddModeWorkflowStepBtn" type="button" class="secondary-button gpt-workflow-add-step-btn" aria-label="添加环节" title="添加环节">＋</button>
+                  </div>
+                  <details class="gpt-prompt-settings" open>
+                    <summary><span>实际提示词</span><small>查看、粘贴和修改真正发送给 GPT 的内容</small></summary>
+                    <div class="gpt-prompt-settings-body">
+                      <div class="gpt-prompt-settings-heading">
+                        <div><strong>新会话初始化提示词 <span id="gptPromptRegistryVersion">V4.5</span></strong><small>仅用于新建或尚未调教的对话；已训练会话不会重复注入。</small></div>
+                        <div class="button-row"><button type="button" id="gptCopyMasterPromptBtn" class="ghost-button">复制</button><button type="button" id="gptRestoreMasterPromptBtn" class="secondary-button">恢复 V4.5</button><button type="button" id="gptSaveMasterPromptBtn" class="primary-button">保存</button></div>
+                      </div>
+                      <textarea id="gptMasterPromptRules" rows="10" spellcheck="false" aria-label="新会话初始化提示词"></textarea>
+                      <label class="gpt-extra-prompt-field"><span>所有生产提示词后追加的补充规则（可留空）</span><textarea id="gptExtraPromptRules" rows="4" placeholder="例如：封面字更少；优先使用真实活动场景。"></textarea></label>
+                      <p class="settings-footnote">每套素材的“读取附件并先给计划”提示词在上方“上传素材”环节中编辑；当前素材文件夹由程序自动追加，不需要手填。</p>
+                    </div>
+                  </details>
+                </div>
+              </div>
+              <div class="settings-group mode-specific-group">
+                <h3>模式运行参数 <small class="scope-tag">本模式专属</small></h3>
+                <div class="settings-two-columns">
+                  <label><span>每轮最多生产（套）</span><input id="gptAutoAccountLimit" type="number" min="1" max="30" value="8" /></label>
+                  <label><span>单帖最长等待（分钟）</span><input id="gptAutoTaskTimeout" type="number" min="5" max="60" value="30" /></label>
+                  <label><span>闲置网页释放（分钟）</span><input id="gptIdleUnloadMinutes" type="number" min="5" max="240" value="30" /></label>
+                </div>
+                <p class="settings-footnote">生产间隔已移入工作流的「随机等待」步骤——在工作流环节中直接设置每步的随机等待秒数。归档行为由最后一步「移动到成品库」环节控制（勾选启用即可归档，取消勾选则跳过）。</p>
+              </div>
+            </div>
+          </section>
+          <div class="settings-group mode-specific-group gpt-patrol-settings" id="gptPatrolSettingsGroup" hidden>
+            <h3>多对话自动参与规则 <small class="scope-tag">当前账号窗口</small></h3>
+            <p class="settings-footnote">系统会向下滚动加载历史对话并恢复原位置。标题含“模板”或“母版”会自动参与；标题含“游戏”一律排除。页面内容特征只判断进度，不决定是否参与。</p>
+            <label class="settings-wide-field"><span>额外手动排除的对话</span><textarea id="gptPatrolDenylist" rows="4" placeholder="每行一个完整对话网址或精确标题；通常不需要填写"></textarea></label>
+            <div class="gpt-patrol-actions"><button id="gptPatrolDiscoverBtn" type="button" class="secondary-button">只读扫描当前账号</button><span id="gptPatrolDiscoverStatus">尚未扫描</span></div>
+            <div id="gptPatrolConversationList" class="gpt-patrol-conversation-list" aria-live="polite"></div>
+          </div>
+          <div class="settings-group global-specific-group">
+            <h3>工作时段与额度 <small class="scope-tag">所有模式共享</small></h3>
+            <div class="settings-two-columns">
+              <label><span>工作开始时间</span><input id="gptContinuousWorkStart" type="time" value="08:00" /></label>
+              <label><span>工作停止时间</span><input id="gptContinuousWorkEnd" type="time" value="02:00" /><small>北京时间，支持跨午夜</small></label>
+              <label><span>3小时上传上限（图）</span><input id="gptUploadLimit" type="number" min="1" max="500" value="80" /></label>
+              <label><span>3小时生图安全线（图）</span><input id="gptGenerationLimit" type="number" min="1" max="500" value="45" /><small>当前作品完整归档后再切换账号</small></label>
+              <label><span>滚动窗口（小时）</span><input id="gptQuotaWindowHours" type="number" min="1" max="24" value="3" /></label>
+              <label><span>最低完整图片数</span><input id="gptMinimumImageCount" type="number" min="1" max="30" value="4" /><small>低于此数停止本帖</small></label>
+            </div>
+            <label class="switch-setting"><span><b>仅在工作时段启动新任务</b><small>到点后不再启动新作品，当前作品会安全完成</small></span><input id="gptContinuousWorkHoursEnabled" type="checkbox" checked /></label>
+            <label class="switch-setting"><span><b>打开工作台后自动继续</b><small>仅对连续模式生效；开机或唤醒后从检查点继续</small></span><input id="gptContinuousAutoStart" type="checkbox" checked /></label>
+            <label class="switch-setting" id="gptSingleQuotaAutoSwitchSetting" hidden><span><b>额度触顶后自动切换账号窗口</b><small>当前作品安全停住后切到下一个可用账号；关闭则只等待当前账号恢复</small></span><input id="gptSingleQuotaAutoSwitch" type="checkbox" /></label>
+          </div>
+          <div class="settings-group global-specific-group">
+            <h3>定时计划 <small class="scope-tag">所有模式共享</small></h3>
+            <div class="settings-two-columns">
+              <label><span>定时启动时间</span><input id="gptScheduledTime" type="time" value="09:30" /></label>
+              <label><span>启动延迟范围（分钟）</span><input id="gptScheduledJitter" type="number" min="0" max="60" value="10" /></label>
+            </div>
+            <label class="switch-setting"><span><b>启用定时启动</b><small>到点扫描素材库，优先选择使用次数低的素材</small></span><input id="gptScheduledEnabled" type="checkbox" /></label>
+            <label class="settings-wide-field"><span>定时启动计划</span><textarea id="gptSchedulePlan" rows="3" placeholder="09:00,5
+14:00,5">09:30,8</textarea><small>每行一个时间点：时间,帖子数</small></label>
+          </div>
+          <div class="settings-group global-specific-group">
+            <h3>全局设置 <small class="scope-tag">所有模式共享</small></h3>
+            <div class="settings-sub-group">
+              <div class="settings-inline-heading"><strong>目录路径</strong></div>
+              <label class="settings-wide-field"><span>下载暂存目录</span><div class="inline-setting-control"><input id="gptDownloadRoot" type="text" value="D:\Download" /><button id="chooseGptDownloadRootBtn" type="button">选择</button></div></label>
+              <label class="settings-wide-field"><span>成品库目录</span><div class="inline-setting-control"><input id="gptProductRoot" type="text" value="D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）" /><button id="chooseGptProductRootBtn" type="button">选择</button></div></label>
+            </div>
+            <div class="settings-sub-group">
+              <div class="settings-inline-heading"><strong>网页功能</strong></div>
+              <label class="switch-setting"><span><b>网页内提示词库</b><small>在 GPT 输入区显示可点击的提示词入口</small></span><input id="gptPromptLibraryEnabled" type="checkbox" checked /></label>
+              <label class="switch-setting"><span><b>网页内下载与打包按钮</b><small>按当前回复绑定下载本组和下载并打包</small></span><input id="gptMessageDownloadsEnabled" type="checkbox" checked /></label>
+            </div>
+            <div class="settings-sub-group">
+              <div class="settings-inline-heading"><strong>系统行为</strong></div>
+              <label class="switch-setting"><span><b>Windows 登录后启动工作台</b><small>启动后退到后台并按自动设置恢复</small></span><input id="gptLaunchAtLogin" type="checkbox" checked /></label>
+              <label class="switch-setting"><span><b>显示账号额度提醒</b><small>按本地滚动账本估算，网页实际限流优先</small></span><input id="gptQuotaReminderEnabled" type="checkbox" checked /></label>
+            </div>
+          </div>
+          <div class="settings-group">
+            <h3>账号窗口</h3>
+            <div id="gptBrowserManager" class="gpt-browser-manager"></div>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <button class="workbench-assistant-launcher" id="workbenchAssistantLauncher" type="button" aria-label="打开小猫助手" aria-expanded="false">
+      <img id="workbenchAssistantCat" class="workbench-assistant-cat" src="assets/assistant-black-cat-v3.png" alt="" aria-hidden="true" />
+    </button>
+    <div class="workbench-assistant-bubble" id="workbenchAssistantBubble" role="status" aria-live="polite" hidden>
+      <div class="workbench-assistant-bubble-content" id="workbenchAssistantBubbleContent"></div>
+      <div class="workbench-assistant-transfer-progress" id="workbenchAssistantTransferProgress" hidden aria-live="polite"></div>
+    </div>
+    <div class="workbench-assistant-mute-menu" id="workbenchAssistantMuteMenu" hidden>
+      <button data-assistant-mute="1" type="button">关闭 1 分钟</button>
+      <button data-assistant-mute="5" type="button">关闭 5 分钟</button>
+      <button data-assistant-mute="60" type="button">关闭 1 小时</button>
+    </div>
+    <aside class="workbench-assistant-log-panel" id="workbenchAssistantLogPanel" hidden aria-label="当前页面状态日志">
+      <header><div><strong>当前页面状态</strong><span id="workbenchAssistantLogPage">实时日志</span></div><button id="closeWorkbenchAssistantLog" type="button" aria-label="关闭日志">×</button></header>
+      <div class="workbench-assistant-log-list" id="workbenchAssistantLogList"></div>
+      <footer><span>暂时关闭气泡</span><button data-assistant-mute="1" type="button">1分钟</button><button data-assistant-mute="5" type="button">5分钟</button><button data-assistant-mute="60" type="button">1小时</button></footer>
+    </aside>
+    <aside class="workbench-assistant-panel" id="workbenchAssistantPanel" hidden aria-label="团建中控助手">
+      <header><div><strong>团建中控助手</strong><span>本地安全执行</span></div><button id="closeWorkbenchAssistant" type="button" aria-label="关闭">×</button></header>
+      <div class="workbench-assistant-messages" id="workbenchAssistantMessages">
+        <article class="assistant-message">我能理解自然语言，也会在执行前核对设备和作品。可以直接问“你能干嘛”，或说“检测在线设备”“给4号发一个精准流量作品”。</article>
+      </div>
+      <div class="workbench-assistant-input"><input id="workbenchAssistantCommand" type="text" placeholder="输入要执行的工作…" /><button id="workbenchAssistantVoice" type="button" title="语音执行工作台动作" aria-label="语音执行工作台动作">🎙️</button><button id="runWorkbenchAssistantCommand" type="button">执行</button></div>
+    </aside>
+    <aside class="gpt-production-history-panel" id="gptProductionHistoryPanel" hidden aria-label="GPT 生产记录">
+      <header><div><strong>生产记录</strong><span>自动闭环的完成、暂停与失败记录</span></div><button id="closeGptProductionHistory" type="button" aria-label="关闭生产记录">×</button></header>
+      <div class="gpt-production-history-summary" id="gptProductionHistorySummary" aria-label="生产统计"></div>
+      <div class="gpt-production-mode-evidence" id="gptProductionModeEvidence" aria-label="各模式实战闭环证据"></div>
+      <div class="gpt-production-history-list" id="gptProductionHistoryList"></div>
+    </aside>
+    <div class="toast" id="toast"></div>
+    <div class="context-menu" id="contextMenu">
+      <button id="contextSkillSettings" type="button" hidden>打开技能设置</button>
+      <button id="contextSkillPaths" type="button" hidden>设置输入/输出路径</button>
+      <button id="contextSkillSource" type="button" hidden>查看技能说明</button>
+      <button id="contextOpenFolder" type="button">打开当前目录</button>
+      <button id="contextSetFolder" type="button">设置关联文件夹</button>
+      <button id="contextSetCollectionPathManual" type="button">直接输入本机地址</button>
+      <button id="contextResetCollectionStage" type="button">恢复仓库默认</button>
+      <button id="contextCopyPath" type="button">复制目录地址</button>
+      <button id="contextRename" type="button">重命名</button>
+      <button id="contextToggleDisable" type="button">暂时禁用</button>
+      <button id="contextRemoveAccount" type="button" class="danger-action">删除账号窗口</button>
+      <button id="contextTrashFolder" type="button" class="danger-action">移到回收站</button>
+      <button id="contextModeSettings" type="button">修改模式设置</button>
+      <button id="contextDeleteMode" type="button" class="danger-action">删除模式配置</button>
+      <button id="contextCopyTemplateCommand" type="button">复制转模板指令</button>
+    </div>
+  <script src="/assistant-notification-policy.js?v=0.1.0"></script>
+  <script src="/workbench-command-bus.js?v=0.1.0"></script>
+  <script src="/gpt-production-status.js?v=0.1.0"></script>
+  <script src="/gpt-history-status.js?v=0.1.0"></script>
+  <script src="/gpt-prompt-registry.js?v=0.1.0"></script>
+  <script src="/gpt-account-rotation.js?v=0.1.0"></script>
+  <script src="/gpt-runtime-recovery.js?v=0.1.0"></script>
+  <script src="/gpt-window-worker-state.js?v=0.1.0"></script>
+  <script src="/gpt-startup-stagger.js?v=0.1.0"></script>
+  <script src="/gpt-patrol-scheduler.js?v=0.1.0"></script>
+  <script src="/gpt-progress-display.js?v=0.1.0"></script>
+  <script src="/distribution-ui.js?v=0.1.0"></script>
+  <script src="/material-workspace.js?v=0.1.0"></script>
+  <script src="/moments-publisher-panel.js?v=0.1.0"></script>
+  <script src="/app.js?v=0.1.0"></script>
+  </body>
+</html>

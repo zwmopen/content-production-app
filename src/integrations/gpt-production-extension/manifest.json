@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "团建 GPT 数字作品生产助手",
+  "version": "0.2.91",
+  "description": "服务“生产数字作品”SOP：保留 ChatGPT 原生会话，中间真实对话，右侧成品与素材生产舱。",
+  "permissions": [
+    "downloads",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://raw.githubusercontent.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "gm-shim.js",
+        "patrol-stage.js",
+        "gpt-automation-core.js",
+        "sidebar.js",
+        "vendor/chatgpt-conversation-tree.user.js"
+      ],
+      "css": [
+        "sidebar.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "显示或隐藏数字作品生产舱"
+  }
+}
