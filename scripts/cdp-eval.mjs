@@ -33,11 +33,27 @@ const cdpRequest = expressionInput === "dismiss-dialog"
   : expressionInput === "terminate-execution"
     ? { method: "Runtime.terminateExecution", params: {} }
   : { method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true } };
-const targets = await fetch("http://127.0.0.1:9333/json/list").then((response) => response.json());
-const target = targetTitle.startsWith("url:")
-  ? targets.find((item) => item.type === "page" && item.url === targetTitle.slice(4))
-  : targets.find((item) => item.type === "page" && item.title.includes(targetTitle));
-if (!target) throw new Error(`找不到调试页面：${targetTitle}`);
+const defaultPorts = [9431, 9432, 9433, 9434, 9333];
+const portEnv = Number(process.env.TB_REMOTE_DEBUGGING_PORT || process.env.CDP_PORT);
+const portsToTry = portEnv ? [portEnv, ...defaultPorts.filter(p => p !== portEnv)] : defaultPorts;
+
+let target = null;
+let activePort = null;
+for (const port of portsToTry) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) });
+    const targets = await res.json();
+    const found = targetTitle.startsWith("url:")
+      ? targets.find((item) => item.type === "page" && item.url === targetTitle.slice(4))
+      : targets.find((item) => item.type === "page" && item.title.includes(targetTitle));
+    if (found) {
+      target = found;
+      activePort = port;
+      break;
+    }
+  } catch {}
+}
+if (!target) throw new Error(`找不到调试页面：${targetTitle} (尝试了端口 ${portsToTry.join(", ")})`);
 
 const socket = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => {

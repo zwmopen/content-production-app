@@ -55,10 +55,13 @@
       normalized.onerror?.(error);
     });
     return {
-      abort: () => chrome.runtime.sendMessage({ type: "tb-download-cancel", requestId }).catch(() => {})
+      abort: () => (typeof chrome !== "undefined" && chrome?.runtime?.sendMessage)
+        ? chrome.runtime.sendMessage({ type: "tb-download-cancel", requestId }).catch(() => {})
+        : null
     };
   };
-  chrome.runtime.onMessage.addListener((message) => {
+  if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage?.addListener) {
+    chrome.runtime.onMessage.addListener((message) => {
     if (message?.type !== "tb-download-status") return;
     const callbacks = downloadCallbacks.get(message.requestId);
     if (!callbacks) return;
@@ -70,10 +73,11 @@
       });
       return;
     }
-    downloadCallbacks.delete(message.requestId);
-    if (message.status === "complete") callbacks.onload?.({ finalUrl: message.filename || "" });
-    else callbacks.onerror?.(message.error || "download failed");
-  });
+      downloadCallbacks.delete(message.requestId);
+      if (message.status === "complete") callbacks.onload?.({ finalUrl: message.filename || "" });
+      else callbacks.onerror?.(message.error || "download failed");
+    });
+  }
   globalThis.GM_xmlhttpRequest = (options) => {
     const controller = new AbortController();
     fetch(options.url, {

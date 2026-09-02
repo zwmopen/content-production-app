@@ -40,22 +40,42 @@ const PLATFORM_DIRS = {
 };
 
 const WORKFLOW_STAGE_DIRS = {
-  mobile: "抖音小红书",
-  official: "微信公众号",
-  used: "已发送"
+  mobile: "已发送0次（抖音小红书可发）",
+  official: "已发送1次（微信公众号可发）",
+  used: "已发送2次（其他平台可发）"
 };
+
+function resolveStageDirectory(workflowRoot, primaryName, fallbackName) {
+  const primaryPath = path.join(workflowRoot, primaryName);
+  if (fs.existsSync(primaryPath)) return primaryPath;
+  const fallbackPath = path.join(workflowRoot, fallbackName);
+  if (fs.existsSync(fallbackPath)) return fallbackPath;
+  return primaryPath;
+}
+
+function resolveStageDirectory(workflowRoot, primaryName, fallbackName) {
+  const primaryPath = path.join(workflowRoot, primaryName);
+  if (fs.existsSync(primaryPath)) return primaryPath;
+  const fallbackPath = path.join(workflowRoot, fallbackName);
+  if (fs.existsSync(fallbackPath)) return fallbackPath;
+  return primaryPath;
+}
 
 function getWorkflowStageRoots(libraryRoot) {
   const resolvedLibraryRoot = path.resolve(libraryRoot || "");
-  const stageDirectoryNames = new Set(Object.values(WORKFLOW_STAGE_DIRS));
-  const workflowRoot = stageDirectoryNames.has(path.basename(resolvedLibraryRoot))
+  const knownStageNames = new Set([
+    "已发送0次（抖音小红书可发）", "已发送1次（微信公众号可发）", "已发送2次（其他平台可发）",
+    "抖音小红书", "微信公众号", "已发送", "归档"
+  ]);
+  const workflowRoot = knownStageNames.has(path.basename(resolvedLibraryRoot))
     ? path.dirname(resolvedLibraryRoot)
     : resolvedLibraryRoot;
+
   return {
     workflowRoot,
-    mobile: path.join(workflowRoot, WORKFLOW_STAGE_DIRS.mobile),
-    official: path.join(workflowRoot, WORKFLOW_STAGE_DIRS.official),
-    used: path.join(workflowRoot, WORKFLOW_STAGE_DIRS.used)
+    mobile: resolveStageDirectory(workflowRoot, "已发送0次（抖音小红书可发）", "抖音小红书"),
+    official: resolveStageDirectory(workflowRoot, "已发送1次（微信公众号可发）", "微信公众号"),
+    used: resolveStageDirectory(workflowRoot, "已发送2次（其他平台可发）", "已发送")
   };
 }
 
@@ -432,7 +452,7 @@ function moveCollectionSourceToStage(options = {}) {
     fs.renameSync(sourcePath, targetPath);
   }
   appendWorkflowOperation(stageRoots, {
-    action: stage === "used" ? "压缩归档并删除源文件夹" : "移动到微信公众号",
+    action: stage === "used" ? "压缩归档并删除源文件夹" : "移动到已发送1次（微信公众号可发）",
     collection,
     from: sourcePath,
     to: targetPath,
@@ -453,7 +473,7 @@ function renameCollectionType(options = {}) {
   const snapshot = getDistributionSnapshot({ publishRoot, libraryRoot });
   const item = snapshot.collections.find((entry) => entry.name === collection);
   if (!item?.sourcePath || !["mobile", "official"].includes(item.workflowStage)) {
-    throw new Error("只能修改抖音小红书或微信公众号里的真实作品集");
+    throw new Error("只能修改已发送0次（抖音小红书可发）或已发送1次（微信公众号可发）里的真实作品集");
   }
   const stageRoots = getWorkflowStageRoots(libraryRoot);
   const sourcePath = fs.realpathSync.native(item.sourcePath);
@@ -596,7 +616,7 @@ function markOfficialUsed(options = {}) {
   const collection = String(options.collection || "").trim();
   const snapshot = getDistributionSnapshot({ publishRoot, libraryRoot });
   const item = snapshot.collections.find((entry) => entry.name === collection);
-  if (!item || item.workflowStage !== "official") throw new Error("该作品当前不在微信公众号文件夹");
+  if (!item || item.workflowStage !== "official") throw new Error("该作品当前不在已发送1次（微信公众号可发）文件夹");
   const moved = moveCollectionSourceToStage({ publishRoot, libraryRoot, collection, stage: "used" });
   const logFile = path.join(publishRoot, "official-account-usage-log.csv");
   const rows = readCsv(logFile);
@@ -655,8 +675,19 @@ function getDistributionSnapshot(options = {}) {
   Object.values(PLATFORM_DIRS).forEach((relativeDirectory) => {
     listDirectoryNames(path.join(publishRoot, relativeDirectory)).forEach(addCollectionName);
   });
-  Object.values(WORKFLOW_STAGE_DIRS).forEach((relativeDirectory) => {
-    listDirectoryNames(path.join(stageRoots.workflowRoot, relativeDirectory)).forEach(addCollectionName);
+  const stageDirsToScan = new Set([
+    stageRoots.mobile,
+    stageRoots.official,
+    stageRoots.used,
+    path.join(stageRoots.workflowRoot, "已发送0次（抖音小红书可发）"),
+    path.join(stageRoots.workflowRoot, "已发送1次（微信公众号可发）"),
+    path.join(stageRoots.workflowRoot, "已发送2次（其他平台可发）"),
+    path.join(stageRoots.workflowRoot, "抖音小红书"),
+    path.join(stageRoots.workflowRoot, "微信公众号"),
+    path.join(stageRoots.workflowRoot, "已发送")
+  ]);
+  stageDirsToScan.forEach((dir) => {
+    if (fs.existsSync(dir)) listDirectoryNames(dir).forEach(addCollectionName);
   });
   listArchiveNames(stageRoots.used).forEach(addCollectionName);
   listDirectoryNames(libraryRoot)
@@ -676,9 +707,9 @@ function getDistributionSnapshot(options = {}) {
       douyinArchive: inspectPlatformEntry(publishRoot, PLATFORM_DIRS.douyinArchive, name, sourceCache)
     };
     const workflowEntries = {
-      mobile: inspectPlatformEntry(stageRoots.workflowRoot, WORKFLOW_STAGE_DIRS.mobile, name, sourceCache),
-      official: inspectPlatformEntry(stageRoots.workflowRoot, WORKFLOW_STAGE_DIRS.official, name, sourceCache),
-      used: inspectPlatformEntry(stageRoots.workflowRoot, WORKFLOW_STAGE_DIRS.used, name, sourceCache)
+      mobile: inspectPlatformEntry(path.dirname(stageRoots.mobile), path.basename(stageRoots.mobile), name, sourceCache),
+      official: inspectPlatformEntry(path.dirname(stageRoots.official), path.basename(stageRoots.official), name, sourceCache),
+      used: inspectPlatformEntry(path.dirname(stageRoots.used), path.basename(stageRoots.used), name, sourceCache)
     };
     const usedArchivePath = path.join(stageRoots.used, `${name}.zip`);
     const usedArchivePresent = (() => {

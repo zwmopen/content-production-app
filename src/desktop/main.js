@@ -1,4 +1,9 @@
 const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, Tray, Menu, Notification, screen } = require("electron");
+
+if (process.env.TB_REMOTE_DEBUGGING_PORT) {
+  app.commandLine.appendSwitch("remote-debugging-port", String(process.env.TB_REMOTE_DEBUGGING_PORT));
+}
+
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -45,6 +50,7 @@ const {
   buildWechatWebSaveScript,
   buildWechatWebOpenEditorScript
 } = require("../lib/wechat-web-automation");
+const { resolveElectronProxy } = require("../lib/electron-network-proxy");
 
 // Some Windows machines repeatedly lose the Electron GPU subprocess during
 // startup (exit code -1073741515), which otherwise terminates the whole app.
@@ -53,6 +59,15 @@ const {
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch(`disable-gpu`);
 app.commandLine.appendSwitch(`disable-gpu-compositing`);
+
+// Keep external web traffic on the local Clash listener even when Windows
+// WinINET/WinHTTP proxy settings are disabled. Local workbench/API/CDP
+// traffic stays direct through the explicit bypass list.
+const ELECTRON_PROXY_CONFIG = resolveElectronProxy(process.env.CONTENT_HTTP_PROXY);
+if (ELECTRON_PROXY_CONFIG.enabled) {
+  app.commandLine.appendSwitch("proxy-server", ELECTRON_PROXY_CONFIG.proxyServer);
+  app.commandLine.appendSwitch("proxy-bypass-list", ELECTRON_PROXY_CONFIG.proxyBypassList);
+}
 
 // Use the unified userData directory.  The environment variable is set by
 // start.ps1, but if it is missing (e.g. launched via a shortcut that loses
@@ -79,12 +94,15 @@ app.setName(`jianghu-content-production-${CONTENT_INSTANCE_ID.toLowerCase()}`);
 
 const APP_PORT = String(process.env.PORT || DEFAULT_INSTANCE_PORT).trim() || DEFAULT_INSTANCE_PORT;
 const APP_URL = `http://127.0.0.1:${APP_PORT}/`;
-// Fresh-session uploads get a finite pre-submit window.  If the native bridge
-// is still unresponsive after it, automatic recovery may take ownership of
-// the account instead of deferring forever behind the pending request.
 const GPT_PRE_SUBMIT_DISPATCH_GRACE_MS = 180_000;
 const RUNTIME_ROOT = process.env.TEAMBUILDING_DASHBOARD_RUNTIME || DEFAULT_INSTANCE_RUNTIME;
-const APP_TITLE = `内容生产 · ${CONTENT_INSTANCE_LABEL}`;
+const INSTANCE_TITLES = {
+  "A": "🟢【实例 A】账号1 · zwmrpg (端口 4331)",
+  "B": "🔵【实例 B】账号2 · orlando (端口 4332)",
+  "C": "🟣【实例 C】账号3 · z x Plus (端口 4333)",
+  "D": "🟠【实例 D】账号4 · Hazel Plus (端口 4334)"
+};
+const APP_TITLE = INSTANCE_TITLES[CONTENT_INSTANCE_ID] || `【实例 ${CONTENT_INSTANCE_ID}】内容生产 (端口 ${APP_PORT})`;
 const ASSIGNED_ACCOUNT_IDS = new Set(
   resolveAssignedAccountIds(CONTENT_INSTANCE_ID, process.env.CONTENT_ACCOUNT_IDS, { contentOnlyMode: CONTENT_ONLY_MODE })
 );
@@ -96,6 +114,29 @@ const GPT_PENDING_RESTORE_FILE = path.join(GPT_LOGIN_RECOVERY_ROOT, "pending-res
 let serverProcess = null;
 let mainWindow = null;
 let assistantOverlayWindow = null;
+
+// Native anti-blocking dialog suppression:
+// Ensure no window.alert, window.confirm, or unload prompts can ever freeze
+// unattended content production in this Electron instance.
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-prevent-unload", (preventUnloadEvent) => {
+    preventUnloadEvent.preventDefault();
+  });
+  const injectAntiModalScript = () => {
+    contents.executeJavaScript(`(() => {
+      try {
+        if (!window.__antiModalInjected) {
+          window.__antiModalInjected = true;
+          window.alert = function(msg) { console.warn("[Auto-Suppressed Alert]", msg); };
+          window.confirm = function(msg) { console.warn("[Auto-Confirmed Confirm]", msg); return true; };
+          window.prompt = function(msg, def) { console.warn("[Auto-Dismissed Prompt]", msg); return def || ""; };
+        }
+      } catch (_) {}
+    })()`).catch(() => {});
+  };
+  contents.on("dom-ready", injectAntiModalScript);
+  contents.on("did-finish-load", injectAntiModalScript);
+});
 const gptJavaScriptInFlight = new WeakMap();
 // A single GPT WebContents can receive inspect/status/result probes from
 // different recovery loops at the same time. Chromium does not provide a
@@ -1502,23 +1543,30 @@ function collectDomNodes(node, output = []) {
   return output;
 }
 
-function selectGptFileInputNode(documentNode) {
+function selectGptFileInputNode(documentNode, hasNonImage = false) {
   const candidates = collectDomNodes(documentNode).filter((node) => {
     if (String(node.nodeName || "").toLowerCase() !== "input" || !Number(node.nodeId)) return false;
     if (domNodeAttribute(node, "type").toLowerCase() !== "file") return false;
     return !domNodeAttribute(node, "disabled");
   });
   if (!candidates.length) return null;
-  return candidates.find((node) => {
-    const accept = domNodeAttribute(node, "accept");
-    return Boolean(domNodeAttribute(node, "multiple")) || /image|file|jpe?g|png|webp|gif|bmp|txt/i.test(accept);
-  }) || candidates[0];
+  // 优先匹配通用全类型上传框 id="upload-files" (支持 txt, pdf, docx, img 等所有文件)
+  const universal = candidates.find((node) => domNodeAttribute(node, "id") === "upload-files" || !domNodeAttribute(node, "accept"));
+  if (universal) return universal;
+  if (!hasNonImage) {
+    const photo = candidates.find((node) => /image/i.test(domNodeAttribute(node, "accept")));
+    if (photo) return photo;
+  }
+  return candidates[0];
 }
 
 async function setGptTaskFileInputFiles(contents, filePaths) {
-  const files = [...new Set((Array.isArray(filePaths) ? filePaths : [])
+  const rawFiles = Array.isArray(filePaths) ? filePaths : [];
+  const hasNonImage = rawFiles.some((f) => /\.(?:txt|md|json|pdf|docx?)$/i.test(String(f || "")));
+  const files = [...new Set(rawFiles
     .map((item) => String(item || "").trim())
-    .filter(Boolean))].slice(0, 30);
+    .filter((file) => Boolean(file))
+  )].slice(0, 30);
   if (!files.length) return { ok: true, count: 0 };
   const invalid = files.find((file) => !path.isAbsolute(file) || !fs.existsSync(file) || !fs.statSync(file).isFile());
   if (invalid) return { ok: false, count: 0, error: `GPT 原生上传文件不存在：${invalid}` };
@@ -1535,7 +1583,7 @@ async function setGptTaskFileInputFiles(contents, filePaths) {
     let selected = null;
     for (let attempt = 0; attempt < 12 && !selected; attempt += 1) {
       const documentNode = await contents.debugger.sendCommand("DOM.getDocument", { depth: -1, pierce: true });
-      selected = selectGptFileInputNode(documentNode.root);
+      selected = selectGptFileInputNode(documentNode.root, hasNonImage);
       if (selected) break;
       // The ChatGPT composer may mount its hidden input only after the attach
       // control is opened. Keep this UI nudge short and scoped to this exact
@@ -1556,8 +1604,20 @@ async function setGptTaskFileInputFiles(contents, filePaths) {
       }
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
-    if (!selected) return { ok: false, count: 0, error: "GPT 当前页面没有找到可用的原生附件入口" };
     await contents.debugger.sendCommand("DOM.setFileInputFiles", { nodeId: selected.nodeId, files });
+    await contents.debugger.sendCommand("Runtime.evaluate", {
+      expression: `(() => {
+        try {
+          [...document.querySelectorAll("input[type='file']")].forEach((input) => {
+            if (input.files && input.files.length > 0) {
+              input.dispatchEvent(new Event("change", { bubbles: true }));
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+          });
+        } catch {}
+      })()`,
+      returnByValue: true
+    }).catch(() => {});
     return { ok: true, count: files.length };
   } catch (error) {
     return { ok: false, count: 0, error: error?.message || String(error) };
@@ -4482,6 +4542,9 @@ async function ensureServer() {
     const probe = await probeWorkbenchServer();
     if (probe === "ready") return;
     if (probe === "occupied") throw new Error(formatPortInUseMessage(APP_PORT));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (probe === "ready") return;
+    if (probe === "occupied") throw new Error(formatPortInUseMessage(APP_PORT));
   }
   throw new Error("本地工作台服务未能启动");
 }
@@ -4495,9 +4558,8 @@ async function createWindow() {
     minWidth: 1120,
     minHeight: 700,
     title: APP_TITLE,
-    icon: path.join(__dirname, "团建工作台.ico"),
-    show: false,
-    backgroundColor: "#e7eee9",
+    show: true,
+    skipTaskbar: false,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
@@ -4505,14 +4567,14 @@ async function createWindow() {
       sandbox: true,
       webviewTag: false,
       partition: WORKBENCH_PARTITION,
-      // The renderer owns the durable GPT maintenance timers and queue
-      // checkpoints. Keep them alive when the workbench is hidden to tray;
-      // the native GPT WebContentsView already has the same guarantee.
       backgroundThrottling: false,
       preload: path.join(__dirname, "preload.js")
     }
   });
   mainWindow = window;
+  window.on("page-title-updated", (event) => event.preventDefault());
+  window.show();
+  window.focus();
   window.on("minimize", () => {
     hideAllGptViews();
     hideOnlinePlatformViews();
@@ -4536,14 +4598,8 @@ async function createWindow() {
     event.preventDefault();
     hideAllGptViews();
     hideOnlinePlatformViews();
-    window.hide();
+    window.minimize();
     appendDesktopLog("desktop-background", productionTaskActive ? "production-active" : "idle");
-    if (Notification.isSupported()) {
-      new Notification({
-        title: "图文工作台仍在后台运行",
-        body: productionTaskActive ? "自动生产没有中断，可从右下角托盘重新打开。" : "可从右下角托盘重新打开或彻底退出。"
-      }).show();
-    }
   });
   window.on("closed", () => {
     if (assistantOverlayWindow && !assistantOverlayWindow.isDestroyed()) assistantOverlayWindow.destroy();
@@ -4576,12 +4632,32 @@ async function createWindow() {
     appendDesktopLog("shell-load-failed", `code=${code} main=${isMainFrame} url=${validatedURL} ${description}`);
   });
   window.webContents.on("render-process-gone", (_event, details) => {
+    gptAccounts.clear();
+    mainWindow = null;
+  });
+
+  window.once("ready-to-show", () => {
+    if (process.env.TB_DESKTOP_HIDDEN !== "1") window.show();
+  });
+  // The "show" event may fire before the renderer's DOM is ready, causing
+  // notifyWindowRestored to send desktop:window-restored into the void.
+  // Re-trigger after the page finishes loading so the renderer can actually
+  // receive it and restore the embedded GPT surface.
+  window.webContents.once("did-finish-load", () => {
+    setTimeout(() => notifyWindowRestored("did-finish-load"), 200);
+  });
+  window.webContents.on("did-fail-load", (_event, code, description, validatedURL, isMainFrame) => {
+    appendDesktopLog("shell-load-failed", `code=${code} main=${isMainFrame} url=${validatedURL} ${description}`);
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
     appendDesktopLog("shell-render-gone", `${details.reason} exitCode=${details.exitCode}`);
   });
 
   const versionedUrl = new URL(APP_URL);
   versionedUrl.searchParams.set("appVersion", APP_VERSION);
   await window.loadURL(versionedUrl.toString());
+  window.show();
+  window.focus();
   await ensureAssistantOverlay();
 }
 
@@ -4597,6 +4673,12 @@ if (!hasSingleInstanceLock) {
     mainWindow.focus();
   });
   app.whenReady().then(() => {
+    appendDesktopLog(
+      "electron-network-proxy",
+      ELECTRON_PROXY_CONFIG.enabled
+        ? `enabled server=${ELECTRON_PROXY_CONFIG.proxyServer} bypass=${ELECTRON_PROXY_CONFIG.proxyBypassList}`
+        : `disabled reason=${ELECTRON_PROXY_CONFIG.error || "unknown"}`
+    );
     ensureDurableRuntimeResources();
     applyPendingGptLoginBackup();
     applyPendingGptLoginRestore();

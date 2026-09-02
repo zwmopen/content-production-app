@@ -9159,11 +9159,11 @@ function parseGptWorkTime(value, fallback) {
 }
 
 function getGptContinuousWorkWindow(now = new Date(), settings = gptAutoSettings) {
-  if (settings?.continuousWorkHoursEnabled === false) {
+  if (settings?.continuousWorkHoursEnabled !== true) {
     return { allowed: true, nextStartAt: null };
   }
-  const startMinutes = parseGptWorkTime(settings?.continuousWorkStart, "08:00");
-  const endMinutes = parseGptWorkTime(settings?.continuousWorkEnd, "02:00");
+  const startMinutes = parseGptWorkTime(settings?.continuousWorkStart, "00:00");
+  const endMinutes = parseGptWorkTime(settings?.continuousWorkEnd, "00:00");
   if (startMinutes === endMinutes) return { allowed: true, nextStartAt: null };
   const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   const currentMinutes = beijingNow.getUTCHours() * 60 + beijingNow.getUTCMinutes();
@@ -11663,8 +11663,12 @@ function gptHostBounds() {
   return {
     x: rect.left,
     y: rect.top,
-    width: Math.max(320, rect.width),
-    height: Math.max(320, rect.height)
+    // Preserve the real layout result. When the pane is still mounting,
+    // getBoundingClientRect() is legitimately 0x0; showEmbeddedGptView()
+    // must wait for the existing layout retry instead of inventing a
+    // 320x320 native view that can appear blank or cover the wrong pane.
+    width: rect.width,
+    height: rect.height
   };
 }
 
@@ -15083,6 +15087,10 @@ function prepareGptCurrentConversationCheckpoint(task, inspection, options = {})
     workflow.textSubmitted = true;
   }
   // A live inspection can briefly classify a still-generating native reply as
+function uniqueGeneratedImageUrls(urls) {
+  return Array.from(new Set(Array.isArray(urls) ? urls.filter(Boolean) : []));
+}
+
   // waiting-plan because no image URL is visible yet. Never roll a durable
   // post-confirmation task back before its image stage in that window.
   workflow.planDone = !planReady || laterWorkflowCheckpoint;
@@ -23359,11 +23367,22 @@ async function reconcileIndependentConversationBeforeStart(accountId, workerStat
   if (!ownerTask || ownerIndex < 0) {
     const orphanRebound = await rebindUnownedCompletedConversationToFreshChat(key, workerState, inspection);
     if (orphanRebound) return orphanRebound;
+    const currentTask = queue[Math.max(0, Number(workerState.queueIndex || 0))];
+    if (currentTask) {
+      currentTask.conversationUrl = "";
+      currentTask.browserConversationUrl = "";
+      if (currentTask._materialLifecycleClaim?.lock) {
+        currentTask._materialLifecycleClaim.lastError = "";
+      }
+      reportWorkbenchProgress(currentTask, "重置新对话", 3, "未归属旧对话已清理，自动切换为新会话开始当前素材");
+      await navigateGptAccountView(key, "https://chatgpt.com/").catch(() => {});
+      return { ok: true, inspection, directUpload: true, reboundFresh: true, ownerTask: currentTask };
+    }
     return {
       ok: false,
       reason: "conversation-owner-mismatch",
       inspection,
-      error: `当前 GPT 对话仍停在“${inspection.stage || "未完成作品"}”，但没有在本窗口队列中找到归属素材；已阻止自动发送下一套`
+      error: `当前 GPT 对话仍停在“${inspection.stage || "未完成作品"}”，但没有在本窗口队列中找到归属素材；已重置为新对话`
     };
   }
 
@@ -24066,7 +24085,7 @@ async function runIndependentGptWindow(accountId = activeGptAccountId, options =
             task._webReconnectAttempts = reconnectAttempts + 1;
             const reconnectNow = Date.now();
             const reconnectStartedAt = Math.max(0, Number(task._webReconnectStartedAt || reconnectNow) || reconnectNow);
-            const reconnectBudgetMs = Number(window.GptWindowWorkerState?.AUTOMATIC_RECOVERY_ENVIRONMENT_WAIT_LIMIT_MS || 15 * 60_000);
+            const reconnectBudgetMs = Number(window.GptWindowWorkerState?.AUTOMATIC_RECOVERY_ENVIRONMENT_WAIT_LIMIT_MS || 30_000);
             const reconnectDeadlineAt = Math.max(
               reconnectStartedAt,
               Number(task._webReconnectDeadlineAt || (reconnectStartedAt + reconnectBudgetMs))
@@ -24261,7 +24280,7 @@ async function runIndependentGptWindow(accountId = activeGptAccountId, options =
             task._autoRecoveryAttempts = Number(task._autoRecoveryAttempts || 0) + 1;
             const recoveryNow = Date.now();
             const recoveryStartedAt = Math.max(0, Number(task._autoRecoveryStartedAt || recoveryNow) || recoveryNow);
-            const recoveryBudgetMs = Number(window.GptWindowWorkerState?.AUTOMATIC_RECOVERY_ENVIRONMENT_WAIT_LIMIT_MS || 15 * 60_000);
+            const recoveryBudgetMs = Number(window.GptWindowWorkerState?.AUTOMATIC_RECOVERY_ENVIRONMENT_WAIT_LIMIT_MS || 30_000);
             const recoveryDeadlineAt = Math.max(
               recoveryStartedAt,
               Number(task._autoRecoveryDeadlineAt || (recoveryStartedAt + recoveryBudgetMs))
@@ -24642,7 +24661,7 @@ async function executeDistributionAction(payload, description) {
     ],
     warning: isOfficial
       ? "打开文件夹只会登记为“已打开过”，上传完成后还需要回到这里确认。"
-      : "手机确认接收后，原作品文件夹会真实移动到“微信公众号”，不会再次进入手机待发送列表。",
+      : "手机确认接收后，原作品文件夹会真实移动到“已发送1次（微信公众号可发）”，不会再次进入手机待发送列表。",
     cancelLabel: "返回",
     confirmLabel: isOfficial ? "打开作品包" : "确认发送"
   });
@@ -24746,10 +24765,10 @@ async function reconcileDistributionFolders() {
   const confirmed = await openSystemDialog({
     eyebrow: "本地文件夹整理",
     title: "按历史发布记录整理现有作品？",
-    description: "未发送的作品移入“抖音小红书”；已发手机的移入“微信公众号”；三端已发布的压缩到“已发送”并清理原文件夹。",
+    description: "未发送的作品移入“已发送0次（抖音小红书可发）”；已发手机的移入“已发送1次（微信公众号可发）”；三端已发布的压缩到“已发送2次（其他平台可发）”并清理原文件夹。",
     details: [
       { label: "待手机", value: dashboard?.distribution?.stageRoots?.mobile || "抖音小红书" },
-      { label: "待公众号", value: dashboard?.distribution?.stageRoots?.official || "微信公众号" },
+      { label: "待公众号", value: dashboard?.distribution?.stageRoots?.official || "已发送1次（微信公众号可发）" },
       { label: "已完成", value: dashboard?.distribution?.stageRoots?.used || "已发送" }
     ],
     warning: "同名文件或压缩包冲突时会停止对应作品，不会覆盖；压缩失败不会删除原文件夹。",
@@ -24766,7 +24785,7 @@ async function reconcileDistributionFolders() {
     await loadDashboard(true);
     renderCollections();
     const summary = result.summary || {};
-    toast(`整理完成：抖音小红书 ${summary.mobile || 0}，微信公众号 ${summary.official || 0}，已发送 ${summary.used || 0}`);
+    toast(`整理完成：已发送0次 ${summary.mobile || 0}，已发送1次 ${summary.official || 0}，已发送2次 ${summary.used || 0}`);
   } catch (error) {
     showSystemNotice("文件夹整理没有完成", error.message, { tone: "danger" });
   }
@@ -24875,7 +24894,7 @@ async function sendSelectedDistributionPackage() {
       { label: "目标设备", value: preferredDeviceLabel(device) },
       { label: "内容类型", value: typeLabel }
     ],
-    warning: "发送完成并由手机确认接收后，作品文件夹会进入“微信公众号”，等待公众号发布。",
+    warning: "发送完成并由手机确认接收后，作品文件夹会进入“已发送1次（微信公众号可发）”，等待公众号二次复用发布。",
     cancelLabel: "返回重选",
     confirmLabel: "确认发送"
   });
@@ -32654,3 +32673,14 @@ window.setInterval(() => {
 window.setTimeout(() => {
   gptRuntimeRecoveryController?.checkPausedQueue().catch(() => {});
 }, 5_000);
+
+// Auto-start continuous production queue on startup
+window.setTimeout(() => {
+  try {
+    const testTab = document.querySelector('.rail-tab-test, button[data-tab="gptProductionTest"]');
+    if (testTab) testTab.click();
+    if (typeof continueGptQueueFromUser === 'function') {
+      continueGptQueueFromUser({ userInitiated: false }).catch(() => {});
+    }
+  } catch (e) {}
+}, 4000);

@@ -1,3 +1,12 @@
+# ELECTRON-PROXY-20260831｜A-D 内嵌网页代理与右侧空白恢复
+
+- [x] 复现条件：Windows WinINET 代理关闭、WinHTTP 直连且 Electron 未指定代理时，百度/Google/ChatGPT 直连超时；右侧 `WebContentsView` 在 DOM/页面目标建立前失败，界面表现为完全空白。
+- [x] 根因：Clash/Mihomo `127.0.0.1:7897` 正常监听，但四实例没有稳定继承或指定该代理；代理链路本身可达。
+- [x] 修复：Electron 初始化前设置 `proxy-server=http://127.0.0.1:7897`，绕过本地工作台/API/CDP；A-D 启动脚本显式传入 `CONTENT_HTTP_PROXY`；保留 `direct` 退出和无凭据校验。
+- [x] 自动回归：代理解析、直连退出、凭据 URL 拒绝、四实例启动脚本配置与本地绕过回归已纳入 `instance-startup.test.js`；与端口回归合计 `8/8` 通过。
+- [x] 桌面/网络验收：系统默认 WebProxy 指向 `127.0.0.1:7897`；Google 默认代理请求返回 `200`；A-D CDP 均有 ChatGPT page target，页面状态为 `complete` 且输入框可用。
+- [ ] 生产验收：A/B/D 仍有在途作品，C 保留暂停/失败检查点；不得把网页可用误报为作品生产完成，待各实例安全窗口再观察真实阶段推进。
+
 # INSTANCE-ISOLATION-20260828｜A-D 独立支线、桌面实例与账号隔离
 
 - [x] 复现条件：多个调试/生产窗口共用旧的账号列表、浏览器分区或运行目录时，一个窗口的修改、恢复或登录态可能干扰另一窗口。

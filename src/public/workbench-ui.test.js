@@ -2581,7 +2581,7 @@ test("global assistant is a draggable cat with separate status log and chat laye
   assert.match(app, /tb-workbench-assistant-position-v5/);
   assert.doesNotMatch(app, /const assistantRail = 76/);
   assert.doesNotMatch(app, /const inset = 12/);
-  assert.match(app, /x:\s*rect\.left,[\s\S]*?width:\s*Math\.max\(320, rect\.width\)/);
+  assert.match(app, /function gptHostBounds\(\)[\s\S]*?x:\s*rect\.left,[\s\S]*?width:\s*rect\.width/);
   assert.doesNotMatch(html, /id="gptSelectionAssistant"/);
   assert.match(css, /\.workbench-assistant-bubble\s*\{[\s\S]*?background:\s*#fff/);
   assert.match(css, /\.workbench-assistant-bubble::after/);
@@ -3656,6 +3656,18 @@ test("rotation browser readiness and admission IPC calls are individually bounde
   assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.status\(accountId\), 2_500\)/);
   assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.inspectStatus\(account\.id\), GPT_INSPECT_CALL_TIMEOUT_MS\)/);
   assert.match(app, /switchGptAccount\(account\.id, \{ silent: true, resumeWindow: false, syncBrowser: false \}\)/);
+});
+
+test("GPT host bounds preserve the zero-size layout state until the pane is ready", () => {
+  const start = app.indexOf("function gptHostBounds()");
+  const end = app.indexOf("function renderGptAccountTabs(", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const source = app.slice(start, end);
+  assert.match(source, /width: rect\.width/);
+  assert.match(source, /height: rect\.height/);
+  assert.doesNotMatch(source, /Math\.max\(320/);
+  assert.match(app, /if \(!bounds \|\| bounds\.width < 100 \|\| bounds\.height < 100\)/);
 });
 
 test("upload quota is recorded only after the GPT page acknowledges the task", () => {

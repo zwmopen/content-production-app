@@ -426,13 +426,12 @@
     const xhsEnd = source.indexOf(COPY_MARKERS.xhsEnd, xhsStart + COPY_MARKERS.xhsStart.length);
     const douyinStart = source.indexOf(COPY_MARKERS.douyinStart);
     const douyinEnd = source.indexOf(COPY_MARKERS.douyinEnd, douyinStart + COPY_MARKERS.douyinStart.length);
-    const ordered = headerIndex === 0
-      && xhsStart > headerIndex
+    const ordered = xhsStart >= 0
       && xhsEnd > xhsStart
       && douyinStart > xhsEnd
       && douyinEnd > douyinStart;
     const outside = ordered
-      ? `${source.slice(0, headerIndex)}${source.slice(douyinEnd + COPY_MARKERS.douyinEnd.length)}`.trim()
+      ? `${source.slice(0, Math.max(0, headerIndex))}${source.slice(douyinEnd + COPY_MARKERS.douyinEnd.length)}`.trim()
       : source;
     const xhs = ordered
       ? source.slice(xhsStart + COPY_MARKERS.xhsStart.length, xhsEnd).trim()
@@ -442,14 +441,14 @@
       : "";
     const issues = [];
     if (!ordered) issues.push("COPY_FORMAT_ORDER_INVALID");
-    if (outside) issues.push("COPY_FORMAT_EXTRA_OUTPUT");
+    if (outside && headerIndex !== 0) issues.push("COPY_FORMAT_EXTRA_OUTPUT");
     if (!xhs) issues.push("XHS_EMPTY");
     if (!douyin) issues.push("DOUYIN_EMPTY");
     return {
       formatVersion: 2,
       legacy: false,
       strict: issues.length === 0,
-      valid: issues.length === 0,
+      valid: Boolean(xhs && douyin),
       xhs,
       douyin,
       issues

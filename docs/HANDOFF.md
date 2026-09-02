@@ -1,4 +1,14 @@
 ﻿# 当前工作区增量 / 朋友圈每日准备窗口（2026-08-24）
+# 2026-08-31 / A-D 内嵌网页代理恢复与现场交接
+
+- 复现：Windows WinINET `ProxyEnable=0`、WinHTTP 为直连，四个 Electron 实例启动参数没有代理；百度、Google、ChatGPT 直连请求超时，导致右侧 WebContentsView 在文档阶段前失败或显示空白。
+- 根因证据：Clash/Mihomo `127.0.0.1:7897` 正在监听；百度和 Google 经该代理分别可返回 `200`，ChatGPT 经代理可收到边缘响应；因此不是代理进程挂掉，而是应用/系统没有使用代理。
+- 修复：根项目 `src/desktop/main.js` 在 Electron 初始化前加入 `proxy-server` 与本地绕过列表；根项目 A-D 启动脚本传入 `CONTENT_HTTP_PROXY`；A 当前 worktree 同步加入相同代理启动配置。登录态、队列、检查点和素材目录未清理或迁移。
+- 现场修复：已恢复 Windows WinINET 开关为 `ProxyEnable=1`，保留原 `ProxyServer=127.0.0.1:7897` 与本地绕过规则；这是可逆系统设置，回滚只需将该开关恢复为 `0`。
+- 验证：`node --check`（代理模块、主进程）通过；根项目 `instance-startup.test.js` 与 `lib/workbench-port.test.js` 共 `8/8` 通过；系统默认 WebProxy 指向 `127.0.0.1:7897`，Google 默认代理请求 `200`；A-D 当前 CDP 均可见 ChatGPT page target 和输入框。
+- 运行边界：A、B、D 当前有在途作品，未强制重启；C 队列已暂停/失败，未为了代理强行清理其检查点。网页恢复不等于作品生产已完成，后续仍按每个账号的运行态单独验收。
+- 下一步唯一动作：让 A/B/C/D 在各自安全空档自然重启或由用户明确授权后重启，以让新的 Electron 启动级代理配置写入日志；在此之前系统代理已覆盖当前窗口，不得为验证而发送 `1`、重复上传或重生成。
+
 # 2026-08-28 / A-D 四实例独立开发与生产隔离
 
 - 用户明确将原先混在一起的窗口改为主干派生四条独立支线：A/account-1、B/account-2、C/account-3、D/account-4；每条支线对应一个独立桌面 App 实例，可单独修改、测试或停用，不影响其他窗口。
