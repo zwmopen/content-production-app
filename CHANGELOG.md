@@ -1,5 +1,13 @@
 # 变更记录
 
+## 2026-08-29 / App A 原生附件上传与启动故障修复（未变更正式版本）
+
+- 仅修复 A/account-1：主进程在目标 GPT WebContents 上使用原生 `DOM.setFileInputFiles`，按附件入口能力拆分 TXT 与图片，图片最多两张一批；TXT 嵌入提示词，母版最多保留四张，生产图片总数不超过十张。
+- 原生上传完成条件改为 composer 的真实文件名/预览且不处于上传处理中，最长等待 90 秒；输入框已有附件按文件名对账，陌生附件、缺失预览和不完整状态直接停在安全边界，避免重复上传或误发送。
+- A 启动脚本增加端口归属校验，并仅在 A 使用 `--no-sandbox` 绕过本机 Electron 43.2.0 的 GPU/renderer 启动失败链；B/C/D 启动脚本不变，登录态和运行数据不清理。
+- 验证：原生上传回归 6/6、主测试 624/624、受影响 JavaScript 语法检查和 `git diff --check` 通过；A 实机 `4331/9431`、GPT 扩展 `0.2.91`、composer 和只读桥接巡检复核成功。
+- 当前目标任务仍保持 `queued / paused / _submittedToGpt=false`，未恢复或新增任何生产动作；当前归档账本 2 条且成品包实际存在，目标 requestId 无归档记录。详见 [`docs/HANDOFF.md`](docs/HANDOFF.md)。
+
 ## 2026-08-28 / A-D 四实例独立开发与生产隔离（未变更正式版本）
 
 - 将内容生产实例模型从旧 A/B 双实例收口为 A-D 四实例：A/account-1、B/account-2、C/account-3、D/account-4，分别使用 4331–4334 和 9431–9434。

@@ -25,7 +25,8 @@ for ($attempt = 0; $attempt -lt 40; $attempt += 1) {
 if (-not $ready) { throw "内容生产服务未能监听 4332，详见 $serverErr" }
 $exitCode = 0
 try {
-  & .\node_modules\.bin\electron.cmd desktop\main.js
+  $electronExe = Join-Path $PSScriptRoot "src\node_modules\electron\dist\electron.exe"
+  & $electronExe desktop\main.js
   $exitCode = $LASTEXITCODE
 } finally {
   if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }

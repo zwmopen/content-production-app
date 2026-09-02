@@ -1,4 +1,35 @@
 ﻿# 当前工作区增量 / 朋友圈每日准备窗口（2026-08-24）
+# 2026-08-29 / App A 原生附件上传与启动故障修复
+
+## 范围与当前真源
+
+- 本轮唯一范围是 `App A / account-1`：worktree `D:\AICode\工具开发\content-production-app-instances\A`，分支 `instance-a-account-1`，HTTP/CDP `4331/9431`，运行根目录 `D:\AICode\运行数据\江湖有旅人\内容生产App\instance-A`。未操作 B/C/D。
+- 当前正式源码版本仍为 `0.1.0`；本轮是该版本工作区修复记录，不把未完成真实生产闭环写成版本发布或“每日 20 套”达成。
+- 2026-08-29 现场只读复核：`4331` 由 A 服务 PID `25532` 监听，`9431` 由 A Electron PID `26972` 监听；`/api/runtime-info` 返回 `0.1.0`。GPT `account-1` 页面仍使用原生 Electron `userData`，未清 Cookie/Token。
+- CDP/桥接复核成功：状态、页面健康和检查结果分别约 6ms、1ms、130ms；页面 `readyState` 已完成、扩展 `0.2.91` ready、composer ready，巡检返回 `awaiting-material / safeToAct=true`。当前 root 页面没有自动任务对话，符合保持暂停的安全边界。
+
+## 根因与修复
+
+- 2026-08-28 现场的启动失败链为 Electron `43.2.0` GPU 子进程 `exit_code=-1073741515`，随后 `shell-render-gone launch-failed exitCode=49` 和 `ERR_FAILED`。A 启动器 `start-instance-a.ps1` 现在在确认 `4331` 归属确实为自己后，以仅限 A 的 `electron.cmd --no-sandbox desktop\\main.js` 启动；B/C/D 启动策略未改。历史日志里的 6 条失败仍保留作审计，最后一次失败在 2026-08-28 13:13:43Z，之后 14:13:09Z 的启动成功并持续到本次复核。
+- `src/desktop/main.js` 使用目标 GPT WebContents 的 CDP DOM 通道设置原生文件输入，不再依赖 renderer 侧 `DataTransfer`/合成 change。文件入口按 `accept` 与 `multiple` 选择；混合附件按文档与图片分开规划，图片最多两张一批并在批次间等待页面处理。
+- `src/lib/gpt-native-upload.js` 负责可测试的上传规划：TXT 只进入提示词，母版图片最多保留四张并优先 `1.jpg/2.jpg/3.jpg/10.jpg`，总图片不超过十张；已有 composer 附件按文件名对账，陌生附件直接返回冲突，避免重复上传。
+- `sidebar.js` 的原生上传分支只把 composer 里的真实文件名/附件预览和非忙状态作为完成证据，最长等待 90 秒；`input.files.length` 只作诊断。未完整确认则写入 `NATIVE_FILE_INPUT_NOT_CONFIRMED` 边界，不继续发送计划。
+
+## 当前任务与生产安全状态
+
+- 目标 `gpt-1787891370095-rz2anv`：队列 `index=0`、3 个任务、`paused=true`、`running=false`、`_status=queued`、`_submittedToGpt=false`；检查点为 `upload-material / 20%`，没有确认 `1`、生图、文案、下载文件、成品包或归档事件。
+- 运行数据 `gpt-production-archive.jsonl` 当前共 2 条记录，2 条的 `packagePath` 均实际存在；目标 requestId 归档匹配 0。当天没有新的生产闭环证据，因此不能宣称每日 20 套已完成。
+- 本轮没有恢复目标任务，没有重复上传、重复发送 `1`、重复生成、下载或归档；`electron-userdata`、GPT 登录态、队列、检查点和素材均保留。
+- 原始现场证据目录：`D:\AICode\运行数据\江湖有旅人\内容生产App\instance-A\recovery-evidence\20260828-2012-native-upload-renderer-stall`。
+
+## 验证与后续唯一动作
+
+- `npm run test:gpt-native-upload`：6/6 通过。
+- `npm test`：624/624 通过，0 失败、0 跳过。
+- 受影响 JavaScript `node --check`：通过；`git diff --check`：通过（仅保留 Windows 换行提示）。
+- 真实 App A CDP/页面验收：status、pageHealth、inspectStatus 成功；启动成功后的日志没有新增 `shell-render-gone`/`startup-failed`。这证明启动与空闲桥接稳定，不等于当前任务已完成生产。
+- 下一步仍必须先由人工确认是否允许在 A 的安全暂停边界恢复目标任务；恢复后按页面、检查点、会话日志和实际成品包逐阶段核对，任一冲突继续停住。未获确认前不执行生产动作。
+
 # 2026-08-28 / A-D 四实例独立开发与生产隔离
 
 - 用户明确将原先混在一起的窗口改为主干派生四条独立支线：A/account-1、B/account-2、C/account-3、D/account-4；每条支线对应一个独立桌面 App 实例，可单独修改、测试或停用，不影响其他窗口。

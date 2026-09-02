@@ -105,7 +105,12 @@
       const sameConversation = normalizeUrl(item.conversationUrl) === currentUrl;
       if (!sameConversation && options.allowCrossConversation !== true) return false;
       if (!item.packageValid || !normalizeText(item.packagePath) || Number(item.downloadedImageCount || 0) < 1) return false;
-      if (!/作品归档完成|完成$/u.test(normalizeText(item.stage))) return false;
+      // The durable checkpoint history uses the machine step key in the
+      // completed record (for example `步骤完成：move-archive`), while older
+      // records use the human-facing `作品归档完成` label.  Both are valid
+      // only after the package, image count, and material identity checks
+      // above have passed.
+      if (!/(?:作品归档完成|完成$|move-archive$)/u.test(normalizeText(item.stage))) return false;
       const materialName = normalizeText(String(item.sourceMaterialPath || "").split(/[\\/]/).pop());
       const promptLabel = normalizeText(materialText.match(/当前素材文件夹\s*[：:]\s*(.+)$/u)?.[1]);
       return materialName.length >= 8
@@ -425,7 +430,12 @@
     const xhsStart = source.indexOf(COPY_MARKERS.xhsStart);
     const xhsEnd = source.indexOf(COPY_MARKERS.xhsEnd, xhsStart + COPY_MARKERS.xhsStart.length);
     const douyinStart = source.indexOf(COPY_MARKERS.douyinStart);
-    const douyinEnd = source.indexOf(COPY_MARKERS.douyinEnd, douyinStart + COPY_MARKERS.douyinStart.length);
+    let douyinEnd = douyinStart >= 0 ? source.indexOf(COPY_MARKERS.douyinEnd, douyinStart + COPY_MARKERS.douyinStart.length) : -1;
+    let softEndMarker = false;
+    if (douyinStart >= 0 && douyinEnd < 0) {
+      douyinEnd = source.length;
+      softEndMarker = true;
+    }
     const ordered = headerIndex === 0
       && xhsStart > headerIndex
       && xhsEnd > xhsStart
@@ -1067,6 +1077,26 @@
     return parsePlannedImageCount(options.planText || "") > 0;
   }
 
+  // A long reused conversation can expose an older archived/post-image DOM
+  // snapshot while a new task is still waiting in the composer.  Only adopt a
+  // post-plan workflow marker when the live material boundary belongs to the
+  // current task and carries a real plan count.  The plan-ready boundary is
+  // handled separately by shouldAdoptPlanReadyBoundary(), which also requires
+  // the current task's planSubmitted marker.
+  function shouldAdoptCurrentMaterialWorkflowBoundary(options = {}) {
+    if (options.forceFreshWorkflow === true || options.materialMatched !== true) return false;
+    const stage = String(options.liveBoundaryStage || "").trim();
+    if (!["waiting-images", "images-ready", "waiting-copy", "completed-copy-pending-package"].includes(stage)) {
+      return false;
+    }
+    const plannedImageCount = Math.max(
+      0,
+      Number(options.boundaryExpectedImageCount || 0),
+      parsePlannedImageCount(options.boundaryPlanText || "")
+    );
+    return plannedImageCount > 0;
+  }
+
   function shouldAdoptCompletedCopyBoundary(options = {}) {
     const stage = String(options.boundaryStage || "").trim();
     if (!["images-ready", "waiting-copy"].includes(stage)) return false;
@@ -1145,6 +1175,7 @@
     shouldReenterConfirmAtPlanBoundary,
     shouldReconcilePlanConfirmationBoundary,
     shouldAdoptPlanReadyBoundary,
+    shouldAdoptCurrentMaterialWorkflowBoundary,
     shouldAdoptCompletedCopyBoundary,
     resolveDurableWorkflowStep,
     isArchivedAutomationBoundary,

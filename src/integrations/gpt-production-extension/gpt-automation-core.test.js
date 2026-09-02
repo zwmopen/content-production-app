@@ -60,6 +60,7 @@ const {
   validatePlanPageCap,
   resolveEntryInstruction,
   completedHistoryMatchesAutomationBoundary,
+  shouldAdoptCurrentMaterialWorkflowBoundary,
   generatedImageIdentity,
   uniqueGeneratedImageUrls,
   preferCurrentBatchImageUrls,
@@ -611,6 +612,52 @@ test("a validated completed history record recovers a lost browser archive marke
     materialText: boundary.materialText,
     historyItems: [{ ...matching, packageValid: false }]
   }), false);
+});
+
+test("an archived or mismatched conversation boundary cannot be adopted for a new task", () => {
+  const planText = "本轮输出页数：8页\nP1｜封面\nP8｜收尾";
+  assert.equal(shouldAdoptCurrentMaterialWorkflowBoundary({
+    materialMatched: false,
+    liveBoundaryStage: "archived",
+    boundaryPlanText: planText,
+    boundaryExpectedImageCount: 8
+  }), false);
+  assert.equal(shouldAdoptCurrentMaterialWorkflowBoundary({
+    materialMatched: false,
+    liveBoundaryStage: "waiting-images",
+    boundaryPlanText: planText,
+    boundaryExpectedImageCount: 8
+  }), false);
+  assert.equal(shouldAdoptCurrentMaterialWorkflowBoundary({
+    materialMatched: true,
+    liveBoundaryStage: "waiting-images",
+    boundaryPlanText: planText,
+    boundaryExpectedImageCount: 8
+  }), true);
+  assert.equal(shouldAdoptCurrentMaterialWorkflowBoundary({
+    forceFreshWorkflow: true,
+    materialMatched: true,
+    liveBoundaryStage: "images-ready",
+    boundaryPlanText: planText,
+    boundaryExpectedImageCount: 8
+  }), false);
+});
+
+test("a validated move-archive history stage also releases the lost browser marker", () => {
+  const materialText = "请完整读取全部附件。当前素材文件夹：2_.人均100+轻松拿下桐洲岛一日团建";
+  const matching = {
+    conversationUrl: "https://chatgpt.com/c/example",
+    sourceMaterialPath: "D:\\素材库\\1\\2_.人均100+轻松拿下桐洲岛一日团建",
+    stage: "步骤完成：move-archive",
+    packagePath: "D:\\成品库\\作品A",
+    packageValid: true,
+    downloadedImageCount: 8
+  };
+  assert.equal(completedHistoryMatchesAutomationBoundary({
+    currentUrl: "https://chatgpt.com/c/example",
+    materialText,
+    historyItems: [matching]
+  }), true);
 });
 
 test("a material completed by a rotation successor releases stale boundaries in prior accounts", () => {

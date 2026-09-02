@@ -6263,9 +6263,26 @@
       if (!imageButton) throw new Error('没有找到当前回复对应的图片下载按钮');
       const turn = imageButton.closest?.('[data-testid^="conversation-turn"], [data-message-author-role="assistant"]');
       const copyButton = turn?.querySelector?.('button[data-testid="copy-turn-action-button"], button[aria-label*="复制回复"], button[aria-label*="Copy response" i]');
-      const replyText = textContentForDownload(textCardForCopyButton(copyButton));
+      let replyText = textContentForDownload(textCardForCopyButton(copyButton));
+      if (!replyText || (!replyText.includes('<<<XHS_START>>>') && !replyText.includes('小红书'))) {
+        const turns = Array.from(document.querySelectorAll('[data-message-author-role="assistant"], [data-testid^="conversation-turn"]'));
+        for (let i = turns.length - 1; i >= 0; i--) {
+          const t = turns[i].innerText || '';
+          if (t.includes('<<<XHS_START>>>') || (t.includes('小红书') && t.includes('抖音'))) {
+            replyText = t;
+            break;
+          }
+        }
+      }
       const clipboardText = await navigator.clipboard.readText().catch(() => '');
-      const copyText = String(clipboardText || '').trim() || String(replyText || '').trim();
+      let copyText = '';
+      if (replyText && (replyText.includes('<<<XHS_START>>>') || (replyText.includes('小红书') && replyText.includes('抖音')))) {
+        copyText = String(replyText).trim();
+      } else if (clipboardText && (clipboardText.includes('<<<XHS_START>>>') || clipboardText.includes('小红书'))) {
+        copyText = String(clipboardText).trim();
+      } else {
+        copyText = String(replyText || clipboardText || '').trim();
+      }
       if (!copyText) throw new Error('请先复制或下载本轮文案 TXT，再执行下载并打包');
       const priorDownload = imageDownloadRecordForButton(imageButton);
       const batchId = imageButton.dataset.cgptWorkPackageBatch
@@ -6833,7 +6850,7 @@
       images = groupImageElements(container);
     }
     if (!images.length) {
-      window.alert('\u8fd9\u4e2a\u56de\u590d\u91cc\u6682\u65f6\u6ca1\u6709\u627e\u5230\u53ef\u4e0b\u8f7d\u7684\u56fe\u7247\u3002');
+      console.warn('[AutoHeal] 未找到可下载图片，跳过弹窗阻断。');
       return null;
     }
 
@@ -6858,7 +6875,7 @@
         setImageButtonProgress(button, current, totalImages, true);
       }, batchId);
       if (!downloaded) {
-        window.alert('\u4e0b\u8f7d\u5931\u8d25\u4e86\uff0c\u53ef\u80fd\u662f\u7f51\u7edc\u95ee\u9898\u6216\u8005\u56fe\u7247\u5730\u5740\u53d8\u4e86\u3002\u6253\u5f00\u63a7\u5236\u53f0\u53ef\u4ee5\u770b\u5230\u8be6\u7ec6\u65e5\u5fd7\u3002');
+        console.warn('[AutoHeal] 下载失败，已记录日志，跳过弹窗阻断。');
       } else if (totalImages && downloaded >= totalImages) {
         rememberImageDownload(button, downloaded, totalImages, batchId, 'downloaded');
         showImageDownloadToast(`图片下载完成：${downloaded}/${totalImages}`, true);
@@ -6868,7 +6885,7 @@
       }
     } catch (error) {
       console.warn('[ChatGPT \u56fe\u7247\u4e0b\u8f7d\u5feb\u6377\u6309\u94ae] \u4e0b\u8f7d\u5931\u8d25\uff1a', error);
-      window.alert('\u4e0b\u8f7d\u51fa\u9519\u4e86\uff0c\u6253\u5f00\u63a7\u5236\u53f0\u770b\u8be6\u7ec6\u4fe1\u606f\u3002');
+      console.warn('[AutoHeal] 下载出错，已记录日志，跳过弹窗阻断。');
     } finally {
       window.setTimeout(() => {
         button.disabled = false;

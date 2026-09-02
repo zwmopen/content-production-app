@@ -1,5 +1,14 @@
 # 图文工作台
 
+## 2026-08-29 / App A 原生附件上传与启动故障修复（工作区验证）
+
+- 本轮只处理 `App A / account-1`：worktree 为 `D:\AICode\工具开发\content-production-app-instances\A`，分支为 `instance-a-account-1`，入口端口为 `4331`、GPT 调试端口为 `9431`。B/C/D 没有启动或修改。
+- 现场根因是本机 Electron `43.2.0` 启动时 GPU 子进程先以 `-1073741515` 退出，随后 shell renderer 报 `launch-failed exitCode=49` / `ERR_FAILED`。A 的独立启动脚本已加受控的 `--no-sandbox`；该参数只属于 A 启动入口，不应复制到其他实例或当作登录态清理方案。
+- GPT 上传改为由主进程在目标 WebContents 上使用 `DOM.setFileInputFiles`：按 `accept`/`multiple` 选择正确入口，TXT 嵌入本轮提示词，母版图片压缩为 4 张（优先 `1/2/3/10`），总图片数不超过 10 张，图片按最多 2 张一批注入并等待 React 消化。已有附件按文件名对账；发现不属于当前任务的附件或 composer 预览不完整时直接停住，不重复上传或发送。
+- 扩展侧不再把 `input.files.length` 当作完成证据，而是等待 composer 中的真实文件名/预览且不再处于上传处理中，最长 90 秒；确认失败保留检查点并进入安全边界。
+- 2026-08-29 现场复核：A 的 `4331/9431` 正在监听，`account-1` GPT 页面登录态、扩展 `0.2.91`、composer 和只读巡检可用；当前目标任务仍为 `queued / paused / running=false / _submittedToGpt=false`，停在上传检查点，未恢复、未新增上传/发送 `1`/生图/下载/归档。运行数据中的归档账本为 2 条，均有实际成品包；当前目标 requestId 无归档记录。
+- 验证：`npm run test:gpt-native-upload` 通过 6/6；`npm test` 通过 624/624；受影响 JavaScript `node --check` 和 `git diff --check` 通过。现场证据保存在 `D:\AICode\运行数据\江湖有旅人\内容生产App\instance-A\recovery-evidence\20260828-2012-native-upload-renderer-stall`。
+
 ## 当前工作区增量：A-D 独立实例与四条开发支线（2026-08-28）
 
 - 当前主干可派生四个相互独立的内容生产桌面实例：A/account-1、B/account-2、C/account-3、D/account-4。

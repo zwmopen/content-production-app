@@ -35,8 +35,9 @@ function appFunctionSource(name, nextName) {
   let start = app.indexOf(marker);
   assert.notEqual(start, -1, `missing app function: ${name}`);
   if (app.slice(Math.max(0, start - 6), start) === "async ") start -= 6;
-  const end = app.indexOf(`function ${nextName}(`, start + marker.length);
+  let end = app.indexOf(`function ${nextName}(`, start + marker.length);
   assert.notEqual(end, -1, `missing next app function: ${nextName}`);
+  if (app.slice(Math.max(0, end - 6), end) === "async ") end -= 6;
   return app.slice(start, end).trim();
 }
 
@@ -359,12 +360,12 @@ test("恢复链清理游离的后续 running 标记并保留账号队列串行�
 
 test("心跳中断恢复优先传递已提交任务的原对话，不把游离任务误判成首页", () => {
   assert.match(app, /const recoveryConversationUrl = knownGptConversationUrl\(/);
-  assert.match(app, /recoveryConversationUrl\n/);
+  assert.match(app, /recoveryConversationUrl\r?\n/);
   assert.match(desktopPreload, /recoveryConversationUrl: String\(stopOptions\.recoveryConversationUrl \|\| ""\)/);
   assert.match(desktopMain, /function durableSubmittedConversationUrl\(accountId, runtimeState = null\)/);
   assert.match(desktopMain, /const suppliedRecoveryUrl = normalizeChatConversationUrl\(input\.recoveryConversationUrl/);
   assert.match(desktopMain, /const freshRoot = isFreshRootGptTaskPending\(account, runtimeState\)[\s\S]{0,160}!suppliedRecoveryUrl/);
-  assert.match(desktopMain, /suppliedRecoveryUrl\n\s*\|\| persistedSubmittedUrl/);
+  assert.match(desktopMain, /suppliedRecoveryUrl\r?\n\s*\|\| persistedSubmittedUrl/);
 });
 
 test("works repository keeps the header compact and opens its configured folder from the path row", () => {
@@ -403,7 +404,7 @@ test("device rows show one editable computer label and keep inventory on the sec
   assert.match(app, /const label = preferredDeviceLabel\(device\)/);
   assert.match(app, /(?:const inventoryLabel = device\.workCount == null \? "手机储备未上报"|const inventoryLabel = counts[\s\S]*?device\.workCount == null \? "手机储备未上报")/);
   assert.match(app, /class="device-inventory-line"/);
-  assert.match(app, /device\.note\n\s*\|\| device\.liveName/);
+  assert.match(app, /device\.note\r?\n\s*\|\| device\.liveName/);
   assert.match(server, /noteIsCustom: hasSavedNote/);
   assert.match(server, /syncedName/);
   assert.match(server, /id\.startsWith\("discovered-"\)/);
@@ -1027,7 +1028,7 @@ test("orphan GPT recovery resolves one material from the global index without sc
   assert.match(server, /function findMaterialGlobalIndexEntry\(folderName = ""\)/);
   assert.match(server, /pathname === "\/api\/materials\/find"/);
   assert.match(server, /MATERIAL_GLOBAL_INDEX_FILE/);
-  const recoverySection = app.match(/async function resolveGptMaterialForConversationRecovery\(folderName = ""\)[\s\S]*?\n}\n\nasync function adoptCompletedGptConversationCheckpoint/)?.[0] || "";
+  const recoverySection = app.match(/async function resolveGptMaterialForConversationRecovery\(folderName = ""\)[\s\S]*?\r?\n}\r?\n\r?\nasync function adoptCompletedGptConversationCheckpoint/)?.[0] || "";
   assert.match(recoverySection, /\/api\/materials\/find\?name=/);
   assert.doesNotMatch(recoverySection, /loadMaterialCategory/);
 });
@@ -1241,12 +1242,12 @@ test("GPT all-day production persists across restarts and obeys cross-midnight w
 });
 
 test("continuous startup uses the loaded low-usage catalog before deep-scanning every category", () => {
-  const catalogSection = app.match(/async function ensureGptAutoMaterialCatalog\(\)[\s\S]*?\n}\n\nfunction gptWindowReservedMaterialPaths/)?.[0] || "";
+  const catalogSection = app.match(/async function ensureGptAutoMaterialCatalog\(\)[\s\S]*?\r?\n}\r?\n\r?\nfunction gptWindowReservedMaterialPaths/)?.[0] || "";
   assert.match(catalogSection, /loadedItems/);
   assert.match(catalogSection, /if \(loadedItems > 0\) return dashboard\?\.materials/);
   assert.match(catalogSection, /find\(\(category\) => category\.loaded === false/);
   assert.doesNotMatch(catalogSection, /for \(const category of dashboard\?\.materials\?\.categories \|\| \[\]\)/);
-  const selectionSection = app.match(/async function selectLowestUsageGptEntries\([\s\S]*?\n}\n\nasync function prepareAutoGptQueue/)?.[0] || "";
+  const selectionSection = app.match(/async function selectLowestUsageGptEntries\([\s\S]*?\r?\n}\r?\n\r?\nasync function prepareAutoGptQueue/)?.[0] || "";
   assert.match(selectionSection, /待复核.*归档完成.*生产中.*作品已完成待归档/);
   assert.doesNotMatch(selectionSection, /待初次打标/);
   assert.match(app, /仍在 initial-tagging|仍在初次打标|initial-tagging/);
@@ -1275,7 +1276,7 @@ test("a later archive on the same conversation releases a stale checkpoint gate"
 });
 
 test("automatic selection ignores a quarantined incomplete checkpoint after bounded isolation", () => {
-  const selectionSection = app.match(/async function selectLowestUsageGptEntries\([\s\S]*?\n}\n\nasync function prepareAutoGptQueue/)?.[0] || "";
+  const selectionSection = app.match(/async function selectLowestUsageGptEntries\([\s\S]*?\r?\n}\r?\n\r?\nasync function prepareAutoGptQueue/)?.[0] || "";
   assert.match(selectionSection, /isAutomaticGptTaskQuarantined\(ownerAccountId, item\.requestId\)/);
 });
 
@@ -1906,7 +1907,7 @@ test("archive recovery claims the selected account before a stale boundary can p
   const claim = app.indexOf("task.accountId = runAccountId;");
   const recovery = app.indexOf("recoverCompletedGptConversationBeforeInjection(task, runAccountId)");
   assert.ok(claim >= 0 && recovery > claim, "the checkpoint must be account-bound before archive recovery");
-  assert.match(app, /allowQuotaOverride,\n\s+userInitiated: true,\n\s+allowWindowSwitch: true/);
+  assert.match(app, /allowQuotaOverride,\r?\n\s+userInitiated: true,\r?\n\s+allowWindowSwitch: true/);
 });
 
 test("GPT 对话日志不读取作用域外的 task 变量", () => {
@@ -2444,9 +2445,9 @@ test("fresh GPT uploads stay blocked while the owning account has an unfinished 
 });
 
 test("an empty continuous worker restores its durable conversation checkpoint before selecting fresh material", () => {
-  const runner = app.match(/async function runIndependentGptWindow\([\s\S]*?\n}\n\nfunction registerWorkbenchCommands/)?.[0] || "";
+  const runner = app.match(/async function runIndependentGptWindow\([\s\S]*?\r?\n}\r?\n\r?\nfunction registerWorkbenchCommands/)?.[0] || "";
   const restoreAt = runner.indexOf("restoreIndependentGptCheckpointAtStartup(key)");
-  const ensureAt = runner.indexOf("ensureGptWindowWorkerQueue(key, workerState, settings)");
+  const ensureAt = runner.indexOf("ensureGptWindowWorkerQueue(key, workerState, settings");
   assert.ok(restoreAt >= 0, "empty workers must attempt durable checkpoint adoption");
   assert.ok(ensureAt >= 0, "worker queue admission must remain present");
   assert.ok(restoreAt < ensureAt, "checkpoint adoption must happen before fresh material selection");
@@ -2581,7 +2582,7 @@ test("global assistant is a draggable cat with separate status log and chat laye
   assert.match(app, /tb-workbench-assistant-position-v5/);
   assert.doesNotMatch(app, /const assistantRail = 76/);
   assert.doesNotMatch(app, /const inset = 12/);
-  assert.match(app, /x:\s*rect\.left,[\s\S]*?width:\s*Math\.max\(320, rect\.width\)/);
+  assert.match(app, /function gptHostBounds\(\)[\s\S]*?x:\s*rect\.left,[\s\S]*?width:\s*rect\.width/);
   assert.doesNotMatch(html, /id="gptSelectionAssistant"/);
   assert.match(css, /\.workbench-assistant-bubble\s*\{[\s\S]*?background:\s*#fff/);
   assert.match(css, /\.workbench-assistant-bubble::after/);
@@ -3204,7 +3205,7 @@ test("GPT production binds queue, controls and auto-runner to each browser windo
   assert.match(app, /function persistActiveGptWindowSelections\(\)/);
   assert.match(app, /async function runIndependentGptWindow\(accountId = activeGptAccountId/);
   assert.match(app, /gptWindowWorkerPromises\.has\(key\)/);
-  assert.match(app, /if \(!await ensureGptWindowWorkerQueue\(key, workerState, settings\)\)/);
+  assert.match(app, /if \(!await ensureGptWindowWorkerQueue\(key, workerState, settings(?:,\s*\{[\s\S]*?templateAlignmentVerified[\s\S]*?\})?\)\)/);
   assert.match(app, /runGptTaskOnBrowser\(task, account, tracker, workerState, settings, options\)/);
   assert.match(app, /options = \{ \.\.\.options, independentWorker: true \}/);
   assert.match(app, /function updateGptWindowUi\(accountId, callback\)/);
@@ -3408,7 +3409,8 @@ test("endless scheduler freezes a deliberate selected batch before automatic ref
   assert.match(app, /workerState\.selectedMaterials = new Set\(selection\.entries\.map/);
   assert.match(app, /async function buildGptProductionQueueForWindow\([\s\S]*?await selectedGptTestEntriesForWindow/);
   assert.match(app, /await loadMaterialCategory\(category\.path, \{ includeDiagnostics: false \}\)/);
-  assert.match(app, /if \(window\.GptWindowWorkerState\.hasPending\(workerState\) && !queueExhausted\) return true;/);
+  assert.match(app, /if \(window\.GptWindowWorkerState\.hasPending\(workerState\) && !queueExhausted\) \{/);
+  assert.match(app, /Existing work is already the final queue shape[\s\S]*?alignAppATemplateQueue/);
 });
 
 test("retrying a stale previous-post boundary forces a clean upload of the selected post", () => {
@@ -3656,6 +3658,18 @@ test("rotation browser readiness and admission IPC calls are individually bounde
   assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.status\(accountId\), 2_500\)/);
   assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.inspectStatus\(account\.id\), GPT_INSPECT_CALL_TIMEOUT_MS\)/);
   assert.match(app, /switchGptAccount\(account\.id, \{ silent: true, resumeWindow: false, syncBrowser: false \}\)/);
+});
+
+test("GPT host bounds preserve the zero-size layout state until the pane is ready", () => {
+  const start = app.indexOf("function gptHostBounds()");
+  const end = app.indexOf("function renderGptAccountTabs(", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const source = app.slice(start, end);
+  assert.match(source, /width: rect\.width/);
+  assert.match(source, /height: rect\.height/);
+  assert.doesNotMatch(source, /Math\.max\(320/);
+  assert.match(app, /if \(!bounds \|\| bounds\.width < 100 \|\| bounds\.height < 100\)/);
 });
 
 test("upload quota is recorded only after the GPT page acknowledges the task", () => {
@@ -4072,7 +4086,7 @@ test("独立账号入口不会回落到旧全局 worker，并且文案边界先�
 test("stopped independent windows wait for the old worker before restarting", () => {
   assert.match(productionStatus, /停止不会自动重启；点击“恢复本窗口”后继续生产/);
   assert.match(productionStatus, /停止不会自动重启；点击“恢复本窗口”继续保留队列/);
-  const resumeSection = app.match(/async function continueGptQueueFromUser\([\s\S]*?\n}\n\nfunction toggleGptQueueFromUser/)?.[0] || "";
+  const resumeSection = app.match(/async function continueGptQueueFromUser\([\s\S]*?\r?\n}\r?\n\r?\nfunction toggleGptQueueFromUser/)?.[0] || "";
   assert.match(resumeSection, /gptWindowWorkerPromises\.get\(accountId\)/);
   assert.match(resumeSection, /上一次停止正在安全收尾/);
   assert.match(resumeSection, /15_000/);
@@ -4141,7 +4155,7 @@ test("GPT heartbeat does not abort a submitted generation only because its first
 });
 
 test("empty automatic window clears stale current-work progress", () => {
-  const emptyQueueStart = app.indexOf("if (!await ensureGptWindowWorkerQueue(key, workerState, settings))");
+  const emptyQueueStart = app.indexOf("if (!await ensureGptWindowWorkerQueue(key, workerState, settings");
   const emptyQueueBlock = app.slice(emptyQueueStart, app.indexOf("const recoveredRestartCheckpoint", emptyQueueStart));
   assert.ok(emptyQueueStart >= 0, "empty queue guard should exist");
   assert.match(emptyQueueBlock, /currentTaskId: ""/);
@@ -4244,7 +4258,7 @@ test("read-only A-D preview never starts a GPT worker or promotes a stale promis
 });
 
 test("GPT page recovery probes live readiness before reloading a slow page", () => {
-  const recoverySection = desktopMain.match(/function scheduleStalledGptPageRecovery\(account\)[\s\S]*?\n}\n\nfunction hideAllGptViews/)?.[0] || "";
+  const recoverySection = desktopMain.match(/function scheduleStalledGptPageRecovery\(account\)[\s\S]*?\r?\n}\r?\n\r?\nfunction hideAllGptViews/)?.[0] || "";
   assert.match(recoverySection, /probeGptPageReadiness\(account, "recovery"/);
   assert.match(recoverySection, /gpt-page-recovery-suppressed/);
   assert.match(recoverySection, /isGptPageDocumentStable\(\{/);
@@ -4278,7 +4292,7 @@ test("native GPT recovery restores durable user holds before touching idle windo
 });
 
 test("GPT idle view cleanup is account-scoped and never releases a busy production window", () => {
-  const releaseSection = desktopMain.match(/ipcMain\.handle\("desktop:gpt-release-idle"[\s\S]*?\n}\);/)?.[0] || "";
+  const releaseSection = desktopMain.match(/ipcMain\.handle\("desktop:gpt-release-idle"[\s\S]*?\r?\n}\);/)?.[0] || "";
   assert.doesNotMatch(releaseSection, /if \(productionTaskActive\) return/);
   assert.match(releaseSection, /const accountBusy = productionTaskAccounts\.has\(id\)/);
   assert.match(releaseSection, /Boolean\(account\.pendingGptTask\)/);
@@ -4582,7 +4596,7 @@ test("quota waiting still schedules read-only reconciliation for a completed pac
   const scheduleIdx = app.indexOf("function scheduleContinuousGptProduction");
   const section = app.slice(scheduleIdx, scheduleIdx + 12_000);
   assert.match(section, /quota wait blocks only a fresh upload\/generation attempt/);
-  assert.match(section, /scheduleGptQuotaConversationReconciliation\(key, Math\.min\(15_000/);
+  assert.match(app, /scheduleGptQuotaConversationReconciliation\(key, Math\.min\(15_000/);
   assert.doesNotMatch(section, /if \(!conversationBoundaryFailed\)\s*\{\s*scheduleGptQuotaConversationReconciliation/);
 });
 test("restart restores quota timers with an immediate read-only conversation reconciliation", () => {
@@ -5301,7 +5315,7 @@ test("fresh-session fixed-template queue opens every material in a new chat with
   assert.match(taskBlock, /待迁移素材附件/);
   assert.match(app, /function freshSessionFixedTemplateAttachments/);
   assert.match(app, /task\._submittedToGpt !== true[\s\S]{0,160}freshSessionFixedTemplateAttachments/);
-  assert.match(desktopMain, /templateAttachments:\s*Array\.isArray\(task\.templateAttachments\)/);
+  assert.match(desktopMain, /templateAttachments:\s*(?:Array\.isArray\(task\.templateAttachments\)[\s\S]*?preparedUpload|preparedUpload\.templateAttachments)/);
   assert.match(gptSidebar, /approvedTemplateFiles[\s\S]*?!approvedTemplateFiles\.has\(normalized\)/);
 });
 
@@ -5363,6 +5377,370 @@ test("fresh-session material navigation bypasses the previous conversation bound
   assert.match(reconcileBlock, /taskType === "material"/);
   assert.match(reconcileBlock, /navigation === "new-chat"/);
   assert.match(reconcileBlock, /_submittedToGpt !== true/);
+});
+
+test("A 母对话只有明确 canInjectNext=true 才能作为首轮注入边界", () => {
+  const safeForFirstInjection = isolatedAppFunction(
+    "gptTemplateConversationSafeForFirstInjection",
+    "gptTaskIsFreshConversation",
+    {
+      gptTemplateConversationInspectionEvidence: (_candidate, inspection) => ({
+        ok: true,
+        canInjectNext: inspection?.canInjectNext === true
+      }),
+      gptConversationMaterialMatch: () => false
+    }
+  );
+  const inspection = { generating: false, composerDraft: "", attachmentCount: 0 };
+  assert.equal(
+    safeForFirstInjection({}, { ...inspection, canInjectNext: false }, {}).safe,
+    false,
+    "images-ready/awaiting-copy mother must not accept another material"
+  );
+  assert.equal(
+    safeForFirstInjection({}, { ...inspection, canInjectNext: true }, {}).safe,
+    true,
+    "only an explicitly released composer boundary may accept the first injection"
+  );
+  assert.equal(
+    safeForFirstInjection({}, {
+      ...inspection,
+      materialText: "上一套已归档作品的历史内容",
+      canInjectNext: true
+    }, {}).safe,
+    true,
+    "released mother may retain historical material text; composer release is the injection boundary"
+  );
+});
+
+test("A 母对话候选标题覆盖模板、母版和迁移计划关键词", () => {
+  const matches = isolatedAppFunction(
+    "gptTemplateConversationTitleMatches",
+    "gptTemplateConversationInspectionEvidence",
+    { GPT_TEMPLATE_CONVERSATION_TITLE_RE: /模板|母版|迁移计划/i }
+  );
+  assert.equal(matches("森林漂流路线节点封面模板"), true);
+  assert.equal(matches("确认母版迁移计划"), true);
+  assert.equal(matches("团建轮播迁移计划"), true);
+  assert.equal(matches("普通工作聊天"), false);
+});
+
+test("A 忙碌母对话可记录身份但不能获得注入许可", () => {
+  const inspect = isolatedAppFunction(
+    "gptTemplateConversationInspectionEvidence",
+    "gptTemplateConversationBusyBoundary",
+    {
+      GPT_TEMPLATE_CONVERSATION_TITLE_RE: /模板|母版|迁移计划/i,
+      gptTemplateConversationTitleMatches: (title) => /模板|母版|迁移计划/i.test(String(title || "")),
+      canonicalGptConversationUrl: (value) => {
+        const raw = String(value || "").trim();
+        return /^https:\/\/chatgpt\.com\/c\/[a-z0-9-]+\/?$/i.test(raw) ? raw.replace(/\/$/, "") : "";
+      }
+    }
+  );
+  const evidence = inspect(
+    {},
+    {
+      conversationLabel: "确认母版迁移计划",
+      conversationUrl: "https://chatgpt.com/c/mother-busy",
+      templateConversation: true,
+      latestImageCount: 8,
+      composerReady: true,
+      generating: false,
+      canInjectNext: false
+    }
+  );
+  assert.equal(evidence.identityOk, true);
+  assert.equal(evidence.ok, false);
+});
+
+test("A 已核验母对话忙碌时禁止继续候选扫描或切换会话", () => {
+  const busyBoundary = isolatedAppFunction(
+    "gptTemplateConversationBusyBoundary",
+    "gptTemplateConversationSafeForFirstInjection",
+    {
+      gptTemplateConversationInspectionEvidence: (_candidate, inspection) => ({
+        templateConversation: inspection?.templateConversation === true,
+        url: inspection?.conversationUrl || "",
+        generatedEvidence: Number(inspection?.latestImageCount || 0) > 0
+      })
+    }
+  );
+  const mother = {
+    conversationLabel: "森林漂流路线节点封面 × 无白边四宫格黑描边景点项目拼图模板",
+    conversationUrl: "https://chatgpt.com/c/mother-busy",
+    templateConversation: true,
+    latestImageCount: 1,
+    stage: "images-ready",
+    patrolState: { nextActionKey: "request-copy" },
+    canInjectNext: false,
+    generating: false
+  };
+  assert.equal(busyBoundary({}, mother).busy, true);
+  assert.equal(busyBoundary({}, { ...mother, canInjectNext: true }).busy, false);
+  assert.equal(busyBoundary({}, {
+    ...mother,
+    stage: "awaiting-material",
+    patrolState: { nextActionKey: "" }
+  }).busy, false);
+
+  const alignment = app.slice(
+    app.indexOf("async function alignAppAToVerifiedTemplateConversation"),
+    app.indexOf("function blockAppATemplateGate", app.indexOf("async function alignAppAToVerifiedTemplateConversation"))
+  );
+  const preflight = alignment.indexOf("const preflightInspection");
+  const verification = alignment.indexOf("const verification");
+  assert.ok(preflight >= 0 && preflight < verification);
+  assert.match(alignment.slice(preflight, verification), /gptTemplateConversationBusyBoundary/);
+  assert.match(alignment.slice(preflight, verification), /busyMother\.identityOk/);
+  assert.match(alignment.slice(preflight, verification), /migrateUnsubmittedGptTasksToVerifiedMother/);
+  assert.match(alignment.slice(preflight, verification), /workerState\.queuePaused = true/);
+  assert.match(alignment.slice(preflight, verification), /reason: "TEMPLATE_CONVERSATION_BUSY"/);
+  assert.doesNotMatch(alignment.slice(preflight, verification), /discoverPatrolConversations/);
+});
+
+test("A 模板门禁失败且运行态无任务时会锁住自动恢复和持久运行镜像", () => {
+  const gateBlocked = isolatedAppFunction(
+    "isAppATemplateGateBlocked",
+    "gptWindowAutoStartAllowed",
+    { isAppATemplateReuseAccount: (accountId) => String(accountId) === "account-1" }
+  );
+  const blockedState = { _appATemplateGate: { reason: "TEMPLATE_CONVERSATION_NOT_VERIFIED" } };
+  assert.equal(
+    gateBlocked("account-1", blockedState, { status: "failed", currentTaskId: "" }),
+    true
+  );
+  assert.equal(
+    gateBlocked("account-1", blockedState, { status: "probing", currentTaskId: "" }),
+    false,
+    "明确人工继续或新的核验流程不能被旧 failed 镜像误判为自动锁死"
+  );
+  assert.equal(
+    gateBlocked("account-2", blockedState, { status: "failed", currentTaskId: "" }),
+    false,
+    "门禁只属于 A/account-1"
+  );
+
+  const retryStart = app.indexOf("function scheduleGptWindowRetry(accountId = activeGptAccountId");
+  const retryEnd = app.indexOf("// A stale quota snapshot", retryStart);
+  const retrySection = app.slice(retryStart, retryEnd);
+  assert.match(retrySection, /template-gate-blocked/);
+  assert.match(retrySection, /gptWindowRetryRecoveryStates\.delete\(key\)/);
+
+  const schedulerStart = app.indexOf("function scheduleContinuousGptProduction");
+  const schedulerEnd = app.indexOf("function buildGptTemplateInitTask", schedulerStart);
+  const schedulerSection = app.slice(schedulerStart, schedulerEnd);
+  assert.match(schedulerSection, /!isAppATemplateGateBlocked\(key, state, runtime\)/);
+
+  const gateStart = app.indexOf("function blockAppATemplateGate");
+  const gateEnd = app.indexOf("async function preparePatrolTaskNavigation", gateStart);
+  const gateSection = app.slice(gateStart, gateEnd);
+  assert.match(gateSection, /workerState\.autoRunning = false/);
+  assert.match(gateSection, /workerState\.queuePaused = true/);
+  assert.match(gateSection, /workerState\.armed = false/);
+  assert.match(gateSection, /nextRetryAt: null/);
+  assert.match(gateSection, /persistGptQueue\(\)/);
+
+  const mirrorStart = app.indexOf("function persistGptQueue");
+  const mirrorEnd = app.indexOf("function localGptRuntimeSnapshot", mirrorStart);
+  const mirrorSection = app.slice(mirrorStart, mirrorEnd);
+  assert.match(mirrorSection, /const templateGateBlocked = isAppATemplateGateBlocked\(key, state, runtime\)/);
+  assert.match(mirrorSection, /&& !templateGateBlocked\) runningWindowIds\.push\(key\)/);
+});
+
+test("upload-sent plus an unsent local marker is isolated on an invalid URL without reupload", async () => {
+  const canonical = (value) => {
+    const raw = String(value || "").trim();
+    return /^https:\/\/chatgpt\.com\/c\/[a-z0-9-]+\/?$/i.test(raw) ? raw.replace(/\/$/, "") : "";
+  };
+  const classify = isolatedAppFunction(
+    "classifyGptUploadSentBoundary",
+    "readGptConversationLogForUploadReconciliation",
+    { canonicalGptConversationUrl: canonical, gptConversationMaterialMatch: () => true }
+  );
+  const event = {
+    requestId: "gpt-upload-before-marker",
+    account: "account-1",
+    event: "upload-sent",
+    url: "https://chatgpt.com/c/WEB:synthetic"
+  };
+  let inspectCalls = 0;
+  const reconcile = isolatedAppFunction(
+    "reconcileUnsubmittedGptUploadSentTask",
+    "findVerifiedGptTemplateConversation",
+    {
+      latestGptUploadSentEvent: (entries) => entries[0] || null,
+      readGptConversationLogForUploadReconciliation: async () => ({ ok: true, entries: [event] }),
+      boundedGptBrowserCall: async () => { inspectCalls += 1; return null; },
+      GPT_INSPECT_CALL_TIMEOUT_MS: 1000,
+      classifyGptUploadSentBoundary: classify
+    }
+  );
+  const task = {
+    requestId: event.requestId,
+    taskType: "material",
+    materialPath: "D:\\materials\\T15-forest",
+    _submittedToGpt: false,
+    _status: "queued"
+  };
+  const result = await reconcile(task, "account-1", {
+    logEntries: [event],
+    inspection: null
+  });
+  assert.equal(result.action, "isolate");
+  assert.equal(result.reason, "UPLOAD_SENT_URL_INVALID");
+  assert.equal(task._submittedToGpt, false, "the local marker must not be promoted by an invalid upload boundary");
+  assert.equal(task._status, "skipped", "the ambiguous request must be quarantined, not replayed");
+  assert.equal(task._uploadSentReconciliationRequired, true);
+  assert.equal(inspectCalls, 0, "an invalid durable URL is decisive and must not trigger a browser refresh/probe");
+});
+
+test("a recovered readable log clears only the stale upload-log timeout fence", async () => {
+  const reconcile = isolatedAppFunction(
+    "reconcileUnsubmittedGptUploadSentTask",
+    "findVerifiedGptTemplateConversation",
+    {
+      latestGptUploadSentEvent: () => null,
+      boundedGptBrowserCall: async () => null,
+      GPT_INSPECT_CALL_TIMEOUT_MS: 1000
+    }
+  );
+  const task = {
+    requestId: "gpt-readable-log-without-upload",
+    taskType: "material",
+    materialPath: "D:\\materials\\T15-west-island",
+    _submittedToGpt: false,
+    _status: "paused",
+    _uploadSentReconciliationRequired: true,
+    _uploadSentReconciliationReason: "UPLOAD_SENT_LOG_UNAVAILABLE",
+    _errorCode: "UPLOAD_SENT_LOG_UNAVAILABLE",
+    _error: "无法读取同 requestId 的 GPT 会话日志；已暂停，禁止把未知上传当成未发送而重传"
+  };
+
+  const result = await reconcile(task, "account-1", {
+    logEntries: [],
+    inspection: null
+  });
+
+  assert.equal(result.action, "clear");
+  assert.equal(result.reason, "UPLOAD_SENT_NOT_FOUND_AFTER_LOG_READ");
+  assert.equal(task._submittedToGpt, false);
+  assert.equal(task._uploadSentReconciliationRequired, false);
+  assert.equal(task._uploadSentReconciliationReason, "");
+  assert.equal(task._uploadSentReconciliationResolved, true);
+  assert.equal(task._status, "queued");
+  assert.equal(task._errorCode, "");
+  assert.equal(task._error, "");
+});
+
+test("A alignment reconciles upload evidence before mother discovery and carries one verified result into the worker", () => {
+  const alignment = app.slice(
+    app.indexOf("async function alignAppAToVerifiedTemplateConversation"),
+    app.indexOf("function blockAppATemplateGate", app.indexOf("async function alignAppAToVerifiedTemplateConversation"))
+  );
+  assert.ok(
+    alignment.indexOf("const uploadSentTasks") >= 0
+      && alignment.indexOf("const uploadSentTasks") < alignment.indexOf("const verification"),
+    "upload evidence must be reconciled before any mother-conversation verification"
+  );
+  assert.match(alignment, /hasSharedInspection/);
+  assert.match(alignment, /currentInspection: preflightInspection/);
+  assert.match(alignment, /account\.workflowVariant = GPT_REUSE_TEMPLATE_WORKFLOW_VARIANT[\s\S]*?await persistVerifiedGptTemplateConversation/);
+
+  const ensure = app.slice(
+    app.indexOf("async function ensureGptWindowWorkerQueue"),
+    app.indexOf("function independentGptWindowMode", app.indexOf("async function ensureGptWindowWorkerQueue"))
+  );
+  assert.match(ensure, /settings, options = \{\}/);
+  assert.match(ensure, /options\.templateAlignmentVerified === true/);
+  const run = app.slice(
+    app.indexOf("async function runIndependentGptWindow"),
+    app.indexOf("function registerWorkbenchCommands", app.indexOf("async function runIndependentGptWindow"))
+  );
+  assert.doesNotMatch(run, /alignAppAToVerifiedTemplateConversation\(/);
+  assert.match(run, /templateAlignmentVerified: options\.templateAlignmentVerified === true/);
+  const reconcile = app.slice(
+    app.indexOf("async function reconcileGptWindow"),
+    app.indexOf("async function switchGptAccount", app.indexOf("async function reconcileGptWindow"))
+  );
+  assert.match(reconcile, /templateAlignmentVerified: true/);
+});
+
+test("fresh A task migration retains T15 identity, material attachments and checkpoint while switching to reuse", () => {
+  const migrate = isolatedAppFunction(
+    "migrateFreshGptTaskToVerifiedTemplateConversation",
+    "alignAppAToVerifiedTemplateConversation",
+    {
+      gptTaskIsFreshConversation: (task) => task?.workflowVariant === "fresh-session-fixed-template",
+      normalizeGptAttachmentPath: (value) => String(value || "").replace(/\//g, "\\").replace(/\\+$/, ""),
+      gptTaskMaterialAttachments: (task) => Array.isArray(task?.attachments) ? task.attachments.slice() : [],
+      canonicalGptConversationUrl: (value) => {
+        const raw = String(value || "").trim();
+        return /^https:\/\/chatgpt\.com\/c\/[a-z0-9-]+\/?$/i.test(raw) ? raw.replace(/\/$/, "") : "";
+      },
+      GPT_REUSE_TEMPLATE_WORKFLOW_VARIANT: "legacy-v1",
+      GPT_REUSE_TEMPLATE_SESSION_POLICY: "reuse-conversation",
+      buildGptTestTask: () => ({
+        requestId: "rebuilt-request-must-be-overridden",
+        templateId: "rebuilt-template",
+        selectedTemplateId: "rebuilt-template",
+        templateName: "rebuilt",
+        workflowVariant: "legacy-v1",
+        sessionPolicy: "reuse-conversation",
+        _status: "queued",
+        _percent: 5
+      })
+    }
+  );
+  const workflow = { planSubmitted: false, materialId: "T15" };
+  const task = {
+    requestId: "gpt-t15-preserve",
+    taskType: "material",
+    name: "T15 × forest-route",
+    materialPath: "D:\\materials\\T15-forest",
+    attachments: ["D:\\materials\\T15-forest\\01.png"],
+    templateId: "T15",
+    selectedTemplateId: "T15",
+    templateRecordId: "T15",
+    templateName: "T15 template",
+    workflow,
+    workflowVariant: "fresh-session-fixed-template",
+    navigation: "new-chat",
+    _status: "paused",
+    _percent: 12,
+    _submittedToGpt: false
+  };
+  const migrated = migrate(task, "account-1", "https://chatgpt.com/c/abc123", {
+    id: "account-1",
+    selectedTemplateId: "T01",
+    quotaGroup: "account-1"
+  }, { mode: "single" });
+  assert.equal(migrated, true);
+  assert.deepEqual({
+    requestId: task.requestId,
+    templateId: task.templateId,
+    selectedTemplateId: task.selectedTemplateId,
+    materialPath: task.materialPath,
+    attachments: task.attachments,
+    workflowSame: task.workflow === workflow,
+    workflowVariant: task.workflowVariant,
+    sessionPolicy: task.sessionPolicy,
+    navigation: task.navigation,
+    templateConversationUrl: task.templateConversationUrl,
+    submitted: task._submittedToGpt
+  }, {
+    requestId: "gpt-t15-preserve",
+    templateId: "T15",
+    selectedTemplateId: "T15",
+    materialPath: "D:\\materials\\T15-forest",
+    attachments: ["D:\\materials\\T15-forest\\01.png"],
+    workflowSame: true,
+    workflowVariant: "legacy-v1",
+    sessionPolicy: "reuse-conversation",
+    navigation: "",
+    templateConversationUrl: "https://chatgpt.com/c/abc123",
+    submitted: false
+  });
 });
 
 test("restart recovery preserves the identity of a submitted nonterminal task", () => {
@@ -5624,7 +6002,7 @@ test("checkpoint fallback recovery preserves the original copy-request boundary"
 });
 
 test("a stale conversation boundary leaves retry-wait after its finite budget", () => {
-  const boundaryStart = app.indexOf('if (!verifiedBoundary\n            || (verifiedBoundary.canInjectNext === false && !currentTaskOwnsRecoverableBoundary))');
+  const boundaryStart = app.indexOf("if (!verifiedBoundary");
   assert.ok(boundaryStart >= 0, "expected the pre-submit conversation boundary guard");
   const boundaryEnd = app.indexOf('scheduleGptWindowRetry(key, 20_000, "上一套作品边界仍未释放")', boundaryStart);
   assert.ok(boundaryEnd > boundaryStart, "expected the bounded retry call");
