@@ -66,7 +66,7 @@ async function sendCommand(targetUrl, method, params = {}) {
 (async () => {
   const targets = await getJson(`http://127.0.0.1:${debugPort}/json/list`);
   const target = targets.find((item) => item.type === "page"
-    && /127\.0\.0\.1:43(?:31|32)\//.test(item.url)
+    && /127\.0\.0\.1:43(?:31|32|33|34)\//.test(item.url)
     && !String(item.url).includes("assistant-overlay.html"));
   if (!target) throw new Error(`No content renderer on debug port ${debugPort}`);
   if (reloadOnly) {

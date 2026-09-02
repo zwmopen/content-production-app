@@ -1,4 +1,15 @@
 ﻿# 当前工作区增量 / 朋友圈每日准备窗口（2026-08-24）
+# 2026-08-29 / 0.1.1 App D/account-4 原生附件回读与停止代次隔离
+
+- **范围**：本轮只处理 `D:\AICode\工具开发\content-production-app-instances\D`、分支 `instance-d-account-4`、账号 `account-4`、HTTP/CDP `4334/9434`；未操作 A/B/C。
+- **代码变更**：`src/desktop/main.js` 在 `DOM.setFileInputFiles` 后用同一 WebContents `DOM.resolveNode` + `Runtime.callFunctionOn` 触发 `input/change` 并回读文件名/数量；`src/public/app.js` 为暂停、停止、恢复、重试、worker 和恢复定时器加入账号控制代次及清理门禁，防止旧回调越过用户停止态；`start-instance-d.ps1` 在 D 启动边界加入 `electron.cmd --no-sandbox desktop\\main.js` 以规避宿主 renderer exitCode=49；`src/instance-startup.test.js` 放宽启动参数匹配但仍强制校验 D 脚本调用 `desktop\\main.js`。
+- **版本**：D 实例从 `0.1.0` 升至 `0.1.1`；同步 `VERSION`、`src/package.json`、`src/public/index.html` 静态资源版本、README 和 CHANGELOG。
+- **代码验证**：启动断言定向回归 `2 passed / 0 failed`；本轮最终完整 `npm test --silent` 为 `1127 passed / 1 skipped / 0 failed`（1128 tests）。
+- **安全现场**：D 工作台 `http://127.0.0.1:4334`、CDP `9434` 和标题 `内容生产 D · account-4` 已确认；工作台 DOM 显示 `Hazel Sanchez Plus`、`新模式｜每套新对话 + 固定模板`。D 原生档案同样记录 `Hazel Sanchez Plus`、`fresh-session-fixed-template`、`fresh-session`、模板 `T01`，但 GPT 子页当前实际为 `chrome-error://chromewebdata/`，日志为 `ERR_NETWORK_ACCESS_DENIED`，扩展未注入，因此远端登录态和 GPT 生产就绪仍未通过。D 运行真源保持 `armed=false`、队列 2 项、`running=false`、`stoppedByUser=true`，未刷新、未重传、未发送 `1`、未生成或归档。
+- **当前任务**：队首 `gpt-1787979555429-8459wn`，账号 `account-4`、T01、`fresh-session`，`_submittedToGpt=false`，原生附件回读 `0/12`，生图/归档均为 0；第二项同属 account-4/T01/fresh-session。两项均保留，未因重建重传。
+- **真实归档口径**：截至 2026-08-29，D 的 `production-task-index.json` 无真实归档，`production-jobs` 为空，归档日志不存在，成品包未验证；不能把进程、队列项或旧恢复记录算作完成。只有 archiveEventKey 优先、requestId 其次去重且实际成品包存在，才计入当天 20 套目标。
+- **下一步**：唯一阻塞是 GPT 子页网络访问被 Electron 判定为 `ERR_NETWORK_ACCESS_DENIED`；在稳定 fingerprint 下禁止刷新、重建或自动推进。网络恢复后先只读确认真实 Hazel Sanchez Plus 页面、扩展和新会话边界，再对队首未提交任务只执行一次“原生附件确认 → 唯一计划 → 唯一发送 `1` → 生图 → 文案 → 下载 → 打包 → 实际成品目录 → archiveEventKey/requestId 去重归档”闭环；首套真实归档和成品包通过后才继续到 20/20。
+
 # 2026-08-28 / A-D 四实例独立开发与生产隔离
 
 - 用户明确将原先混在一起的窗口改为主干派生四条独立支线：A/account-1、B/account-2、C/account-3、D/account-4；每条支线对应一个独立桌面 App 实例，可单独修改、测试或停用，不影响其他窗口。

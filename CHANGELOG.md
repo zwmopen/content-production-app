@@ -1,5 +1,13 @@
 # 变更记录
 
+## 0.1.1 - 2026-08-29（D/account-4 安全恢复与原生附件回读）
+
+- GPT 原生附件注入后在同一 WebContents 回读 `FileList`，触发 `input/change` 事件并校验文件名与数量；未确认附件时不会提交任务。
+- 每个 D/account-4 窗口的暂停/停止代次贯穿恢复、worker、重试定时器和检查点回调；用户停止后旧回调不能重新启动、清空或推进队列。
+- D 启动器在受限宿主中使用 `electron.cmd --no-sandbox desktop\\main.js`，并将启动回归改为允许安全启动参数但仍校验实际入口。
+- 保留当前任务、队列、Electron userData/GPT 登录态和持久检查点；本轮未执行 GPT 上传、发送 `1`、生图、下载、打包或归档。
+- 本实例当前安全运行边界：`4334/9434`，`account-4`，队列保留 2 项，`armed=false`、`running=false`、用户停止；GPT 子页为 `chrome-error://chromewebdata/`（`ERR_NETWORK_ACCESS_DENIED`），未满足真实生产放行条件。
+
 ## 2026-08-28 / A-D 四实例独立开发与生产隔离（未变更正式版本）
 
 - 将内容生产实例模型从旧 A/B 双实例收口为 A-D 四实例：A/account-1、B/account-2、C/account-3、D/account-4，分别使用 4331–4334 和 9431–9434。

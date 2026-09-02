@@ -30,7 +30,7 @@ test("A-D startup scripts bind one account and one isolated runtime tuple each",
     assert.match(source, /TEAMBUILDING_SHARED_MATERIAL_ROOT = ".*\\shared-material"/);
     assert.match(source, /CONTENT_ONLY_MODE = "1"/);
     assert.match(source, /Start-Process -FilePath \$node/);
-    assert.match(source, /electron\.cmd desktop\\main\.js/);
+    assert.match(source, /electron\.cmd(?:\s+\S+)*\s+desktop\\main\.js/);
     assert.doesNotMatch(source, /account-6/);
 
     for (const field of [entry.accountId, entry.port, entry.remoteDebuggingPort, `instance-${entry.id}`, `instance-${entry.id}\\electron-userdata`]) {

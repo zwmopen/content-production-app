@@ -70,8 +70,14 @@ function normalizeRuntimeControl(control) {
     String(accountId).slice(0, 80),
     normalizePlainValue(runtime) || {}
   ]));
+  const windowValues = Object.values(windowRuntime);
+  const allWindowsExplicitlyHeld = windowValues.length > 0 && windowValues.every((runtime) => (
+    runtime && (runtime.pausedByUser === true || runtime.stoppedByUser === true)
+  ));
   return {
-    armed: control.armed === true,
+    // `armed` is a legacy aggregate mirror. It cannot remain true when every
+    // persisted account window has an explicit operator hold.
+    armed: allWindowsExplicitlyHeld ? false : control.armed === true,
     settings,
     modeProfiles,
     multiRun,

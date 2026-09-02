@@ -425,7 +425,12 @@
     const xhsStart = source.indexOf(COPY_MARKERS.xhsStart);
     const xhsEnd = source.indexOf(COPY_MARKERS.xhsEnd, xhsStart + COPY_MARKERS.xhsStart.length);
     const douyinStart = source.indexOf(COPY_MARKERS.douyinStart);
-    const douyinEnd = source.indexOf(COPY_MARKERS.douyinEnd, douyinStart + COPY_MARKERS.douyinStart.length);
+    let douyinEnd = douyinStart >= 0 ? source.indexOf(COPY_MARKERS.douyinEnd, douyinStart + COPY_MARKERS.douyinStart.length) : -1;
+    let softEndMarker = false;
+    if (douyinStart >= 0 && douyinEnd < 0) {
+      douyinEnd = source.length;
+      softEndMarker = true;
+    }
     const ordered = headerIndex === 0
       && xhsStart > headerIndex
       && xhsEnd > xhsStart

@@ -3,8 +3,8 @@
 - [x] 复现条件：多个调试/生产窗口共用旧的账号列表、浏览器分区或运行目录时，一个窗口的修改、恢复或登录态可能干扰另一窗口。
 - [x] 根因：旧实例模型只提供双实例映射，启动入口没有把账号、端口、运行目录、Electron `userData` 和单实例锁作为同一隔离元组固定下来。
 - [x] 修复：实例策略扩展为 A-D 单账号映射；`start-instance-a.ps1` 至 `start-instance-d.ps1` 显式绑定唯一账号与独立运行/浏览器目录；桌面锁命名空间按实例隔离；服务端和网页预览按当前实例动态识别账号。
-- [x] 自动回归：`node --test --test-concurrency=1 instance-startup.test.js public/workbench-ui.test.js`，506 项中 505 通过、1 跳过、0 失败；启动脚本回归额外校验四实例只共享素材根目录。
-- [ ] 桌面验收：本轮只做静态隔离验证，未启动 B/C/D、未登录或迁移账号、未发送 GPT 请求；后续须在用户确认且安全窗口内分别启动实例，核对端口、userData、页面账号和实际日志，再做最小真实生产验收。
+- [x] 自动回归：`npm test --silent`，1128 项中 1127 通过、1 跳过、0 失败；启动脚本回归额外校验四实例只共享素材根目录。
+- [ ] 桌面验收：D/account-4 已在 `4334/9434` 实机运行，标题、`Hazel Sanchez Plus`、`fresh-session-fixed-template`、`fresh-session` 和 T01 配置已核对；GPT 子页当前为 `chrome-error://chromewebdata/`，日志为 `ERR_NETWORK_ACCESS_DENIED`，因此账号/扩展桥接和真实生产仍未通过。A/B/C 本轮未触碰。
 
 # GPT-B-PREVIEW-GUARD-20260828｜B 网页预览全页只读保护
 

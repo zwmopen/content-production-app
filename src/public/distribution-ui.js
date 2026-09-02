@@ -468,7 +468,7 @@
 
   function humanizeDistributionOperation(row = {}) {
     const action = String(row.action || "").trim();
-    if (/移动到微信公众号/.test(action)) return "已移动到微信公众号";
+    if (/移动到(?:已发送1次|微信公众号)/.test(action)) return "已移动到已发送1次（微信公众号可发）";
     if (/压缩归档并删除源文件夹/.test(action)) return "已压缩归档并清理源文件夹";
     if (/修改作品集分类/.test(action)) return "已修改作品集分类";
     if (/重命名/.test(action)) return "已重命名作品集";
@@ -634,7 +634,7 @@
       const details = [];
       addDistributionDetail(details, "原位置", row.from);
       addDistributionDetail(details, "新位置", row.to);
-      addDistributionDetail(details, "阶段", row.stage === "official" ? "微信公众号" : row.stage);
+      addDistributionDetail(details, "阶段", row.stage === "official" ? "已发送1次（微信公众号可发）" : (row.stage === "mobile" ? "已发送0次（抖音小红书可发）" : row.stage));
       addDistributionDetail(details, "结果", row.status === "completed" ? "已完成" : row.status || "已记录");
       rows.push({
         id: `operation-${row.time || index}`,

@@ -5,7 +5,7 @@
 - 当前主干可派生四个相互独立的内容生产桌面实例：A/account-1、B/account-2、C/account-3、D/account-4。
 - 每个实例使用独立的 Git 支线/worktree、Electron `userData`、GPT 登录态、HTTP/CDP 端口和运行数据；一个实例停着或持续生产时，其他实例可以独立调试。
 - 四个实例只共享素材库、模板库和成品库，并继续受素材生命周期锁、归档事件去重和成品包存在性校验约束。
-- 启动入口为根目录的 `start-instance-a.ps1`、`start-instance-b.ps1`、`start-instance-c.ps1`、`start-instance-d.ps1`。本次只建立代码与静态验证，不自动启动 B/C/D 或迁移登录态。
+- 启动入口为根目录的 `start-instance-a.ps1`、`start-instance-b.ps1`、`start-instance-c.ps1`、`start-instance-d.ps1`。本轮只验收 D/account-4：D 使用 `4334/9434` 实机运行且保留登录数据，A/B/C 未触碰；生产是否放行仍以 GPT 桥接、检查点、日志和实际成品包共同通过为准。
 - 详细映射、分支名、worktree 目录和安全边界见 [`docs/INSTANCE-MODEL.md`](docs/INSTANCE-MODEL.md)。
 
 ## 当前工作区增量：素材库单入口（2026-08-25）
@@ -47,7 +47,9 @@
 - 每月 1 号的 WeFlow 采集计划保持独立，仍按原来的月度采集时间和补采规则执行。
 - 智能选材在历史素材耗尽时自动落到今年 `ready/` 中尚未发布的作品；只有真正锁定作品后的微信或填充失败才会进入失败停机。
 
-## 当前版本：0.19.207
+## 当前实例版本：0.1.1
+
+- 本文档对应 D/account-4 独立实例 worktree；运行版本以 `VERSION`、`src/package.json` 和 `/api/runtime-info` 为准。主项目历史功能基线 `0.19.207` 仍保留在下方变更记录中，不代表本实例当前运行版本。
 
 ## 0.19.206 新模式每套真实新对话
 

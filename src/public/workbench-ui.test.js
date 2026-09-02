@@ -4,18 +4,24 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+function readText(filePath) {
+  return fs.readFileSync(filePath, "utf8").replace(/\r\n?/g, "\n");
+}
+
+const html = readText(path.join(__dirname, "index.html"));
 const version = fs.readFileSync(path.join(__dirname, "..", "..", "VERSION"), "utf8").trim();
-const app = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
-const commandBus = fs.readFileSync(path.join(__dirname, "workbench-command-bus.js"), "utf8");
-const css = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8");
-const conversionOutputReport = fs.readFileSync(path.join(__dirname, "..", "..", "docs", "流量转化成交产出复盘.html"), "utf8");
-const workerStateSource = fs.readFileSync(path.join(__dirname, "gpt-window-worker-state.js"), "utf8");
-const productionStatus = fs.readFileSync(path.join(__dirname, "gpt-production-status.js"), "utf8");
-const desktopMain = fs.readFileSync(path.join(__dirname, "..", "desktop", "main.js"), "utf8");
-const temporaryWebCacheSchedule = fs.readFileSync(path.join(__dirname, "..", "lib", "temporary-web-cache-schedule.js"), "utf8");
-const desktopPreload = fs.readFileSync(path.join(__dirname, "..", "desktop", "preload.js"), "utf8");
-const assistantOverlay = fs.readFileSync(path.join(__dirname, "assistant-overlay.html"), "utf8");
+const app = readText(path.join(__dirname, "app.js"));
+const commandBus = readText(path.join(__dirname, "workbench-command-bus.js"));
+const css = readText(path.join(__dirname, "styles.css"));
+const conversionOutputReport = readText(path.join(__dirname, "..", "..", "docs", "流量转化成交产出复盘.html"));
+const workerStateSource = readText(path.join(__dirname, "gpt-window-worker-state.js"));
+const nativeFileInputSource = readText(path.join(__dirname, "..", "desktop", "gpt-native-file-input.js"));
+const runtimeReconcileSource = readText(path.join(__dirname, "gpt-runtime-reconcile.js"));
+const productionStatus = readText(path.join(__dirname, "gpt-production-status.js"));
+const desktopMain = readText(path.join(__dirname, "..", "desktop", "main.js"));
+const temporaryWebCacheSchedule = readText(path.join(__dirname, "..", "lib", "temporary-web-cache-schedule.js"));
+const desktopPreload = readText(path.join(__dirname, "..", "desktop", "preload.js"));
+const assistantOverlay = readText(path.join(__dirname, "assistant-overlay.html"));
 const conversionFormalRuntimePath = "D:\\AICode\\运行数据\\江湖有旅人\\转化助手\\SOP正式知识库.json";
 const conversionFormalRuntime = fs.existsSync(conversionFormalRuntimePath)
   ? fs.readFileSync(conversionFormalRuntimePath, "utf8")
@@ -25,10 +31,10 @@ const _routeDir = path.join(__dirname, "..", "server", "routes");
 const _routeSources = fs.existsSync(_routeDir)
   ? fs.readdirSync(_routeDir).filter(f => f.endsWith(".js")).map(f => fs.readFileSync(path.join(_routeDir, f), "utf8")).join("\n")
   : "";
-const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8") + _routeSources;
-const gptSidebar = fs.readFileSync(path.join(__dirname, "..", "integrations", "gpt-production-extension", "sidebar.js"), "utf8");
-const gptBackground = fs.readFileSync(path.join(__dirname, "..", "integrations", "gpt-production-extension", "background.js"), "utf8");
-const gptUserscript = fs.readFileSync(path.join(__dirname, "..", "integrations", "gpt-production-extension", "vendor", "chatgpt-conversation-tree.user.js"), "utf8");
+const server = readText(path.join(__dirname, "..", "server.js")) + _routeSources;
+const gptSidebar = readText(path.join(__dirname, "..", "integrations", "gpt-production-extension", "sidebar.js"));
+const gptBackground = readText(path.join(__dirname, "..", "integrations", "gpt-production-extension", "background.js"));
+const gptUserscript = readText(path.join(__dirname, "..", "integrations", "gpt-production-extension", "vendor", "chatgpt-conversation-tree.user.js"));
 
 function appFunctionSource(name, nextName) {
   const marker = `function ${name}(`;
@@ -115,7 +121,8 @@ test("内容生产 A-D 实例不会用旧本地缓存重新创建外部账号", 
   assert.match(app, /filterContentInstanceAccounts\(gptAccounts\)/);
   assert.match(app, /function filterContentInstanceRuntime\(runtime = \{\}\)/);
   assert.match(app, /filterContentInstanceRuntime\(gptWindowRuntime\)/);
-  assert.match(app, /windowRuntime: filterContentInstanceRuntime\(/);
+  assert.match(app, /const windowRuntime = filterContentInstanceRuntime\(Object\.fromEntries\(Object\.entries\(gptWindowRuntime/);
+  assert.match(app, /windowRuntime\s*\n\s*\};/);
   assert.match(app, /const assignedProfiles = filterContentInstanceAccounts\(state\.profiles \|\| \[\]\)/);
 });
 
@@ -880,6 +887,10 @@ test("GPT runtime queue has a server mirror and restart reconciliation", () => {
   assert.match(app, /plannedImageCount: Math\.max\(1, Math\.min\(10, Number\(boundaryRetryTask\.workflow\?\.plannedImageCount \|\| boundaryRetryTask\.expectedImages \|\| inspection\?\.expectedImageCount/);
   assert.match(gptSidebar, /plannedImageCount: completedPlannedImageCount\(/);
   assert.match(serverSource, /authoritativePlannedImageCount/);
+  assert.match(html, /gpt-runtime-reconcile\.js/);
+  assert.match(runtimeReconcileSource, /protectLocalExplicitHold/);
+  assert.match(app, /local-explicit-hold/);
+  assert.match(app, /localStorage\.removeItem\(GPT_CONTINUOUS_RUN_STORAGE_KEY\)/);
   assert.match(app, /const runtimeReconciliation = await reconcileGptRuntimeState\(\);[\s\S]*?adoptGptRuntimeQueueIntoWindowWorkers\(runtimeReconciliation\?\.state\);[\s\S]*?restoreGptQueue\(\);[\s\S]*?restoreLegacyGptWindowState\(activeGptAccountId\);[\s\S]*?refreshGptUiAfterRuntimeRestore\(\);/);
   assert.match(app, /async function reconcileCompletedGptTasksFromConversationLog\(queue = gptTestQueue/);
   assert.match(app, /reconcileCompletedGptTasksFromConversationLog\(workerState\.queue, \{[\s\S]*?workerState/);
@@ -2581,7 +2592,7 @@ test("global assistant is a draggable cat with separate status log and chat laye
   assert.match(app, /tb-workbench-assistant-position-v5/);
   assert.doesNotMatch(app, /const assistantRail = 76/);
   assert.doesNotMatch(app, /const inset = 12/);
-  assert.match(app, /x:\s*rect\.left,[\s\S]*?width:\s*Math\.max\(320, rect\.width\)/);
+  assert.match(app, /function gptHostBounds\(\)[\s\S]*?x:\s*rect\.left,[\s\S]*?width:\s*rect\.width/);
   assert.doesNotMatch(html, /id="gptSelectionAssistant"/);
   assert.match(css, /\.workbench-assistant-bubble\s*\{[\s\S]*?background:\s*#fff/);
   assert.match(css, /\.workbench-assistant-bubble::after/);
@@ -3204,7 +3215,8 @@ test("GPT production binds queue, controls and auto-runner to each browser windo
   assert.match(app, /function persistActiveGptWindowSelections\(\)/);
   assert.match(app, /async function runIndependentGptWindow\(accountId = activeGptAccountId/);
   assert.match(app, /gptWindowWorkerPromises\.has\(key\)/);
-  assert.match(app, /if \(!await ensureGptWindowWorkerQueue\(key, workerState, settings\)\)/);
+  assert.match(app, /const queueReady = await ensureGptWindowWorkerQueue\(key, workerState, settings\);/);
+  assert.match(app, /if \(!queueReady\)/);
   assert.match(app, /runGptTaskOnBrowser\(task, account, tracker, workerState, settings, options\)/);
   assert.match(app, /options = \{ \.\.\.options, independentWorker: true \}/);
   assert.match(app, /function updateGptWindowUi\(accountId, callback\)/);
@@ -3658,6 +3670,18 @@ test("rotation browser readiness and admission IPC calls are individually bounde
   assert.match(app, /switchGptAccount\(account\.id, \{ silent: true, resumeWindow: false, syncBrowser: false \}\)/);
 });
 
+test("GPT host bounds preserve the zero-size layout state until the pane is ready", () => {
+  const start = app.indexOf("function gptHostBounds()");
+  const end = app.indexOf("function renderGptAccountTabs(", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const source = app.slice(start, end);
+  assert.match(source, /width: rect\.width/);
+  assert.match(source, /height: rect\.height/);
+  assert.doesNotMatch(source, /Math\.max\(320/);
+  assert.match(app, /if \(!bounds \|\| bounds\.width < 100 \|\| bounds\.height < 100\)/);
+});
+
 test("upload quota is recorded only after the GPT page acknowledges the task", () => {
   assert.match(app, /let uploadQuotaRecorded = resumeOwnedConversation/);
   assert.match(app, /const uploadAcknowledged = status\.submittedToGpt === true[\s\S]{0,260}acknowledgedAttachments >= expectedAttachmentCount/);
@@ -3842,6 +3866,24 @@ test("GPT production dispatch does not hold one renderer evaluation for the whol
 test("GPT production attachments use the exact Electron WebContents native file input path", () => {
   assert.match(desktopMain, /async function setGptTaskFileInputFiles\(contents, filePaths\)/);
   assert.match(desktopMain, /DOM\.setFileInputFiles/);
+  const nativeHelperStart = desktopMain.indexOf("async function setGptTaskFileInputFiles");
+  const nativeHelperEnd = desktopMain.indexOf("\n}\n\nasync function runCtripDraft", nativeHelperStart);
+  assert.ok(nativeHelperStart >= 0 && nativeHelperEnd > nativeHelperStart, "native helper boundary must exist");
+  const nativeHelper = desktopMain.slice(nativeHelperStart, nativeHelperEnd);
+  assert.match(nativeHelper, /DOM\.resolveNode/);
+  assert.match(nativeHelper, /Runtime\.callFunctionOn/);
+  assert.match(nativeHelper, /input\.dispatchEvent\(new Event\("input"/);
+  assert.match(nativeHelper, /input\.dispatchEvent\(new Event\("change"/);
+  assert.match(nativeHelper, /Array\.from\(input\.files \|\| \[\]\)/);
+  assert.match(nativeHelper, /const nativeUploadBatchSize = 2/);
+  assert.match(nativeHelper, /for \(let offset = 0; offset < files\.length; offset \+= nativeUploadBatchSize\)/);
+  assert.match(nativeHelper, /setAndDispatchGptFileInputBatch/);
+  assert.doesNotMatch(nativeHelper, /postDispatchNames/);
+  assert.match(nativeFileInputSource, /waitForExpectedFileInputNames/);
+  assert.match(nativeFileInputSource, /setFiles\(objectId\)/);
+  assert.match(nativeFileInputSource, /dispatch\(objectId\)/);
+  assert.match(nativeFileInputSource, /Do not inspect objectId again here/);
+  assert.match(nativeHelper, /GPT 原生附件回读不匹配/);
   const sendStart = desktopMain.indexOf("async function sendTaskToEmbeddedGpt");
   const sendEnd = desktopMain.indexOf("async function pausePendingTaskInEmbeddedGpt", sendStart);
   const sendBlock = desktopMain.slice(sendStart, sendEnd);
@@ -3860,6 +3902,52 @@ test("GPT production attachments use the exact Electron WebContents native file 
   assert.ok(nativeStart >= 0 && nativeEnd > nativeStart, "native upload branch must remain explicit");
   const nativeBranch = gptSidebar.slice(nativeStart, nativeEnd);
   assert.doesNotMatch(nativeBranch, /new DataTransfer|loadFiles\(|dispatchEvent\(/);
+  assert.match(sendBlock, /if \(!nativeUpload\?\.ok\)/);
+});
+
+test("同一 requestId 没有前进证据时恢复只保持检查点", () => {
+  const refreshStart = app.indexOf("async function refreshGptWindowForAutomaticRecovery");
+  const refreshEnd = app.indexOf("function knownGptConversationUrl", refreshStart);
+  const refreshBlock = app.slice(refreshStart, refreshEnd);
+  assert.match(refreshBlock, /gptRecoveryEvidenceGuard/);
+  assert.match(refreshBlock, /recoveryRequestId/);
+  assert.match(refreshBlock, /recoveryEvidence/);
+  assert.match(refreshBlock, /recoveryFingerprint/);
+  assert.match(refreshBlock, /recoveryEvidenceChecked/);
+  assert.match(refreshBlock, /holdStagnantGptRecovery/);
+  assert.match(app, /skipped: "stagnant-recovery"/);
+  const retryStart = app.indexOf("function scheduleGptWindowRetry");
+  const retryEnd = app.indexOf("function scheduleGptQuotaConversationReconciliation", retryStart);
+  const retryBlock = app.slice(retryStart, retryEnd);
+  assert.match(retryBlock, /liveRecoveryEvidence/);
+  assert.match(retryBlock, /stagnantRecovery\.blocked/);
+  assert.match(retryBlock, /同一 requestId 无新页面证据，保持检查点/);
+  assert.match(retryBlock, /recoveryEvidenceChecked: true/);
+  const recreateStart = app.indexOf("async function recreateGptWindowForAutomaticRecovery");
+  const recreateEnd = app.indexOf("async function maybeRestartGptWorkbenchAfterRecovery", recreateStart);
+  const recreateBlock = app.slice(recreateStart, recreateEnd);
+  assert.match(recreateBlock, /recoveryGuard/);
+  assert.match(recreateBlock, /stopCurrentTask/);
+  assert.ok(recreateBlock.indexOf("stagnantRecovery") < recreateBlock.indexOf("stopCurrentTask"));
+});
+
+test("independent GPT windows keep explicit holds authoritative across async recovery", () => {
+  assert.match(app, /const gptWindowControlGenerations = new Map\(\)/);
+  assert.match(app, /const gptWindowPausedWorkerGenerations = new Map\(\)/);
+  assert.match(app, /const gptWindowResumedWorkerGenerations = new Map\(\)/);
+  assert.match(app, /function clearGptWindowAutomaticControls\(accountId/);
+  assert.match(app, /gptWindowWorkerPromises\.has\(key\)/);
+  assert.match(app, /function gptWindowControlStillCurrent\(control = \{\}\)/);
+  assert.match(app, /function gptWindowControlCanAutoContinue\(control = \{\}\)/);
+  assert.match(app, /const holdResult = \(options = \{\}\) =>/);
+  assert.match(app, /heldAfterCheckpointRestore/);
+  assert.match(app, /heldAfterLogReconcile/);
+  assert.match(app, /heldAfterConversationReconciliation/);
+  assert.match(app, /heldAfterBoundaryInspection/);
+  assert.match(app, /heldAfterTask = holdResult\(\{ allowPausedCompletion: true \}\)/);
+  assert.match(app, /clearGptWindowAutomaticControls\(accountId\)/);
+  assert.match(app, /gptWindowWorkerPromises\.has\(accountId\)/);
+  assert.doesNotMatch(app, /writeGptWindowRuntime\(key, \{ status: "running", stoppedByUser: false, pausedByUser: false/);
 });
 
 test("content production instances expose a permanent A-D identity badge and native window title", () => {
@@ -4141,7 +4229,7 @@ test("GPT heartbeat does not abort a submitted generation only because its first
 });
 
 test("empty automatic window clears stale current-work progress", () => {
-  const emptyQueueStart = app.indexOf("if (!await ensureGptWindowWorkerQueue(key, workerState, settings))");
+  const emptyQueueStart = app.indexOf("const queueReady = await ensureGptWindowWorkerQueue(key, workerState, settings);");
   const emptyQueueBlock = app.slice(emptyQueueStart, app.indexOf("const recoveredRestartCheckpoint", emptyQueueStart));
   assert.ok(emptyQueueStart >= 0, "empty queue guard should exist");
   assert.match(emptyQueueBlock, /currentTaskId: ""/);
@@ -4221,7 +4309,8 @@ test("runtime hydration clears stale metrics for taskless waiting windows", () =
   assert.match(app, /const hasCurrentTask = Boolean\(String\(merged\.currentTaskId \|\| ""\)\.trim\(\)\)/);
   assert.match(app, /isWaitingWithoutTask = !hasCurrentTask/);
   assert.match(app, /currentPercent: 0,[\s\S]{0,180}expectedImages: 0,[\s\S]{0,100}generatedImages: 0/);
-  assert.match(app, /windowRuntime: filterContentInstanceRuntime\(Object\.fromEntries\(Object\.entries\(gptWindowRuntime/);
+  assert.match(app, /const windowRuntime = filterContentInstanceRuntime\(Object\.fromEntries\(Object\.entries\(gptWindowRuntime/);
+  assert.match(app, /windowRuntime\s*\n\s*\};/);
 });
 
 test("read-only preview runtime overrides stale local worker activity without changing Electron authority", () => {
@@ -4580,7 +4669,8 @@ test("automatic mode resumes only the remaining queue after a quota probe, never
 
 test("quota waiting still schedules read-only reconciliation for a completed package boundary", () => {
   const scheduleIdx = app.indexOf("function scheduleContinuousGptProduction");
-  const section = app.slice(scheduleIdx, scheduleIdx + 12_000);
+  const scheduleEnd = app.indexOf("function buildGptTemplateInitTask", scheduleIdx);
+  const section = app.slice(scheduleIdx, scheduleEnd > scheduleIdx ? scheduleEnd : scheduleIdx + 20_000);
   assert.match(section, /quota wait blocks only a fresh upload\/generation attempt/);
   assert.match(section, /scheduleGptQuotaConversationReconciliation\(key, Math\.min\(15_000/);
   assert.doesNotMatch(section, /if \(!conversationBoundaryFailed\)\s*\{\s*scheduleGptQuotaConversationReconciliation/);

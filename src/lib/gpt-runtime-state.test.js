@@ -223,6 +223,29 @@ test("运行真源同时保存生产控制面且过滤无关字段", () => {
   assert.equal(state.control.injected, undefined);
 });
 
+test("全部账号窗口明确暂停或停止时，旧顶层 armed 镜像归一为 false", () => {
+  const stopped = normalizeRuntimeState({
+    control: {
+      armed: true,
+      windowRuntime: {
+        "account-4": { status: "idle", stoppedByUser: true }
+      }
+    }
+  });
+  assert.equal(stopped.control.armed, false);
+
+  const mixed = normalizeRuntimeState({
+    control: {
+      armed: true,
+      windowRuntime: {
+        "account-3": { status: "paused", pausedByUser: true },
+        "account-4": { status: "running", pausedByUser: false }
+      }
+    }
+  });
+  assert.equal(mixed.control.armed, true);
+});
+
 test("空控制面保持为空且旧版队列仍可读取", () => {
   const state = normalizeRuntimeState({
     version: 2,
