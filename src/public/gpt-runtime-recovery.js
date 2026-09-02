@@ -85,6 +85,15 @@
 
     async function checkPausedQueue() {
       const state = deps.getState?.() || {};
+      // Login/CAPTCHA is an account-level human boundary. Automatic recovery
+      // may keep observing it, but it must not resume the queue or consume a
+      // new upload/generation action until Continue/Recover confirms a live,
+      // authenticated production page.
+      const authenticationRequired = state.authenticationRequired === true
+        || state.runtime?.authenticationRequired === true
+        || state.authenticationStatus === "login-required"
+        || state.runtime?.status === "login-required";
+      if (authenticationRequired) return false;
       const integrityCode = String(state.currentTask?._errorCode || "");
       if (state.queuePaused && integrityCode) {
         if (integrityCode === "IMAGE_COUNT_UNCERTAIN") return checkImageUncertainty(state);

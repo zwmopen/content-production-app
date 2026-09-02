@@ -143,6 +143,55 @@ test("archive increments usage once when the same production request is replayed
   }
 });
 
+test("explicit archive event key takes precedence over an older request id", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "tb-material-archive-key-"));
+  const root = path.join(parent, "materials");
+  const sourceA = path.join(root, "0", "显式事件帖子A");
+  const sourceB = path.join(root, "0", "显式事件帖子B");
+  const packageA = path.join(parent, "products", "成品A");
+  const packageB = path.join(parent, "products", "成品B");
+  const runtime = path.join(parent, "runtime");
+  for (const source of [sourceA, sourceB]) {
+    fs.mkdirSync(source, { recursive: true });
+    fs.writeFileSync(path.join(source, "01.png"), path.basename(source), "utf8");
+    fs.writeFileSync(path.join(source, "文案.txt"), "archive-copy", "utf8");
+  }
+  for (const packagePath of [packageA, packageB]) fs.mkdirSync(packagePath, { recursive: true });
+  const options = {
+    settings: { materialRoot: root, workPackage: { libraryPath: path.join(parent, "products") } },
+    metadataLedgerFile: path.join(runtime, "防重复账本", "material-metadata-ledger.json"),
+    usageLedgerFile: path.join(runtime, "防重复账本", "material-usage-ledger.json"),
+    hashCacheFile: path.join(runtime, "material-hash-cache.json"),
+    lifecycleLedgerFile: path.join(runtime, "material-lifecycle-ledger.json"),
+    indexFile: path.join(runtime, "material-global-index.json"),
+    archiveLogFile: path.join(runtime, "gpt-production-archive.jsonl"),
+    refreshIndex: false
+  };
+  try {
+    const first = archiveMaterialAfterProduction({
+      entryPath: sourceA,
+      requestId: "reused-request-id",
+      archiveEventKey: "archive-event-a",
+      packagePath: packageA
+    }, options);
+    const second = archiveMaterialAfterProduction({
+      entryPath: sourceB,
+      requestId: "reused-request-id",
+      archiveEventKey: "archive-event-b",
+      packagePath: packageB
+    }, options);
+
+    assert.equal(first.archiveEventKey, "archive-event-a");
+    assert.equal(second.archiveEventKey, "archive-event-b");
+    assert.equal(second.idempotent, undefined);
+    assert.equal(fs.existsSync(path.join(root, "1", "显式事件帖子A")), true);
+    assert.equal(fs.existsSync(path.join(root, "1", "显式事件帖子B")), true);
+    assert.equal(Object.values(getMaterialUsageLedger(options.usageLedgerFile).entries).length, 2);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test("archive rejects an unverified package without moving or incrementing the material", () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "tb-material-archive-guard-"));
   const root = path.join(parent, "materials");

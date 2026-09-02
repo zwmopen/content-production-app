@@ -92,7 +92,7 @@ test("新会话已提交后恢复时继续原对话，不回退到 new-chat 首�
   assert.match(app, /const submittedConversationCheckpoint = task\.taskType === "material"/);
   assert.match(app, /const resumeOwnedConversation = resumeCheckpoint\.resuming \|\| submittedConversationCheckpoint/);
   assert.match(app, /if \(automaticResume && !resumeOwnedConversation/);
-  assert.match(app, /if \(!resumeOwnedConversation && task\.navigationUrl\)/);
+  assert.match(app, /if \(!resumeOwnedConversation\s+&& task\.navigationUrl/);
   assert.match(app, /else if \(!resumeOwnedConversation && task\.navigation === "new-chat"\)/);
   assert.match(app, /const freshConversationTask = !resumeOwnedConversation && \(task\.navigation === "new-chat"/);
 });
@@ -1294,6 +1294,60 @@ test("a shared profile URL is repaired from that account's conversation evidence
   assert.match(app, /account\.lastConversationUrl = recoveredUrl/);
 });
 
+test("unsubmitted recovery accepts only the account mother conversation", () => {
+  const resolveKnown = isolatedAppFunction(
+    "knownGptConversationUrl",
+    "isUnownedSubmittedFreshGptTask",
+    {
+      gptAccounts: [{
+        id: "account-2",
+        templateConversationUrl: "https://chatgpt.com/c/account-2-mother",
+        lastConversationUrl: "https://chatgpt.com/c/foreign-latest"
+      }],
+      gptWindowWorkerState: () => ({
+        queueIndex: 0,
+        queue: [{
+          requestId: "request-unsent",
+          conversationUrl: "https://chatgpt.com/c/foreign-task",
+          _submittedToGpt: false
+        }]
+      })
+    }
+  );
+  assert.equal(
+    resolveKnown("account-2", {
+      currentTaskId: "request-unsent",
+      conversationUrl: "https://chatgpt.com/c/foreign-runtime"
+    }),
+    "https://chatgpt.com/c/account-2-mother"
+  );
+
+  const noMother = isolatedAppFunction(
+    "knownGptConversationUrl",
+    "isUnownedSubmittedFreshGptTask",
+    {
+      gptAccounts: [{ id: "account-2" }],
+      gptWindowWorkerState: () => ({
+        queueIndex: 0,
+        queue: [{
+          requestId: "request-unsent",
+          conversationUrl: "https://chatgpt.com/c/foreign-task",
+          _submittedToGpt: false
+        }]
+      })
+    }
+  );
+  assert.equal(noMother("account-2", { currentTaskId: "request-unsent" }), "");
+});
+
+test("submitted recovery waits for explicit ownership and never borrows the mother URL", () => {
+  const source = appFunctionSource("ensureGptConversationContext", "isFreshRootGptReadiness");
+  assert.match(source, /const taskHasSubmittedBoundary =/);
+  assert.match(source, /if \(taskHasSubmittedBoundary && !taskOwnerConfirmed\)/);
+  assert.match(source, /const taskConversationUrl = taskHasSubmittedBoundary/);
+  assert.match(source, /const accountConversationUrl = taskHasSubmittedBoundary\s*\n\s*\? ""/);
+});
+
 test("a completed GPT boundary is reclaimed by the live material folder before owner-mismatch pause", () => {
   assert.match(app, /function gptMaterialFolderFromInspection\(inspection = \{\}\)/);
   assert.match(app, /async function resolveGptMaterialForConversationRecovery\(folderName = ""\)/);
@@ -1655,6 +1709,16 @@ test("single-account production refuses authentication pages before claiming or 
   const preflightIndex = app.indexOf("const preflight = await window.gptWorkbench.status(runAccountId)");
   const runningIndex = app.indexOf("gptAutoRunning = true;", preflightIndex);
   assert.ok(preflightIndex >= 0 && runningIndex > preflightIndex, "preflight must run before the queue is marked running");
+});
+
+test("window recovery converts authentication readiness into a durable human hold", () => {
+  const recoveryStart = app.indexOf("function scheduleGptWindowRetry(");
+  const recoveryEnd = app.indexOf("// A stale quota snapshot must not prevent", recoveryStart);
+  assert.ok(recoveryStart >= 0 && recoveryEnd > recoveryStart, "window recovery function must be present");
+  const recovery = app.slice(recoveryStart, recoveryEnd);
+  assert.match(recovery, /holdGptWindowForAuthentication\(key, readiness, recoveryTask\)/);
+  assert.doesNotMatch(recovery, /scheduleNextRecovery\(60_000, ["']等待登录["']\)/);
+  assert.match(app, /登录完成后请点击“继续”或“恢复当前作品”再次确认/);
 });
 
 test("GPT 自动生产 downloads and packages only the current verified batch", () => {
@@ -2581,7 +2645,7 @@ test("global assistant is a draggable cat with separate status log and chat laye
   assert.match(app, /tb-workbench-assistant-position-v5/);
   assert.doesNotMatch(app, /const assistantRail = 76/);
   assert.doesNotMatch(app, /const inset = 12/);
-  assert.match(app, /x:\s*rect\.left,[\s\S]*?width:\s*Math\.max\(320, rect\.width\)/);
+  assert.match(app, /function gptHostBounds\(\)[\s\S]*?x:\s*rect\.left,[\s\S]*?width:\s*rect\.width/);
   assert.doesNotMatch(html, /id="gptSelectionAssistant"/);
   assert.match(css, /\.workbench-assistant-bubble\s*\{[\s\S]*?background:\s*#fff/);
   assert.match(css, /\.workbench-assistant-bubble::after/);
@@ -2768,13 +2832,15 @@ test("GPT browser tabs keep an independent live URL and return home to ChatGPT",
   assert.match(html, /id="gptBrowserAddressInput"/);
 });
 
-test("automatic recovery prefers the current queue task conversation URL", () => {
+test("automatic recovery only uses an owner-confirmed queue URL or the explicit mother conversation", () => {
   assert.match(app, /function knownGptConversationUrl\(accountId, runtime = \{\}\)/);
   assert.match(app, /const queuedTask = \(state\?\.queue \|\| \[\]\)\.find/);
   assert.match(app, /queuedTask\?\.conversationUrl/);
   assert.match(app, /queuedTask\?\.chatUrl/);
-  assert.ok(app.includes("if (/\\/c\\//i.test(taskCandidate))"));
-  assert.match(app, /runtime\.conversationUrl/);
+  assert.match(app, /if \(queuedTaskSubmitted\) \{[\s\S]*?if \(!queuedTaskOwnerConfirmed\) return ""/);
+  assert.match(app, /Legacy reuse can proceed only through the[\s\S]{0,100}account's explicitly selected mother conversation/);
+  assert.match(app, /const accountTemplateCandidate = String\(account\?\.templateConversationUrl \|\| ""\)/);
+  assert.doesNotMatch(app, /const candidate = String\([\s\S]*?runtime\.conversationUrl/);
 });
 
 test("GPT material folders support context editing, recycle-bin deletion and drag move", () => {
@@ -3656,6 +3722,18 @@ test("rotation browser readiness and admission IPC calls are individually bounde
   assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.status\(accountId\), 2_500\)/);
   assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.inspectStatus\(account\.id\), GPT_INSPECT_CALL_TIMEOUT_MS\)/);
   assert.match(app, /switchGptAccount\(account\.id, \{ silent: true, resumeWindow: false, syncBrowser: false \}\)/);
+});
+
+test("GPT host bounds preserve the zero-size layout state until the pane is ready", () => {
+  const start = app.indexOf("function gptHostBounds()");
+  const end = app.indexOf("function renderGptAccountTabs(", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const source = app.slice(start, end);
+  assert.match(source, /width: rect\.width/);
+  assert.match(source, /height: rect\.height/);
+  assert.doesNotMatch(source, /Math\.max\(320/);
+  assert.match(app, /if \(!bounds \|\| bounds\.width < 100 \|\| bounds\.height < 100\)/);
 });
 
 test("upload quota is recorded only after the GPT page acknowledges the task", () => {
@@ -4916,7 +4994,7 @@ test("same-conversation page loading preserves the pending GPT task", () => {
 
 test("window recovery exhaustion quarantines the exact request instead of a stale last failure", () => {
   assert.match(app, /requestedTaskId \? state\.queue\.find/);
-  assert.match(app, /\{ quarantine: true, requestId: currentTaskId \}/);
+  assert.match(app, /quarantine: true, requestId: recoveryState\.taskId/);
 });
 
 test("embedded GPT DOM readiness clears a stale native loading indicator", () => {
@@ -5447,7 +5525,7 @@ test("orphan rebind cannot erase or move a submitted nonterminal checkpoint to n
           navigate: async (...args) => { navigations.push(args); }
         }
       },
-      resolveGptTaskConversationUrl: () => "",
+      resolveGptTaskConversationUrl: () => "https://chatgpt.com/c/foreign-task-url",
       readAutomaticGptTaskQuarantine: () => ({}),
       findDurableGptTaskConversationUrl: async () => "",
       canonicalGptConversationUrl: (value) => String(value || "").split(/[?#]/)[0],
@@ -5476,12 +5554,14 @@ test("orphan rebind cannot erase or move a submitted nonterminal checkpoint to n
     requestId: task.requestId,
     submittedToGpt: task._submittedToGpt,
     workflowPreserved: task.workflow === workflow,
-    newChatNavigations: navigations.filter(([action]) => action === "new-chat").length
+    newChatNavigations: navigations.filter(([action]) => action === "new-chat").length,
+    errorCode: task._errorCode
   }, {
     requestId: "gpt-original-orphan",
     submittedToGpt: true,
     workflowPreserved: true,
-    newChatNavigations: 0
+    newChatNavigations: 0,
+    errorCode: "GPT_CONVERSATION_RESUME_PENDING"
   }, "submitted nonterminal recovery must preserve identity/workflow and wait for its original conversation");
 });
 

@@ -128,7 +128,8 @@ async function handle(req, res, pathname, parsed, ctx) {
     } catch { /* 忽略快照错误，回退到默认路径 */ }
     // 回退：使用公众号工作流阶段目录
     if (!collectionPath) {
-      collectionPath = path.join(libraryRoot, "微信公众号", collectionName);
+      const pPrimary = path.join(libraryRoot, "已发送1次（微信公众号可发）", collectionName);
+      collectionPath = fs.existsSync(pPrimary) ? pPrimary : path.join(libraryRoot, "微信公众号", collectionName);
     }
     // 安全检查：防止路径穿越
     if (/[\\/]wp-content|[\\/]system32/i.test(collectionPath)) {

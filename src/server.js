@@ -1639,35 +1639,43 @@ function archiveMaterialAfterProductionUnlocked(body = {}, options = {}) {
   const packagePath = packageInput ? path.resolve(packageInput) : "";
   const requestedEventKey = String(body.archiveEventKey || "").trim();
   const requestId = String(body.requestId || "").trim();
-  const sourceName = path.basename(sourcePath).toLowerCase();
-  // A renderer/browser rebuild can replay the same archive callback with a
-  // different packagePath (the late callback commonly has it empty). The
-  // request itself is the stronger idempotency boundary than that incidental
-  // field. Match the material name too so a malformed reused request id can
-  // never suppress a different source folder.
-  const requestAlreadyArchived = requestId
-    ? Object.values(lifecycle.entries || {}).find((entry) => {
+  const lifecycleEntries = Object.values(lifecycle.entries || {});
+  const sourcePathMatchesArchive = (result) => {
+    const candidates = [result?.sourceMaterialPath, result?.from, result?.to]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    return candidates.some((candidate) => {
+      try {
+        return path.resolve(candidate).toLowerCase() === sourcePath.toLowerCase();
+      } catch {
+        return false;
+      }
+    });
+  };
+  const knownArchiveForKey = (key) => {
+    const eventKey = String(key || "").trim();
+    if (!eventKey) return null;
+    return lifecycleEntries.find((entry) => hasArchiveEvent(entry, eventKey)
+      || String(entry?.archiveResult?.archiveEventKey || "").trim() === eventKey) || null;
+  };
+  // Idempotency precedence is explicit archiveEventKey, then requestId, then
+  // the material-only fallback used after the source folder hash is known.
+  // In particular, an explicit event key must not be shadowed by an older
+  // requestId, while packagePath is never part of the identity.
+  let knownEvent = requestedEventKey ? knownArchiveForKey(requestedEventKey) : null;
+  if (knownEvent?.archiveResult) {
+    return { ...knownEvent.archiveResult, idempotent: true, reason: "archive-event-already-recorded" };
+  }
+  if (!requestedEventKey && requestId) {
+    const requestAlreadyArchived = lifecycleEntries.find((entry) => {
       const result = entry?.archiveResult;
       return result
         && String(result.requestId || "").trim() === requestId
-        && path.basename(String(result.sourceMaterialPath || result.from || "")).toLowerCase() === sourceName;
-    })
-    : null;
-  if (requestAlreadyArchived?.archiveResult) {
-    return { ...requestAlreadyArchived.archiveResult, idempotent: true, reason: "request-already-archived" };
-  }
-  const knownEvent = Object.values(lifecycle.entries || {}).find((entry) => {
-    const key = archiveEventKey({
-      archiveEventKey: requestedEventKey,
-      folderHash: entry.folderHash,
-      entryPath: sourcePath,
-      requestId: body.requestId,
-      packagePath: body.packagePath
+        && sourcePathMatchesArchive(result);
     });
-    return hasArchiveEvent(entry, key);
-  });
-  if (knownEvent?.archiveResult) {
-    return { ...knownEvent.archiveResult, idempotent: true };
+    if (requestAlreadyArchived?.archiveResult) {
+      return { ...requestAlreadyArchived.archiveResult, idempotent: true, reason: "request-already-archived" };
+    }
   }
   const packageVerified = Boolean(
     packagePath

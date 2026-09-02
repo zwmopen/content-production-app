@@ -1,4 +1,26 @@
 ﻿# 当前工作区增量 / 朋友圈每日准备窗口（2026-08-24）
+# 2026-08-29 / B Windows Electron renderer/GPU 启动稳定性复验（0.1.1）
+
+- 本轮仍只处理 B：worktree `D:\AICode\工具开发\content-production-app-instances\B`、分支 `instance-b-account-2`、账号 `account-2`、HTTP/CDP `4332/9432`、运行目录 `D:\AICode\运行数据\江湖有旅人\内容生产App\instance-B`；没有操作 A/C/D。
+- 根因修复已落地：B canonical launcher 设置 `TB_MAIN_WINDOW_SANDBOX=0`；`src/desktop/main.js` 对本地工作台壳/助手浮层启用受控 `in-process-gpu` 与软件合成回退。GPT 页面和外部 `WebContentsView` 仍是 `sandbox: true`，并保持 `nodeIntegration: false`、`contextIsolation: true`。
+- 实机启动验收：B 的 `4332` 由 Node 服务监听、`9432` 由 Electron CDP 监听；HTTP 页面返回 200；CDP 目标包含“内容生产 B · account-2”和“小猫助手”；版本为 `0.1.1`。这证明桌面壳和实例路由已恢复，不等于 GPT 生产桥接已就绪。
+- 当前运行真相（API/runtime）：队列 `8` 项、游标 `0`、`paused=true`、`running=false`、`armed=false`；账号 2 `status=idle`、`stoppedByUser=true`、当前阶段“已停止，不参与自动生产”、原因“等待登录”，当前任务仍停在上传前，未上传、未发送 `1`、未生图、未下载、未归档。
+- GPT 证据：最近 B 日志仍记录 `gpt-execute-timeout`、`gpt-account-load-bounded`（`ERR_FAILED`）和 `gpt-page-recovery-hold`；未取得新的生产就绪、桥接、阶段推进或归档事件。`gpt-production-archive.jsonl` 当前不存在，2026-08-29 成品库未发现 B 可确认的非日志成品文件，因此今日真实归档按 `0` 计。
+- 检查点边界：B 的运行目录仍保留两个历史非 B 检查点条目（account-3/account-4）；当前 B API 按账号边界不返回它们，当前队列和活动账号只有 account-2。它们未被删除，以保留恢复证据；后续需在不覆盖运行数据的前提下继续确认隔离清理/迁移方案。
+- 数据保护：保留 Electron `userData`、GPT 登录态、队列、运行态、检查点和会话日志；本轮没有清 Cookie/Token，也没有启动其他实例或复制 A 的上传实验。
+- 验证：既有完整 `npm test` 为 `621/621`，0 失败、0 取消、0 跳过；受影响 JavaScript `node --check` 与 `git diff --check` 通过；B 页面/助手 CDP 目标和端口已实机复验。
+- 下一步唯一动作：用户在保留的 account-2 GPT 页面完成登录/验证码/桥接人工确认后，只从当前检查点点击“继续/恢复当前作品”；通过两次生产就绪确认和发送前最终认证复核后，才允许单向继续。禁止重复上传、发送 `1`、生图、下载、归档；每日 20 套目标必须以 B 自己的日志、检查点、归档事件和实际成品包逐套证明。
+
+# 2026-08-28 / B 认证暂停与归档幂等边界修复（0.1.1）
+
+- 本轮只处理 B：worktree `D:\AICode\工具开发\content-production-app-instances\B`、分支 `instance-b-account-2`、账号 `account-2`、HTTP/CDP `4332/9432`、运行目录 `D:\AICode\运行数据\江湖有旅人\内容生产App\instance-B`；不得把 A/C/D 的状态或实验当作 B 的证据。
+- GPT 登录页、验证码页和其他认证未就绪状态现在写入账号级持久暂停；自动恢复、页面重建、维护刷新和队列自动启动均停止在认证边界，保留 Electron `userData`、GPT 登录态、队列、检查点和会话日志，不清 Cookie/Token。
+- 人工完成同一 `account-2` GPT 账号登录/验证后，只能通过“继续/恢复当前作品”重新确认生产就绪；发送前再做最终认证复核，并要求两次生产就绪确认。未通过前不得上传、发送 `1`、生图、下载或归档。
+- 归档幂等规则已固定为 `archiveEventKey` 优先、`requestId` 其次、素材身份兜底；`packagePath` 只是输出位置，不参与事件身份。归档前仍强制验证成品包目录真实存在，重复回调只能返回已记录结果。
+- 自动回归：`public/workbench-ui.test.js` 506 项（505 通过、1 跳过、0 失败）；GPT/归档相关测试 44/44 通过；受影响 JavaScript `node --check`、`git diff --check` 通过。
+- 当前真实运行复核：4332/9432 未监听；持久队列 8 项、游标 0、`queued=8`、`running=false`、已暂停；尚未发现 B 今日可验证归档事件和实际成品包，因此今日真实归档按 0 计。
+- 当前结论：代码修复已完成并完成静态/定向验证；B Electron/GPT 实机生产仍未通过，必须先由用户在保留的 account-2 登录态上完成登录/验证码/桥接人工确认，再继续当前检查点。不得复制 A 尚未通过的上传实验。
+
 # 2026-08-28 / A-D 四实例独立开发与生产隔离
 
 - 用户明确将原先混在一起的窗口改为主干派生四条独立支线：A/account-1、B/account-2、C/account-3、D/account-4；每条支线对应一个独立桌面 App 实例，可单独修改、测试或停用，不影响其他窗口。

@@ -241,8 +241,8 @@ test("automatic recovery waits for a transient bridge failure only within a fini
   assert.equal(wait.action, "wait-environment");
   assert.equal(wait.attempts, 4);
   assert.equal(wait.unlimited, false);
-  assert.equal(wait.recoveryDeadlineAt, 901_000);
-  assert.equal(wait.delayMs, 2 * 60_000);
+  assert.equal(wait.recoveryDeadlineAt, 31_000);
+  assert.equal(wait.delayMs, 10_000);
   const expired = WorkerState.nextAutomaticRecoveryAction({
     task: { _autoRecoveryAttempts: 4, _autoRecoveryStartedAt: 1_000, _autoRecoveryDeadlineAt: 10_000 },
     result: { reason: "网页/桥接临时失败" },

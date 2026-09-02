@@ -1,3 +1,23 @@
+# GPT-B-WINDOW-20260829｜B Windows Electron renderer/GPU 启动稳定性（0.1.1）
+
+- [x] B 启动入口只设置 `TB_MAIN_WINDOW_SANDBOX=0`，并保留 `4332/9432`、`account-2`、B 专属运行目录和 `userData` 边界。
+- [x] GPU/renderer 回退：本地工作台壳与助手浮层可启动；GPT 页面及外部 `WebContentsView` 仍保持 `sandbox: true`、`nodeIntegration: false`、`contextIsolation: true`。
+- [x] 实机验收：4332/9432 正常监听；HTTP 页面 200；CDP 目标包含“内容生产 B · account-2”和“小猫助手”；版本 0.1.1。
+- [x] 业务安全态：队列 8 项、游标 0、`paused=true`、`running=false`、`armed=false`；account-2 保持 `stoppedByUser=true` / “等待登录”，没有上传、发送 `1`、生图、下载或归档。
+- [x] 自动验证：完整 `npm test` 为 621/621，0 失败、0 取消、0 跳过；受影响 JavaScript `node --check` 和 `git diff --check` 通过。
+- [ ] GPT 实机生产验收：待用户完成保留的 account-2 登录/验证码/桥接人工确认后，从当前检查点单向恢复，并以新日志、检查点、归档事件和实际成品包确认每日 20 套；不得使用 A 实验作为证据。
+- [ ] 隔离风险复核：B 运行目录仍有两个历史非 B 检查点条目，当前 API 未接管；需另行设计可恢复的隔离迁移，不在本轮静默删除。
+
+# GPT-B-AUTH-ARCHIVE-20260828｜B 认证暂停与归档幂等边界（0.1.1）
+
+- [x] 账号认证边界：GPT 登录页、验证码页和其他认证未就绪状态写入持久账号暂停；自动恢复、页面重建、维护刷新和队列自动启动均不越过该边界。
+- [x] 数据保护：保留 Electron `userData`、GPT 登录态、队列、检查点和会话日志；本轮未清 Cookie/Token，未重复上传、发送 `1`、生图、下载或归档。
+- [x] 人工恢复门：完成同一 `account-2` 登录/验证后，只有人工点击“继续/恢复当前作品”并通过两次生产就绪确认才允许恢复原检查点；发送前增加最终认证复核。
+- [x] 归档幂等：`archiveEventKey` 优先、`requestId` 其次、素材身份兜底；`packagePath` 不参与事件身份；归档前验证成品包目录真实存在。
+- [x] 自动验证：`public/workbench-ui.test.js` 506 项（505 通过、1 跳过、0 失败）；GPT/归档相关测试 44/44；受影响 JavaScript `node --check` 和 `git diff --check` 通过。
+- [x] B 运行复核：仅核对 `4332/9432` 与 `instance-B`；端口未监听，持久队列 8 项、游标 0、`running=false`、已暂停；今日可验证真实归档为 0，未发现可确认的 B 今日成品包。
+- [ ] 实机生产验收：待用户在保留的 account-2 GPT 页面完成登录/验证码/桥接人工确认后，继续原检查点并以日志、检查点、归档账本和实际成品包确认每日 20 套目标；不得使用 A 实验作为证据。
+
 # INSTANCE-ISOLATION-20260828｜A-D 独立支线、桌面实例与账号隔离
 
 - [x] 复现条件：多个调试/生产窗口共用旧的账号列表、浏览器分区或运行目录时，一个窗口的修改、恢复或登录态可能干扰另一窗口。

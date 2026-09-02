@@ -42,11 +42,16 @@ test("material claim respects another live browser lock but allows the same owne
   }).ok, true);
 });
 
-test("archive event keys are stable and duplicate archive events are idempotent", () => {
-  const input = { folderHash: "folder-1", requestId: "req-1", packagePath: "D:/pkg" };
+test("archive event keys are stable, package-path independent, and duplicate archive events are idempotent", () => {
+  const input = { folderHash: "folder-1", requestId: "req-1", packagePath: "D:/pkg-a" };
   const first = archiveEventKey(input);
-  const second = archiveEventKey({ ...input });
+  const second = archiveEventKey({ ...input, packagePath: "D:/pkg-b" });
   assert.equal(first, second);
+  assert.notEqual(first, archiveEventKey({ ...input, requestId: "req-2" }));
+  assert.equal(
+    archiveEventKey({ folderHash: "folder-1", packagePath: "D:/pkg-a" }),
+    archiveEventKey({ folderHash: "folder-1", packagePath: "D:/pkg-b" })
+  );
   let state = appendArchiveEvent({}, first, "2026-08-17T10:00:00.000Z");
   assert.equal(hasArchiveEvent(state, first), true);
   state = appendArchiveEvent(state, first, "2026-08-17T10:01:00.000Z");

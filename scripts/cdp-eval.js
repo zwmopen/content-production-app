@@ -1,7 +1,8 @@
 const http = require("node:http");
 
 const debugPort = Number(process.argv[2] || 9431);
-const expression = process.argv.slice(3).join(" ") || "document.title";
+const rawArgs = process.argv.slice(3).filter((a) => a !== "--gpt");
+const expression = rawArgs.join(" ") || "document.title";
 const reloadOnly = expression === "--reload" || expression === "--reload-ignore-cache";
 const reloadIgnoreCache = expression === "--reload-ignore-cache";
 
@@ -40,6 +41,7 @@ async function evaluate(targetUrl, source) {
   });
   socket.close();
   if (result?.error) throw new Error(JSON.stringify(result.error));
+  if (result?.result?.exceptionDetails) throw new Error(JSON.stringify(result.result.exceptionDetails));
   return result?.result?.result?.value;
 }
 
@@ -65,10 +67,13 @@ async function sendCommand(targetUrl, method, params = {}) {
 
 (async () => {
   const targets = await getJson(`http://127.0.0.1:${debugPort}/json/list`);
-  const target = targets.find((item) => item.type === "page"
-    && /127\.0\.0\.1:43(?:31|32)\//.test(item.url)
-    && !String(item.url).includes("assistant-overlay.html"));
-  if (!target) throw new Error(`No content renderer on debug port ${debugPort}`);
+  const isGpt = process.argv.includes("--gpt");
+  const target = isGpt
+    ? targets.find((item) => String(item.url || "").includes("chatgpt.com"))
+    : targets.find((item) => item.type === "page"
+        && /127\.0\.0\.1:43(?:31|32)\//.test(item.url)
+        && !String(item.url).includes("assistant-overlay.html"));
+  if (!target) throw new Error(`No target found (isGpt=${isGpt}) on debug port ${debugPort}`);
   if (reloadOnly) {
     await sendCommand(target.webSocketDebuggerUrl, "Page.reload", { ignoreCache: reloadIgnoreCache });
     process.stdout.write(`${JSON.stringify({ reloaded: true, ignoreCache: reloadIgnoreCache })}\n`);

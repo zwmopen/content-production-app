@@ -55,6 +55,36 @@ test("a paused continuous queue awaits two ready checks before resuming", async 
   ]);
 });
 
+test("automatic paused-queue recovery stays blocked while the account needs login", async () => {
+  const { createController } = require(modulePath);
+  let statusCalls = 0;
+  let resumed = false;
+  const controller = createController({
+    getState: () => ({
+      queuePaused: true,
+      autoRunning: false,
+      autoPaused: false,
+      continuousMode: true,
+      continuousArmed: true,
+      retryPending: false,
+      windowStopped: false,
+      windowPaused: false,
+      authenticationRequired: true,
+      authenticationStatus: "login-required",
+      currentTask: { requestId: "auth-task", _errorCode: "GPT_AUTH_REQUIRED" }
+    }),
+    status: async () => {
+      statusCalls += 1;
+      return { productionReady: true, authenticationRequired: false };
+    },
+    sendNext: async () => { resumed = true; }
+  });
+
+  assert.equal(await controller.checkPausedQueue(), false);
+  assert.equal(statusCalls, 0);
+  assert.equal(resumed, false);
+});
+
 test("late image completion resumes the same uncertain task without opening the queue boundary", async () => {
   const { createController } = require(modulePath);
   const task = {

@@ -30,7 +30,12 @@ test("A-D startup scripts bind one account and one isolated runtime tuple each",
     assert.match(source, /TEAMBUILDING_SHARED_MATERIAL_ROOT = ".*\\shared-material"/);
     assert.match(source, /CONTENT_ONLY_MODE = "1"/);
     assert.match(source, /Start-Process -FilePath \$node/);
-    assert.match(source, /electron\.cmd desktop\\main\.js/);
+    if (entry.id === "B") {
+      assert.match(source, /\$server\.Refresh\(\)/);
+      assert.match(source, /if \(-not \$ready\) \{[\s\S]*?\$server\.Refresh\(\)[\s\S]*?\$server\.HasExited/);
+      assert.match(source, /\$env:TB_MAIN_WINDOW_SANDBOX = "0"/);
+    }
+    assert.match(source, /electron\.cmd(?: --no-sandbox)? desktop\\main\.js/);
     assert.doesNotMatch(source, /account-6/);
 
     for (const field of [entry.accountId, entry.port, entry.remoteDebuggingPort, `instance-${entry.id}`, `instance-${entry.id}\\electron-userdata`]) {
@@ -38,6 +43,15 @@ test("A-D startup scripts bind one account and one isolated runtime tuple each",
       seen.add(field);
     }
   }
+});
+
+test("B shell GPU fallback is opt-in and does not unsandbox embedded pages", () => {
+  const source = fs.readFileSync(path.join(PROJECT_ROOT, "src", "desktop", "main.js"), "utf8");
+  assert.match(source, /const MAIN_WINDOW_SANDBOX = String\(process\.env\.TB_MAIN_WINDOW_SANDBOX/);
+  assert.match(source, /if \(!MAIN_WINDOW_SANDBOX\) app\.commandLine\.appendSwitch\("in-process-gpu"\)/);
+  assert.match(source, /sandbox: MAIN_WINDOW_SANDBOX,/);
+  assert.match(source, /partition: account\.partition,[\s\S]*?sandbox: true,/);
+  assert.match(source, /partition,\n      contextIsolation: true,\n      sandbox: true,/);
 });
 
 test("A-D startup scripts share only the material root and never the browser/runtime roots", () => {

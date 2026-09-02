@@ -9,9 +9,9 @@
   // bridge outage may be retried for a bounded period, then the current task
   // is deferred/quarantined so the account window cannot be occupied forever.
   const AUTOMATIC_RECOVERY_STAGNATION_LIMIT = 8;
-  const AUTOMATIC_RECOVERY_BASE_DELAY_MS = 15_000;
-  const AUTOMATIC_RECOVERY_MAX_DELAY_MS = 2 * 60_000;
-  const AUTOMATIC_RECOVERY_ENVIRONMENT_WAIT_LIMIT_MS = 15 * 60_000;
+  const AUTOMATIC_RECOVERY_BASE_DELAY_MS = 5_000;
+  const AUTOMATIC_RECOVERY_MAX_DELAY_MS = 10_000;
+  const AUTOMATIC_RECOVERY_ENVIRONMENT_WAIT_LIMIT_MS = 30_000;
   // A transient bridge/read failure must not refresh a page that is visibly
   // still producing the current image batch. Give the native GPT response a
   // finite grace period, then let the normal bounded recovery chain resume.

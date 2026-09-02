@@ -124,9 +124,15 @@ function archiveEventKey(event = {}) {
   if (String(event.archiveEventKey || "").trim()) return String(event.archiveEventKey).trim();
   const material = String(event.folderHash || event.entryPath || "").trim().toLowerCase();
   const request = String(event.requestId || "").trim();
-  const packagePath = String(event.packagePath || "").trim().toLowerCase();
+  // packagePath is an output location, not an event identity. It can be
+  // empty on a late callback or differ after a package/library move. Keep the
+  // request boundary ahead of the stable material fallback, and never let
+  // that incidental path manufacture a second archive event.
+  const identity = request
+    ? ["material-archive-request-v2", material, request]
+    : ["material-archive-fallback-v2", material];
   return crypto.createHash("sha256")
-    .update(["material-archive-v1", material, request, packagePath].join("\u0000"))
+    .update(identity.join("\u0000"))
     .digest("hex");
 }
 

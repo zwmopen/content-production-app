@@ -1,6 +1,6 @@
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 base = fso.GetParentFolderName(WScript.ScriptFullName)
-script = fso.BuildPath(base, "start.ps1")
+script = fso.BuildPath(base, "start-instance-b.ps1")
 command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & script & Chr(34)
 shell.Run command, 0, False

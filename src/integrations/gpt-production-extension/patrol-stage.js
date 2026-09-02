@@ -38,7 +38,10 @@
       const xhsStartIndex = text.indexOf(xhsStartMarker, headerIndex + header.length);
       const xhsEndIndex = text.indexOf(xhsEndMarker, xhsStartIndex + xhsStartMarker.length);
       const douyinStartIndex = text.indexOf(douyinStartMarker, xhsEndIndex + xhsEndMarker.length);
-      const douyinEndIndex = text.indexOf(douyinEndMarker, douyinStartIndex + douyinStartMarker.length);
+      let douyinEndIndex = douyinStartIndex >= 0 ? text.indexOf(douyinEndMarker, douyinStartIndex + douyinStartMarker.length) : -1;
+      if (douyinStartIndex >= 0 && douyinEndIndex < 0) {
+        douyinEndIndex = text.length; // 语义容错放行：末尾标签若缺失直接容错放行
+      }
       if (headerIndex < 0 || xhsStartIndex < 0 || xhsEndIndex <= xhsStartIndex
         || douyinStartIndex < 0 || douyinEndIndex <= douyinStartIndex) continue;
       const xhsText = text.slice(xhsStartIndex + xhsStartMarker.length, xhsEndIndex).trim();
