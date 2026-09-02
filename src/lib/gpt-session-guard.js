@@ -15,7 +15,9 @@ function isChatGptConversationUrl(value) {
   if (!parsed) return false;
   const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
   return /^\/c\/[a-z0-9_-]+(?:\/[^/]*)?$/i.test(pathname)
-    || /^\/g\/[a-z0-9_-]+\/c\/[a-z0-9_-]+(?:\/[^/]*)?$/i.test(pathname);
+    || /^\/g\/[a-z0-9_-]+\/c\/[a-z0-9_-]+(?:\/[^/]*)?$/i.test(pathname)
+    || pathname === "/"
+    || pathname === "";
 }
 
 function normalizeChatConversationUrl(value) {

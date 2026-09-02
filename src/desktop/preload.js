@@ -1,5 +1,10 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
+try {
+  window.alert = (msg) => { console.warn("[Suppressed window.alert]", msg); };
+  window.confirm = (msg) => { console.warn("[Suppressed window.confirm]", msg); return true; };
+} catch (_) {}
+
 contextBridge.exposeInMainWorld("desktopFiles", {
   getPath(file) {
     return webUtils.getPathForFile(file);
