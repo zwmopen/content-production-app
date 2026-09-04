@@ -6295,9 +6295,11 @@
       showImageDownloadToast('文案 TXT 已保存，开始下载本组图片...', true);
       const currentTotal = Number(imageButton.dataset.cgptImageTotal || 0)
         || uniqueImageUrls(imageButton.__cgptImageDownloadImages || []).length;
+      const downloadAgeMs = priorDownload?.downloadedAt ? Date.now() - new Date(priorDownload.downloadedAt).getTime() : Infinity;
       const canReuseDownload = Boolean(
         priorDownload?.batchId
         && priorDownload.state === 'downloaded'
+        && downloadAgeMs < 180_000
         && Number(priorDownload.downloaded || 0) >= currentTotal
         && Number(priorDownload.total || 0) === currentTotal
       );

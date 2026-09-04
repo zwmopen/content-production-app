@@ -11,6 +11,7 @@ const DEFAULT_WORK_DISTRIBUTION_CLAIM_TTL_MS = 6 * 60 * 60 * 1000;
 // six-hour lease for a task that is still genuinely running.
 const DEFAULT_WORK_DISTRIBUTION_ORPHAN_CLAIM_GRACE_MS = 30 * 60 * 1000;
 
+
 function stableWorkId(directory) {
   return crypto.createHash("sha256")
     .update(path.basename(String(directory || "")).normalize("NFKC").trim().toLowerCase())
@@ -35,12 +36,25 @@ function inspectWorkDirectory(directory) {
   const texts = entries.filter((entry) => entry.isFile() && TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase()));
   if (!images.length || !texts.length) return null;
   const manifest = readJson(path.join(directory, "GPT作品记录.json"), {});
+  const tagManifest = readJson(path.join(directory, "作品标签.json"), {});
   let textPreview = "";
   try { textPreview = fs.readFileSync(path.join(directory, texts[0].name), "utf8").slice(0, 4000); } catch { /* optional */ }
   let createdAt = "";
   try { createdAt = fs.statSync(directory).birthtime.toISOString(); } catch { /* optional */ }
+
+  const combinedTags = Array.isArray(manifest.tags) ? manifest.tags.map(String) : [];
+  if (tagManifest.category && !combinedTags.includes(tagManifest.category)) combinedTags.push(tagManifest.category);
+  if (tagManifest.location && !combinedTags.includes(tagManifest.location)) combinedTags.push(tagManifest.location);
+  if (tagManifest.duration && !combinedTags.includes(tagManifest.duration)) combinedTags.push(tagManifest.duration);
+  if (Array.isArray(tagManifest.scenes)) {
+    tagManifest.scenes.forEach((s) => {
+      const sceneStr = String(s || "").trim();
+      if (sceneStr && !combinedTags.includes(sceneStr)) combinedTags.push(sceneStr);
+    });
+  }
+
   return {
-    workId: String(manifest.id || manifest.workId || stableWorkId(directory)),
+    workId: String(tagManifest.workId || manifest.id || manifest.workId || stableWorkId(directory)),
     name: path.basename(directory),
     path: path.resolve(directory),
     imageCount: images.length,
@@ -49,8 +63,12 @@ function inspectWorkDirectory(directory) {
     previewPath: path.join(directory, images[0].name),
     textPath: path.join(directory, texts[0].name),
     textPreview,
-    contentType: String(manifest.contentType || manifest.type || ""),
-    tags: Array.isArray(manifest.tags) ? manifest.tags.map(String) : [],
+    contentType: String(tagManifest.category || manifest.contentType || manifest.type || ""),
+    tags: combinedTags,
+    location: tagManifest.location || "",
+    duration: tagManifest.duration || "",
+    scenes: Array.isArray(tagManifest.scenes) ? tagManifest.scenes : [],
+    distributionTag: tagManifest.distribution || null,
     platformUsage: manifest.platformUsage && typeof manifest.platformUsage === "object" && !Array.isArray(manifest.platformUsage)
       ? manifest.platformUsage
       : {},
@@ -134,6 +152,39 @@ function recordSuccessfulWorkDistribution(file, detail = {}) {
   };
   ledger.updatedAt = now;
   writeJsonAtomic(file, ledger);
+
+  // 同步回写作品本地的 作品标签.json
+  try {
+    const workDir = work.path || (detail.collectionPath ? path.join(detail.collectionPath, work.name || "") : null);
+    if (workDir && fs.existsSync(workDir)) {
+      const tagFile = path.join(workDir, "作品标签.json");
+      if (fs.existsSync(tagFile)) {
+        const tagData = JSON.parse(fs.readFileSync(tagFile, "utf8"));
+        if (!tagData.distribution) tagData.distribution = {};
+        const devName = attempt.device || attempt.deviceId || "未知设备";
+        tagData.distribution.status = `已发${devName}`;
+        if (!Array.isArray(tagData.distribution.dispatchedTo)) tagData.distribution.dispatchedTo = [];
+        if (!tagData.distribution.dispatchedTo.includes(devName)) {
+          tagData.distribution.dispatchedTo.push(devName);
+        }
+        tagData.distribution.lastDispatchedAt = now;
+        fs.writeFileSync(tagFile, JSON.stringify(tagData, null, 2), "utf8");
+
+        const textFiles = fs.readdirSync(workDir).filter((f) => f.endsWith(".txt"));
+        if (textFiles.length > 0) {
+          const txtPath = path.join(workDir, textFiles[0]);
+          let content = fs.readFileSync(txtPath, "utf8");
+          if (!content.startsWith("[已发")) {
+            content = `[已发${devName}] ` + content;
+            fs.writeFileSync(txtPath, content, "utf8");
+          }
+        }
+      }
+    }
+  } catch {
+    // 标签文件回写容错，不阻断主流程
+  }
+
   return ledger.successes[workId];
 }
 

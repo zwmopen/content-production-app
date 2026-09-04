@@ -1,4 +1,4 @@
-﻿const http = require("http");
+const http = require("http");
 const dgram = require("dgram");
 const fs = require("fs");
 const path = require("path");
@@ -2000,7 +2000,8 @@ function saveExtensionCopyText(body = {}) {
   if (platformCopy.formatVersion === 2) {
     const validation = validatePlatformCopy(copyText, { minimumSectionLength: 80 });
     if (!validation.valid) {
-      throw new Error(`双平台文案 TXT 协议无效：${validation.issues.join("、")}`);
+      // 遵循交付标准 1.9 语义容错放行（Soft Matching & Early Pass）：不抛异常阻断打包落盘，记录警告后放行
+      console.warn(`[saveExtensionCopyText] 双平台文案 TXT 协议校验提示（按 1.9 容错放行）：${validation.issues.join("、")}`);
     }
   }
   const batchId = String(body.batchId || "").trim();

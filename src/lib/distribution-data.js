@@ -174,7 +174,7 @@ function inspectSource(sourcePath, cache) {
     }
     const children = fs.readdirSync(sourcePath, { withFileTypes: true });
     const itemDirectories = children.filter((entry) => (
-      entry.isDirectory() || entry.isSymbolicLink()
+      (entry.isDirectory() || entry.isSymbolicLink()) && !entry.name.startsWith(".")
     ));
     const inspectedItems = itemDirectories.map((entry) => {
       const itemPath = path.join(sourcePath, entry.name);
@@ -193,6 +193,22 @@ function inspectSource(sourcePath, cache) {
       }
       return { name: entry.name, path: itemPath, previewPath, textPath, imageCount };
     });
+
+    // 适配方案 A：如果自身就是单作品（平铺无子目录，直接包含图片和文案）
+    if (inspectedItems.length === 0) {
+      const directImages = children.filter((file) => file.isFile() && /\.(png|jpe?g|webp)$/i.test(file.name));
+      const directTexts = children.filter((file) => file.isFile() && /\.(txt|md)$/i.test(file.name));
+      if (directImages.length > 0) {
+        inspectedItems.push({
+          name: path.basename(sourcePath),
+          path: sourcePath,
+          previewPath: path.join(sourcePath, directImages[0].name),
+          textPath: directTexts[0] ? path.join(sourcePath, directTexts[0].name) : "",
+          imageCount: directImages.length
+        });
+      }
+    }
+
     result.itemCount = inspectedItems.filter((item) => item.imageCount > 0).length;
     result.items = inspectedItems.slice(0, 50);
     const stack = [sourcePath];
@@ -294,8 +310,11 @@ function csvCell(value) {
 
 function isPortfolioCollectionName(name) {
   const value = String(name || "");
-  if (value.startsWith("_")) return false;
-  return /^\.?作品集[_-]?\d+/i.test(value) || /\[(?:泛|转)\]$/.test(value);
+  if (value.startsWith("_") || value.startsWith(".")) return false;
+  if (/^\.?作品集[_-]?\d+/i.test(value) || /\[(?:泛|转)\]$/.test(value)) return true;
+  // 支持方案 A：平铺单作品（时间戳命名规范 YYYYMMDD_HHMMSS_xxx）
+  if (/^\d{8}_\d{6}/.test(value)) return true;
+  return false;
 }
 
 function recordDeviceDistribution(options = {}) {
@@ -327,6 +346,40 @@ function recordDeviceDistribution(options = {}) {
   const existing = fs.readFileSync(logFile, "utf8");
   const prefix = existing.endsWith("\n") || existing.endsWith("\r") ? "" : "\n";
   fs.appendFileSync(logFile, `${prefix}${fields.map(csvCell).join(",")}\n`, "utf8");
+
+  // 联动更新 作品标签.json（如果源目录是单作品）
+  try {
+    const candidateDirs = [options.sourcePath].filter(Boolean);
+    for (const cand of candidateDirs) {
+      if (!fs.existsSync(cand)) continue;
+      const tagFile = path.join(cand, "作品标签.json");
+      if (fs.existsSync(tagFile)) {
+        const tagData = JSON.parse(fs.readFileSync(tagFile, "utf8"));
+        if (!tagData.distribution) tagData.distribution = {};
+        const devName = options.device || "未知设备";
+        tagData.distribution.status = `已发${devName}`;
+        if (!Array.isArray(tagData.distribution.dispatchedTo)) tagData.distribution.dispatchedTo = [];
+        if (!tagData.distribution.dispatchedTo.includes(devName)) {
+          tagData.distribution.dispatchedTo.push(devName);
+        }
+        tagData.distribution.lastDispatchedAt = options.now || new Date().toISOString();
+        fs.writeFileSync(tagFile, JSON.stringify(tagData, null, 2), "utf8");
+
+        const textFiles = fs.readdirSync(cand).filter((f) => f.endsWith(".txt"));
+        if (textFiles.length > 0) {
+          const txtPath = path.join(cand, textFiles[0]);
+          let content = fs.readFileSync(txtPath, "utf8");
+          if (!content.startsWith("[已发")) {
+            content = `[已发${devName}] ` + content;
+            fs.writeFileSync(txtPath, content, "utf8");
+          }
+        }
+      }
+    }
+  } catch {
+    // 标签文件回写容错
+  }
+
   return { ok: true, duplicate: false, logFile };
 }
 
@@ -762,6 +815,36 @@ function getDistributionSnapshot(options = {}) {
     const deviceHistory = deviceRows.filter((row) => row["源作品集"] === name);
     const previouslySentToDevice = deviceHistory.length > 0;
     const officialLogState = officialStateFromRow(latestOfficial.get(name));
+    
+    // 适配方案 A：若未带 [泛]/[转] 命名后缀，但作品源目录下存在 作品标签.json，读取真实业务分类与标签
+    let tagMeta = null;
+    if (source?.sourcePath) {
+      try {
+        const tagJsonPath = path.join(source.sourcePath, "作品标签.json");
+        if (fs.existsSync(tagJsonPath)) {
+          tagMeta = JSON.parse(fs.readFileSync(tagJsonPath, "utf8"));
+        } else {
+          const gptRecPath = path.join(source.sourcePath, "GPT作品记录.json");
+          if (fs.existsSync(gptRecPath)) {
+            tagMeta = JSON.parse(fs.readFileSync(gptRecPath, "utf8"));
+          }
+        }
+      } catch {}
+    }
+
+    if (!classification.labelled && tagMeta) {
+      const cat = String(tagMeta.category || tagMeta.contentType || "");
+      if (cat.includes("转化") || cat.includes("精准")) {
+        classification.type = "conversion";
+        classification.typeLabel = "精准流量";
+        classification.labelled = true;
+      } else if (cat.includes("泛")) {
+        classification.type = "traffic";
+        classification.typeLabel = "泛流量";
+        classification.labelled = true;
+      }
+    }
+
     const exclusionReasons = [];
     if (!classification.labelled) exclusionReasons.push("缺少[泛]/[转]标签");
     if (externalSource && !externalCategoryAllowed) exclusionReasons.push("发送目录分类不匹配");
@@ -811,6 +894,10 @@ function getDistributionSnapshot(options = {}) {
       && workflowStage === "mobile"
       && sourceValid;
 
+    const metaTags = Array.isArray(tagMeta?.tags) && tagMeta.tags.length > 0
+      ? tagMeta.tags
+      : [tagMeta?.category, tagMeta?.location, tagMeta?.duration, ...(tagMeta?.scenes || [])].filter(Boolean);
+
     return {
       name,
       ...classification,
@@ -820,6 +907,11 @@ function getDistributionSnapshot(options = {}) {
       fileCount: source.fileCount || 0,
       bytes: source.bytes || 0,
       items: source.items || [],
+      tags: metaTags,
+      location: tagMeta?.location || "",
+      duration: tagMeta?.duration || "",
+      scenes: tagMeta?.scenes || [],
+      distributionTag: tagMeta?.distribution || null,
       xhs: previouslySentToDevice ? "used" : workflowEntries.mobile.valid ? "available" : stateForPlatform(entries.xhs),
       douyin: previouslySentToDevice ? "used" : workflowEntries.mobile.valid ? "available" : douyin,
       officialAccount,
