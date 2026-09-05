@@ -50,7 +50,7 @@
     };
   }
 
-  function selectMaterialAttachments(attachments = [], maxAttachments = 20) {
+  function selectMaterialAttachments(attachments = [], maxAttachments = 10) {
     const limit = Math.max(1, Number(maxAttachments || 20));
     const unique = [...new Set((Array.isArray(attachments) ? attachments : []).filter(Boolean))];
     if (unique.length <= limit) return unique;

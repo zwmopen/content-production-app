@@ -8773,7 +8773,7 @@ function attachmentsForSingleMaterial(material = {}) {
   const materialPath = normalizeGptAttachmentPath(material.path);
   if (!materialPath) throw new Error("素材任务缺少帖子文件夹路径，已阻止上传");
   const prefix = `${materialPath}\\`;
-  const attachments = TBGptAccountRotation.selectMaterialAttachments(material.attachments || [], 20);
+  const attachments = TBGptAccountRotation.selectMaterialAttachments(material.attachments || [], 10);
   const outside = attachments.filter((filePath) => {
     const normalized = normalizeGptAttachmentPath(filePath);
     return normalized !== materialPath && !normalized.startsWith(prefix);
