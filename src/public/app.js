@@ -8773,7 +8773,7 @@ function attachmentsForSingleMaterial(material = {}) {
   const materialPath = normalizeGptAttachmentPath(material.path);
   if (!materialPath) throw new Error("素材任务缺少帖子文件夹路径，已阻止上传");
   const prefix = `${materialPath}\\`;
-  const attachments = TBGptAccountRotation.selectMaterialAttachments(material.attachments || [], 10);
+  const attachments = TBGptAccountRotation.selectMaterialAttachments(material.attachments || [], 20);
   const outside = attachments.filter((filePath) => {
     const normalized = normalizeGptAttachmentPath(filePath);
     return normalized !== materialPath && !normalized.startsWith(prefix);
@@ -12163,6 +12163,9 @@ function syncGptBrowserAddress(url = "") {
   if (!input || document.activeElement === input) return;
   input.value = String(url || "");
   input.title = String(url || "");
+  if (url && (url.includes("/c/") || url.includes("/share/"))) {
+    setGptBrowserLoading(false);
+  }
 }
 
 async function navigateEmbeddedGpt(action, targetUrl = "", accountId = activeGptAccountId) {
@@ -18435,10 +18438,12 @@ function getFilteredCollections() {
 }
 
 let gptBrowserLoadingHideTimer = 0;
+let gptBrowserLoadingWatchdogTimer = 0;
 function setGptBrowserLoading(loading, failed = false) {
   const progress = $("#gptBrowserLoadingProgress");
   if (!progress) return;
   window.clearTimeout(gptBrowserLoadingHideTimer);
+  window.clearTimeout(gptBrowserLoadingWatchdogTimer);
   progress.hidden = false;
   progress.classList.toggle("is-loading", Boolean(loading));
   progress.classList.toggle("is-complete", !loading);
@@ -18450,6 +18455,18 @@ function setGptBrowserLoading(loading, failed = false) {
       progress.hidden = true;
       progress.classList.remove("is-complete", "is-failed");
     }, failed ? 1200 : 320);
+  } else {
+    // 自动兜底看门狗：如果网页实际已就绪或网络静默未触发完成事件，最多 2 秒后自动收起进度条，防止视觉假加载卡死
+    gptBrowserLoadingWatchdogTimer = window.setTimeout(() => {
+      progress.classList.remove("is-loading");
+      progress.classList.add("is-complete");
+      progress.setAttribute("aria-valuenow", "100");
+      progress.setAttribute("aria-valuetext", "网页就绪");
+      window.setTimeout(() => {
+        progress.hidden = true;
+        progress.classList.remove("is-complete");
+      }, 320);
+    }, 2000);
   }
 }
 
