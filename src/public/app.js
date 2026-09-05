@@ -2231,14 +2231,15 @@ function normalizeNonAutomaticGptWindowRuntime(accountId = activeGptAccountId) {
 // normalize them at the boundary so an upgrade cannot silently start a
 // different queue.
 const GPT_MODE_DEFINITIONS = Object.freeze({
-  manual: { label: "人工控制", defaultName: "人工控制", shortName: "人工", continuous: false, multi: false, description: '自动上传附件和提示词到输入框，但不自动发送。需手动点发送，完成后点"完成当前，上传下一套"。适合新手试水、单帖精修。' },
-  automatic: { label: "选材后自动", defaultName: "选材后自动", shortName: "选材后", continuous: false, multi: false, description: "选好素材后全自动完成上传→等计划→发确认→等图→求文案→打包归档。队列跑完即停。适合中小批量一次性生产。" },
-  single: { label: "单账号全自动", defaultName: "单账号全自动", shortName: "单账号", continuous: true, multi: false, manualWindow: true, description: "单账号连续生产，额度触顶后自动等待恢复，跨重启自动续跑。工作时段 08:00-02:00。适合单账号长时间挂着生产。" },
-  scheduled: { label: "定时单账号全自动", defaultName: "定时单账号全自动", shortName: "定时", continuous: true, multi: false, manualWindow: true, scheduled: true, description: "在指定时间点自动启动单账号生产，支持每日定时循环。适合固定时段定时生产场景。" },
+  manual: { label: "纯手动模式", defaultName: "纯手动模式", shortName: "纯手动", continuous: false, multi: false, description: '自动上传附件和提示词到输入框，但不自动发送。需手动点发送，完成后点"完成当前，上传下一套"。适合新手试水、单帖精修。' },
+  automatic: { label: "选好后跑完这批", defaultName: "选好后跑完这批", shortName: "选好后跑", continuous: false, multi: false, description: "选好素材后全自动完成上传→等计划→发确认→等图→求文案→打包归档。队列跑完即停。适合中小批量一次性生产。" },
+  single: { label: "全自动持续生产（主力）", defaultName: "全自动持续生产（主力）", shortName: "全自动持续", continuous: true, multi: false, manualWindow: true, description: "单账号连续生产，额度触顶后自动等待恢复，跨重启自动续跑。工作时段 08:00-02:00。适合单账号长时间挂着生产。" },
+  scheduled: { label: "定时全自动跑（早7-晚2）", defaultName: "定时全自动跑（早7-晚2）", shortName: "定时全自动", continuous: true, multi: false, manualWindow: true, scheduled: true, description: "在指定时间点自动启动单账号生产，支持每日定时循环。适合固定时段定时生产场景。" },
   // Kept only so old production records/settings can be read. New UI and
   // normalized settings no longer expose or run the multi-account mode.
   rotate: { label: "旧多账号全自动", defaultName: "旧多账号全自动", shortName: "旧多账号", continuous: true, multi: true, rotation: true, autoWindow: true, hidden: true, legacy: true, description: "旧版多账号模式已移除；旧配置会迁移为单账号全自动。" },
-  patrol: { label: "单账号多对话巡检", defaultName: "单账号多对话巡检", shortName: "巡检", continuous: true, multi: false, manualWindow: true, patrol: true, description: "单账号下多个对话轮流巡检生产，每个对话独立处理一个素材。适合单账号多对话并行场景。" },
+  patrol: { label: "多对话巡检", defaultName: "多对话巡检", shortName: "巡检", continuous: true, multi: false, manualWindow: true, patrol: true, description: "单账号下多个对话轮流巡检生产，每个对话独立处理一个素材。适合单账号多对话并行场景。" },
+  replicate: { label: "新绘画复刻模式（V5高阶）", defaultName: "新绘画复刻模式（V5高阶）", shortName: "V5复刻", continuous: false, multi: false, description: "V5高阶轻复刻模式：场景稳定防乱写，原图微机位+全量换人换物，NO.1-NO.9序号递增但内容对调洗牌，出V5计划后出图归档。" },
   // Kept as a compatibility profile for configurations created before the
   // mode rename. Hidden from the selector but still readable for old configs.
   "semi-auto": { label: "半自动（兼容）", defaultName: "半自动（兼容）", shortName: "半自动", continuous: false, multi: false, semiAuto: true, hidden: true, description: "自动上传并发送，计划完成后暂停等待人工确认。确认后自动完成出图→文案→打包归档。仅保留兼容性，新配置请使用其他模式。" },
@@ -2421,6 +2422,7 @@ const GPT_WORKFLOW_MODULES = Object.freeze({
 // 兼容旧代码：保留 GPT_WORKFLOW_ACTIONS 名称
 const GPT_WORKFLOW_ACTIONS = GPT_WORKFLOW_MODULES;
 const GPT_MATERIAL_PLAN_PROMPT = "请完整读取全部附件，不要省略 TXT。本套迁移计划和最终成品都最多 10 张；素材超过 10 张时，必须先全部读取，再自行筛选、聚类、合并和取舍，只规划 P1-P10 以内。禁止第 11 页，禁止分批，禁止第二批，禁止把剩余素材留到下一批。先严格按既定格式输出最多 10 页的逐页迁移计划，并在结尾等待我回复 1，暂时不要出图。";
+const GPT_REPLICATE_PLAN_PROMPT = "你现在是我的「小红书团建营销拼图轻复刻去重修图师 V5（高阶进阶版）」。\n我会上传一组小红书团建、露营、烧烤、农庄、小院、户外拓展、周边游、活动项目类图片。\n你的核心任务是：基于我提供的原图，做成适合小红书发布的【团建营销型拼图大字图】。\n最终效果要像：【同一真实场地 + 轻微不同机位角度 + 全新人物 + 新排版 + 新拼图顺序 + 营销点击感】。\n\n【全流程最高总纲（必须遵守）】：\n1. 真实场景稳定原则：绝非同一主题重新想象，严禁把原景点改成另一个景点，严禁脑补陌生建筑、假地标、假景区门头，地形水域空间逻辑锁死；原图是农庄就继续农庄，不允许画成AI幻想大片。\n2. 数量与单图交付硬规：1张原图=1张独立新图（3:4独立超清大图），我给几张你出几张，绝对不允许合成一张总图或长图。\n3. 微机位动作指南：镜头微调拉近/拉远、机位左右微移、平视改轻微俯仰、正面对准改微侧面15°~30°抓拍，光影通透自然。\n4. 单图与拼图智能分流：原图是拼图必须重组内部子图顺序，黄金视觉位优先放最具冲击力的人物情绪/出片图；原图是单图不硬做拼图，只做微机位+换人换物+质感升级。\n5. 【★核心硬规★】NO.1~NO.9 连续序号排版与内容洗牌对调：若带有连续序号（如NO.1~NO.9），新图中的标号依然维持NO.1~NO.9连续递增连贯排版，但对应的项目内容必须强制交叉对换打乱，序号工整而内容彻底去重！\n6. 文字防乱码防幻觉（5.0标准）：门头牌匾小字能准确写出就写，不能准确生成就远景模糊弱化，宁缺毋滥，严禁生成外星乱码假字；标题排版留出呼吸感，绝对不压人物脸部和景物核心；严禁私信、加微信、报价、咨询等违规词。\n7. 画质去AI味：拒绝过度高饱和、荧光绿、假蓝天、塑料磨皮网红脸，还原小红书真实手机原生抓拍通透感。\n\n【执行流程】：\n上传素材后，必须先输出格式严谨的【V5 出图计划】（包含原图版式、建议主标题与卖点词、微机位动作、拼图打乱顺序、NO.1~NO.9对调映射表、人物与静物去重方案、去AI味要点）。\n计划输出后回复“计划制定完毕，回复【1】或【确认】开始批量出图”，等待我确认后再正式逐张出图！";
 const LEGACY_GPT_MATERIAL_PLAN_PROMPTS = new Set([
   "请读取全部附件，不要省略 TXT。先严格按既定格式输出逐页迁移计划，并在结尾等待我回复 1，暂时不要出图。"
 ]);
@@ -2483,11 +2485,14 @@ function hasEnabledGptArchiveStep(steps) {
     || enabledActions.has("move-archive")
     || enabledActions.has("move-to-archive");
 }
-function defaultGptWorkflowSteps() {
+function defaultGptWorkflowSteps(modeKey = "") {
+  const isReplicate = modeKey === "replicate";
+  const planPrompt = isReplicate ? GPT_REPLICATE_PLAN_PROMPT : GPT_MATERIAL_PLAN_PROMPT;
+  const planKeyword = isReplicate ? "复刻计划|出图计划|迁移计划|逐页|P\\s*1|计划完成" : undefined;
   return [
-    { action: "upload-material", text: GPT_MATERIAL_PLAN_PROMPT, timeoutSeconds: 120, enabled: true, autoDetect: true },
+    { action: "upload-material", text: planPrompt, timeoutSeconds: 120, enabled: true, autoDetect: true },
     { action: "wait-random", text: "", enabled: true, minSeconds: 1, maxSeconds: 5 },
-    { action: "wait-plan", text: "", timeoutSeconds: 480, enabled: true, autoDetect: true },
+    { action: "wait-plan", text: "", timeoutSeconds: 480, enabled: true, autoDetect: true, ...(planKeyword ? { keywordPattern: planKeyword } : {}) },
     { action: "send-confirm", text: "1", timeoutSeconds: 20, enabled: true, autoDetect: false },
     { action: "wait-random", text: "", enabled: true, minSeconds: 1, maxSeconds: 5 },
     { action: "wait-images", text: "", timeoutSeconds: 900, enabled: true, autoDetect: true },
@@ -2604,6 +2609,7 @@ function normalizeGptProductionMode(value) {
   if (mode === "manual") return "manual";
   if (mode === "automatic" || mode === "auto") return "automatic";
   if (mode === "semi-auto" || mode === "semiauto" || mode === "semi") return "semi-auto";
+  if (mode === "replicate" || mode === "remake" || mode === "copycat" || mode === "painting-replicate") return "replicate";
   if (mode === "single" || ["single-wait-manual", "single-account-template-wait-manual", "manual-window-endless"].includes(mode)) return "single";
   if (mode === "scheduled" || ["scheduled-endless", "timer-single"].includes(mode)) return "scheduled";
   if (mode === "patrol" || ["patrol-multi-dialog", "conversation-patrol"].includes(mode)) return "patrol";
@@ -2617,13 +2623,14 @@ function normalizeGptProductionMode(value) {
 }
 function loadGptModeProfiles() {
   const defaults = {
-    manual: { name: GPT_MODE_DEFINITIONS.manual.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps() },
-    automatic: { name: GPT_MODE_DEFINITIONS.automatic.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps() },
-    "semi-auto": { name: GPT_MODE_DEFINITIONS["semi-auto"].defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps() },
-    single: { name: GPT_MODE_DEFINITIONS.single.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps() },
-    scheduled: { name: GPT_MODE_DEFINITIONS.scheduled.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps() },
-    rotate: { name: GPT_MODE_DEFINITIONS.rotate.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps() },
-    patrol: { name: GPT_MODE_DEFINITIONS.patrol.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps() }
+    manual: { name: GPT_MODE_DEFINITIONS.manual.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("manual") },
+    automatic: { name: GPT_MODE_DEFINITIONS.automatic.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("automatic") },
+    replicate: { name: GPT_MODE_DEFINITIONS.replicate.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("replicate") },
+    "semi-auto": { name: GPT_MODE_DEFINITIONS["semi-auto"].defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("semi-auto") },
+    single: { name: GPT_MODE_DEFINITIONS.single.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("single") },
+    scheduled: { name: GPT_MODE_DEFINITIONS.scheduled.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("scheduled") },
+    rotate: { name: GPT_MODE_DEFINITIONS.rotate.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("rotate") },
+    patrol: { name: GPT_MODE_DEFINITIONS.patrol.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("patrol") }
   };
   // 旧名 → 新名迁移表（0.14.28 模式名称统一）
   const LEGACY_MODE_NAME_MAP = {
@@ -3662,8 +3669,8 @@ function applyReadOnlyGptPreviewControls() {
   const variantHint = $("#gptWorkflowVariantHint");
   if (variantHint) {
     const variant = $("#gptWorkflowVariant")?.value === "fresh-session-fixed-template"
-      ? "新模式｜每套新对话 + 固定模板"
-      : "旧模式｜复用原对话";
+      ? "每套新开独立对话"
+      : "接着当前对话做";
     variantHint.textContent = `${contentInstanceDisplayLabel()}网页预览只读：${variant}`;
     variantHint.hidden = false;
   }

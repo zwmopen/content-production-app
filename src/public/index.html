@@ -498,19 +498,20 @@
                   <div class="gpt-mode-action-row">
                     <div class="gpt-mode-row">
                       <select id="gptProductionMode" aria-label="生产模式" title="右键打开当前生产模式设置">
-                        <option value="manual">人工控制</option>
-                        <option value="automatic">选材后自动</option>
-                        <option value="single">单账号全自动</option>
-                        <option value="scheduled">定时单账号全自动</option>
-                        <option value="patrol">单账号多对话巡检</option>
+                        <option value="manual">纯手动模式</option>
+                        <option value="automatic">选好后跑完这批</option>
+                        <option value="single">全自动持续生产（主力）</option>
+                        <option value="scheduled">定时全自动跑（早7-晚2）</option>
+                        <option value="patrol">多对话巡检</option>
+                        <option value="replicate">新绘画复刻模式（V5高阶）</option>
                         <option value="semi-auto" hidden>半自动（兼容）</option>
                       </select>
                       <span class="gpt-current-account-chip" title="当前窗口"> <strong id="gptCockpitAccount">未选择</strong></span>
                     </div>
                     <div class="gpt-workflow-variant-row">
                       <select id="gptWorkflowVariant" aria-label="当前窗口流水线版本" title="每个账号窗口独立保存；切换只影响该窗口后续创建的作品">
-                        <option value="legacy-v1">旧模式｜复用原对话</option>
-                        <option value="fresh-session-fixed-template">新模式｜每套新对话 + 固定模板</option>
+                        <option value="legacy-v1">接着当前对话做</option>
+                        <option value="fresh-session-fixed-template">每套新开独立对话</option>
                       </select>
                       <small id="gptWorkflowVariantHint">按当前账号窗口独立保存</small>
                     </div>
