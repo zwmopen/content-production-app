@@ -28,7 +28,7 @@ function start() {
     try { fs.unlinkSync(lock); } catch(e) {}
   }
 
-  const proc = spawn(electronPath, ['--no-sandbox', mainPath], {
+  const proc = spawn(electronPath, ['--remote-debugging-port=9431', '--no-sandbox', mainPath], {
     env,
     cwd: 'D:\\AICode\\工具开发\\projects\\content-production-app\\src'
   });
