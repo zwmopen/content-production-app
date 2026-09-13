@@ -390,7 +390,7 @@ class StandaloneProducer:
         clean_title = re.sub(r"[\s\-_]*\d{8}$", "", clean_title)
         clean_title = re.sub(r'[\\/:*?"<>|]', '_', clean_title).strip()[:50]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        target_pkg_dir = os.path.join(OUTPUT_BASE, f"{timestamp} 网页 CDP-{clean_title}")
+        target_pkg_dir = os.path.join(OUTPUT_BASE, f"{timestamp}-网页CDP-{clean_title}")
         os.makedirs(target_pkg_dir, exist_ok=True)
         log(f"-> 成品物理目录已建立: {target_pkg_dir}")
 

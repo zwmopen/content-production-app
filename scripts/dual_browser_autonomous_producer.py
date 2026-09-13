@@ -823,12 +823,12 @@ class InstanceWorker:
         img_urls = r_urls.get("result", {}).get("result", {}).get("value", [])
         log(f"已捕获 {len(img_urls)} 张大图 URL，开始无损拉取...", self.id)
 
-        # 7. 创建规范成品目录：按用户标准 [年月日 时间 网页 CDP-精炼标题]
+        # 7. 创建规范成品目录：按用户无空格连字符标准 [年月日_时分秒-网页CDP-精炼标题]
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         clean_title = re.sub(r"^评\d+-赞\d+-", "", mat_name)
         clean_title = re.sub(r"[\s\-_]*\d{8}$", "", clean_title)
         clean_title = re.sub(r'[\\/:*?"<>|]', '_', clean_title).strip()[:50]
-        pkg_folder = f"{ts} 网页 CDP-{clean_title}"
+        pkg_folder = f"{ts}-网页CDP-{clean_title}"
         target_pkg_dir = os.path.join(OUTPUT_BASE, pkg_folder)
         os.makedirs(target_pkg_dir, exist_ok=True)
 
