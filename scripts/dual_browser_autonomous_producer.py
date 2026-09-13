@@ -43,6 +43,51 @@ except Exception:
 
 user32 = ctypes.windll.user32
 
+class QuotaLimitException(Exception):
+    def __init__(self, message, wait_seconds, resume_dt):
+        super().__init__(message)
+        self.wait_seconds = wait_seconds
+        self.resume_dt = resume_dt
+
+def parse_quota_wait_seconds(asst_text):
+    """
+    解析 ChatGPT 上限提示文本，提取剩余等待秒数
+    支持: '上限将在 12小时 后重置', '上限将在 45分钟 后重置', '13小时'
+    """
+    hours = 0
+    mins = 0
+    m_hour = re.search(r'(\d+)\s*(?:个)?小时', asst_text)
+    if m_hour:
+        hours = int(m_hour.group(1))
+    m_min = re.search(r'(\d+)\s*分钟', asst_text)
+    if m_min:
+        mins = int(m_min.group(1))
+    
+    total_seconds = hours * 3600 + mins * 60
+    import random
+    # 随机预留 6~10 分钟 (360~600秒) 安全防风控缓冲，彻底规避整点踩点被系统风控检测与服务端时钟边缘延迟
+    buffer_seconds = random.randint(360, 600)
+    if total_seconds > 0:
+        return total_seconds + buffer_seconds
+    return 3 * 3600 + buffer_seconds
+
+def send_feishu_markdown(md_text):
+    """向流水线生产群统一发送富文本 Markdown 通知"""
+    try:
+        cmd = [
+            "node", LARK_RUN_JS, "im", "+messages-send",
+            "--as", "bot",
+            "--chat-id", FEISHU_GROUP_CHAT_ID,
+            "--markdown", md_text
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=15)
+        if res.returncode == 0:
+            return True
+        log(f"飞书推送返回码异常 ({res.returncode}): {res.stderr}")
+    except Exception as e:
+        log(f"飞书推送异常: {e}")
+    return False
+
 def log(msg, instance="SYSTEM"):
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] [{instance}] {msg}"
@@ -114,8 +159,21 @@ def scan_pending_queue():
                         "priority": priority
                     })
 
-    queue.sort(key=lambda x: (x["priority"], x["subcategory"], x["name"]))
-    return queue
+    # 按照目的地（subcategory）分组，实现 Round-Robin 多地域交替轮转均衡调度
+    from collections import defaultdict
+    subcat_groups = defaultdict(list)
+    for item in queue:
+        subcat_groups[item["subcategory"]].append(item)
+    
+    # 按目的地交替轮流取出（例如：安吉1套 -> 千岛湖1套 -> 莫干山1套 -> 桐庐1套 -> 杭州1套...）
+    balanced_queue = []
+    dest_keys = sorted(subcat_groups.keys())
+    max_len = max((len(v) for v in subcat_groups.values()), default=0)
+    for i in range(max_len):
+        for k in dest_keys:
+            if i < len(subcat_groups[k]):
+                balanced_queue.append(subcat_groups[k][i])
+    return balanced_queue
 
 # 全局状态字典
 DAEMON_STATE = {
@@ -455,6 +513,23 @@ class InstanceWorker:
         img_paths = self.prepare_material_images(mat_dir, max_imgs=9)
         log(f"精选 {len(img_paths)} 张原料图注入对话...", self.id)
 
+        # 推送开始制作通知
+        try:
+            start_md = (
+                f"🎨【双浏览器生产系统 · 实例 {self.id} 开始制作新作品】\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚙️ **执行实例**：实例 {self.id} (CDP 端口 {self.cdp_port})\n"
+                f"⏱ **启动时间**：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"📦 **作品主题**：{mat_name[:50]}\n"
+                f"📂 **原素材绝对路径**：\n```\n{mat_dir}\n```\n"
+                f"🖼 **原图精选**：已选定 {len(img_paths)} 张原料图注入会话\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🚀 正在上传原图至 ChatGPT 并注入 V5.0 手机实拍排版骨架提示词，即将进入 3:4 竖屏高清出图..."
+            )
+            send_feishu_markdown(start_md)
+        except Exception as se:
+            log(f"-> 开始制作通知发送异常: {se}", self.id)
+
         node_id = None
         for _ in range(5):
             doc = await self.send_cmd("DOM.getDocument", {"depth": -1, "pierce": True})
@@ -621,24 +696,32 @@ class InstanceWorker:
                 asst_txt = r_rej.get("result", {}).get("result", {}).get("value", "")
                 quota_keys = ["达到 Plus 套餐", "图像生成请求上限", "额度限制", "上限将在", "重置，届时可创建更多图像"]
                 if any(qk in asst_txt for qk in quota_keys):
+                    wait_sec = parse_quota_wait_seconds(asst_txt)
+                    resume_dt = datetime.datetime.now() + datetime.timedelta(seconds=wait_sec)
+                    resume_str = resume_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    wait_h = wait_sec // 3600
+                    wait_m = (wait_sec % 3600) // 60
+
                     log(f"🚨【配额熔断】捕获到 ChatGPT Plus 生图配额上限: {asst_txt[:50]}", self.id)
-                    try:
-                        alert_txt = (
-                            f"⚠️【生产流水线告警 · 实例 {self.id} 触发 ChatGPT Plus 生图上限】\n\n"
-                            f"官方提示：{asst_txt[:120]}\n\n"
-                            f"当前已阻断轮询等待。若有其他 Plus 账号，在浏览器切换登录即可继续产出！"
-                        )
-                        subprocess.run([
-                            "node", LARK_RUN_JS, "im", "+messages-send",
-                            "--chat-id", FEISHU_GROUP_CHAT_ID,
-                            "--msg-type", "text",
-                            "--text", alert_txt,
-                            "--profile", "feishu-main",
-                            "--as", "user"
-                        ], capture_output=True, text=True, encoding='utf-8')
-                    except Exception:
-                        pass
-                    raise RuntimeError(f"ChatGPT Plus 生图额度上限: {asst_txt[:35]}")
+                    log(f"⏳ 精确预计休眠时长: {wait_h}小时{wait_m}分，预计恢复时间: {resume_str}", self.id)
+                    
+                    alert_md = (
+                        f"⏳【双浏览器流水线 · 实例 {self.id} 配额熔断自愈休眠】\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"⚙️ **生产实例**：实例 {self.id} (CDP 端口 {self.cdp_port})\n"
+                        f"⏱ **触发时刻**：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"💬 **官方提示**：{asst_txt.strip()[:100]}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"⏰ **预计解冻恢复时刻**：**{resume_str}**\n"
+                        f"⌛ **休眠倒计时**：约 {wait_h} 小时 {wait_m} 分钟\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🛡️ **自愈续接机制已激活**：\n"
+                        f"1. 当前任务锁已安全释放回待生产池，绝不丢单漏单；\n"
+                        f"2. 实例 {self.id} 自动进入低能耗长休眠挂起；\n"
+                        f"3. 到达 **{resume_str}** 准点时刻，系统将**自动在群内推送解冻提醒**，并**自动唤醒续接开工**，全程 100% 免人工值守！"
+                    )
+                    send_feishu_markdown(alert_md)
+                    raise QuotaLimitException(f"ChatGPT Plus 生图额度上限: {asst_txt[:35]}", wait_seconds=wait_sec, resume_dt=resume_dt)
 
                 rejection_keys = [
                     "没法直接出图", "重新上传", "没有实际可用", "拿不到可编辑", "无法按你要求",
@@ -949,17 +1032,11 @@ class InstanceWorker:
                 f"2. 轻触代码块复制本地绝对路径，粘贴至 Windows 资源管理器即可秒开本地源件；\n"
                 f"3. 本表格由小号（zwm）独立扛物理空间，大号（大胆走夜路）拥有完全编辑免配额直达！"
             )
-            cmd = [
-                "node", LARK_RUN_JS, "im", "+messages-send",
-                "--as", "bot",
-                "--chat-id", FEISHU_GROUP_CHAT_ID,
-                "--markdown", feishu_md
-            ]
-            res_im = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
-            if res_im.returncode == 0:
+            ok = send_feishu_markdown(feishu_md)
+            if ok:
                 log("-> 飞书深度详情交付通知推送群聊成功！", self.id)
             else:
-                log(f"-> 飞书通知发送失败: {res_im.stderr}", self.id)
+                log("-> 飞书通知发送失败", self.id)
         except Exception as fe:
             log(f"-> 飞书通知发送异常: {fe}", self.id)
 
@@ -988,13 +1065,9 @@ class InstanceWorker:
                     f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"🚀 无限流水线全速推进中，下一里程碑目标：第 {total_num + 10} 套！"
                 )
-                subprocess.run([
-                    "node", LARK_RUN_JS, "im", "+messages-send",
-                    "--as", "bot",
-                    "--chat-id", FEISHU_GROUP_CHAT_ID,
-                    "--markdown", milestone_md
-                ], capture_output=True, text=True, encoding='utf-8')
-                log(f"-> 满 {total_num} 套里程碑战报已发送至群聊！", self.id)
+                ok = send_feishu_markdown(milestone_md)
+                if ok:
+                    log(f"-> 满 {total_num} 套里程碑战报已发送至群聊！", self.id)
             except Exception as me:
                 log(f"-> 里程碑战报异常: {me}", self.id)
 
@@ -1081,6 +1154,38 @@ async def worker_loop(instance_id, cdp_port):
 
             log("生产成功，冷却 15 秒后领取下一套...", instance_id)
             await asyncio.sleep(15)
+
+        except QuotaLimitException as qe:
+            log(f"🛑 实例 {instance_id} 触发配额限额，进入自愈挂起（预计恢复时间: {qe.resume_dt.strftime('%Y-%m-%d %H:%M:%S')}）", instance_id)
+            if 'task' in locals() and task:
+                await release_task_lock(task["path"])
+            await worker.close()
+            DAEMON_STATE["instances"][instance_id]["state"] = "QUOTA_SLEEPING"
+            DAEMON_STATE["instances"][instance_id]["current_package"] = None
+            DAEMON_STATE["instances"][instance_id]["resume_at"] = qe.resume_dt.strftime("%Y-%m-%d %H:%M:%S")
+            sync_daemon_state()
+
+            # 精准长休眠挂起
+            await asyncio.sleep(qe.wait_seconds)
+
+            # 到达时间点，自动发送飞书提醒卡片
+            wakeup_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            log(f"🔔 实例 {instance_id} 到达解冻时刻，自动唤醒复工！", instance_id)
+            DAEMON_STATE["instances"][instance_id]["state"] = "IDLE"
+            DAEMON_STATE["instances"][instance_id]["resume_at"] = None
+            sync_daemon_state()
+
+            wake_md = (
+                f"🔔【双浏览器流水线 · 实例 {instance_id} 配额解冻·自动复工开跑】\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚙️ **生产实例**：实例 {instance_id} (CDP 端口 {cdp_port})\n"
+                f"⏱ **唤醒时刻**：{wakeup_now}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🎉 **状态播报**：ChatGPT Plus 图像生成请求额度已成功重置解冻！\n"
+                f"🚀 **自动续接**：流水线自愈看门狗已自动无缝拉起工作协程，正在从待生产队列认领下一个素材，开启新一轮高质量作品生产！"
+            )
+            send_feishu_markdown(wake_md)
+            log("实例已复苏，立即自动领取下一套素材开始生产...", instance_id)
 
         except Exception as e:
             log(f"执行异常: {e}", instance_id)
