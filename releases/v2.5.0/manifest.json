@@ -1,0 +1,14 @@
+{
+  "version": "2.5.0",
+  "release_name": "content-production-app-v2.5.0-stable",
+  "release_type": "stable",
+  "released_at": "2026-09-13T09:00:00+08:00",
+  "verified_sets": 53,
+  "verified_images": 413,
+  "instances": ["A", "C"],
+  "daily_safe_limit_per_account": 190,
+  "prompt_version": "V5.0",
+  "feishu_sheet_synced": true,
+  "spreadsheet_token": "D7OMsirIChkd2gt8TMBcPHD9ndc",
+  "status": "PASS"
+}
