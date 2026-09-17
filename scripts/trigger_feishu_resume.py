@@ -1,4 +1,5 @@
 import sys
+import os
 import datetime
 import subprocess
 import argparse
@@ -6,7 +7,7 @@ import argparse
 sys.stdout.reconfigure(encoding='utf-8')
 
 LARK_RUN_JS = r"D:\AICode\工具开发\toolchains\npm-global\node_modules\@larksuite\cli\scripts\run.js"
-FEISHU_GROUP_CHAT_ID = "oc_a620407b836cb421f8bb72c0d6f596f1"
+FEISHU_GROUP_CHAT_ID = "oc_bb67c9036e6b14da9bb7be9336dfa9c0"  # CDP流水线作品生产通知群
 PRODUCER_SCRIPT = r"D:\AICode\工具开发\projects\content-production-app\scripts\dual_browser_autonomous_producer.py"
 
 def send_feishu_md(md_text):
@@ -30,7 +31,8 @@ def check_and_start_producer():
         cnt = int(res.stdout.strip()) if res.stdout.strip().isdigit() else 0
         if cnt == 0:
             print("[Trigger] 正在拉起双浏览器自主生产流水线...")
-            subprocess.Popen([sys.executable, PRODUCER_SCRIPT], creationflags=subprocess.CREATE_NEW_CONSOLE)
+            ps_launch = f'Start-Process "{sys.executable}" -ArgumentList "\'{PRODUCER_SCRIPT}\'"'
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps_launch], check=True)
             print("[Trigger] 流水线已成功在独立控制台拉起！")
         else:
             print("[Trigger] 流水线已在运行中，无需重复拉起。")
@@ -51,26 +53,38 @@ def main():
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    # 动态统计当前本地成品总数
+    prod_root = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
+    cur_count = 96
+    if os.path.exists(prod_root):
+        cur_count = len([
+            f for f in os.listdir(prod_root)
+            if os.path.isdir(os.path.join(prod_root, f))
+            and not f.startswith(('_', '不合格', '已发', '归档', '抖音'))
+            and f != '发布空间'
+        ])
+
     if args.instance == "C":
         msg = (
-            f"🔔【配额解除播报 · 实例 C 率先解冻开工】\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚙️ **生产实例**：实例 C (CDP 端口 9433)\n"
-            f"⏱ **唤醒时刻**：{now_str}（已安全度过 {buffer_secs//60} 分钟防风控随机隔离缓冲）\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎉 **状态提醒**：实例 C 的 12 小时风控冷却期已正式结束，Plus 图像生成配额完全解冻！\n"
-            f"🚀 **自动续接**：系统已自动检测并激活生产协程，立即从待生产素材池认领新任务开工制作！\n"
-            f"⏳ **实例 A 预告**：实例 A 预计将在 1 小时后（约 20:48~20:52）解冻加入战斗。"
+            f"🚀 **【秋季素材开工 · 网页 CDP】**\n\n"
+            f"• **生产模式**：网页 CDP（账号 3 · z x Plus）\n"
+            f"• **当前状态**：冷却期结束，系统已自动接续生产\n"
+            f"• **开工时刻**：{now_str}（已度过 {buffer_secs//60} 分钟防风控安全缓冲）\n\n"
+            f"📊 **【秋季素材包】全盘进度**：\n"
+            f"• 本地成品总数：已累计 **{cur_count} 套**\n"
+            f"• 秋季素材进度：已完成 **{cur_count} / 781 套**\n"
+            f"• 下一步动作：秋季素材全部制作完成后归档，紧接着开启冬季素材库。"
         )
     else:
         msg = (
-            f"🔔【配额解除播报 · 实例 A 成功解冻·双机全开】\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚙️ **生产实例**：实例 A (CDP 端口 9431)\n"
-            f"⏱ **唤醒时刻**：{now_str}（已安全度过 {buffer_secs//60} 分钟防风控随机隔离缓冲）\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎉 **状态提醒**：实例 A 的 13 小时冷却期亦已正式结束，生图配额全部解冻！\n"
-            f"⚡ **双机合璧**：实例 A + 实例 C 已全面进入双机并发自主生产状态，继续全速推进高品质画册制作！"
+            f"🚀 **【秋季素材开工 · 网页 CDP】**\n\n"
+            f"• **生产模式**：网页 CDP（账号 1 · zwmrpg）\n"
+            f"• **当前状态**：冷却期结束，系统已自动接续生产\n"
+            f"• **开工时刻**：{now_str}（已度过 {buffer_secs//60} 分钟防风控安全缓冲）\n\n"
+            f"📊 **【秋季素材包】全盘进度**：\n"
+            f"• 本地成品总数：已累计 **{cur_count} 套**\n"
+            f"• 秋季素材进度：已完成 **{cur_count} / 781 套**\n"
+            f"• 下一步动作：秋季素材全部制作完成后归档，紧接着开启冬季素材库。"
         )
 
     send_feishu_md(msg)

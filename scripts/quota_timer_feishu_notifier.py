@@ -7,7 +7,7 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8')
 
 LARK_RUN_JS = r"D:\AICode\工具开发\toolchains\npm-global\node_modules\@larksuite\cli\scripts\run.js"
-FEISHU_GROUP_CHAT_ID = "oc_a620407b836cb421f8bb72c0d6f596f1"
+FEISHU_GROUP_CHAT_ID = "oc_bb67c9036e6b14da9bb7be9336dfa9c0"  # CDP流水线作品生产通知群
 PRODUCER_SCRIPT = r"D:\AICode\工具开发\projects\content-production-app\scripts\dual_browser_autonomous_producer.py"
 
 # 解冻目标时间点

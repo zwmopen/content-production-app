@@ -30,6 +30,8 @@ function writeJsonAtomic(file, data) {
 }
 
 function inspectWorkDirectory(directory) {
+  const baseName = path.basename(String(directory || ""));
+  if (baseName.startsWith(".") || baseName.startsWith("_")) return null;
   let entries = [];
   try { entries = fs.readdirSync(directory, { withFileTypes: true }); } catch { return null; }
   const images = entries.filter((entry) => entry.isFile() && IMAGE_EXTENSIONS.has(path.extname(entry.name).toLowerCase()));
@@ -102,7 +104,7 @@ function inspectWorks(source, options = {}) {
     let entries = [];
     try { entries = fs.readdirSync(current.directory, { withFileTypes: true }); } catch { continue; }
     entries.forEach((entry) => {
-      if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith(".")) return;
+      if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith(".") || entry.name.startsWith("_")) return;
       queue.push({ directory: path.join(current.directory, entry.name), depth: current.depth + 1 });
     });
   }

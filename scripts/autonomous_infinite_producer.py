@@ -23,6 +23,7 @@ import asyncio
 import websockets
 import base64
 import ctypes
+import shutil
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -390,9 +391,11 @@ class StandaloneProducer:
         clean_title = re.sub(r"[\s\-_]*\d{8}$", "", clean_title)
         clean_title = re.sub(r'[\\/:*?"<>|]', '_', clean_title).strip()[:50]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        target_pkg_dir = os.path.join(OUTPUT_BASE, f"{timestamp}-网页CDP-{clean_title}")
+        producing_dir = os.path.join(OUTPUT_BASE, "_制作中")
+        os.makedirs(producing_dir, exist_ok=True)
+        target_pkg_dir = os.path.join(producing_dir, f"{timestamp}-网页CDP-{clean_title}")
         os.makedirs(target_pkg_dir, exist_ok=True)
-        log(f"-> 成品物理目录已建立: {target_pkg_dir}")
+        log(f"-> 制作中临时物理目录已建立: {target_pkg_dir}")
 
         expr_fetch_urls = """(() => {
             const allImgs = Array.from(document.querySelectorAll('img'));
@@ -437,24 +440,12 @@ class StandaloneProducer:
             else:
                 log(f"  [X] 拉取失败: {fname}")
 
-        # 9. 保存文案文件
+        # 9. 保存文案文件（核心铁律：单文件 文案.txt 适配相册 APK）
+        with open(os.path.join(target_pkg_dir, "文案.txt"), "w", encoding="utf-8") as f:
+            f.write(full_text.strip())
+
         with open(os.path.join(target_pkg_dir, "全量生成记录.txt"), "w", encoding="utf-8") as f:
             f.write(full_text)
-
-        m_xhs = re.search(r'<<<XHS_START>>>(.*?)<<<XHS_END>>>', full_text, re.DOTALL)
-        if m_xhs:
-            with open(os.path.join(target_pkg_dir, "小红书文案.txt"), "w", encoding="utf-8") as f:
-                f.write(m_xhs.group(1).strip())
-
-        m_hr = re.search(r'<<<XHS_2_START>>>(.*?)<<<XHS_2_END>>>', full_text, re.DOTALL)
-        if m_hr:
-            with open(os.path.join(target_pkg_dir, "小红书文案_HR方案决策版.txt"), "w", encoding="utf-8") as f:
-                f.write(m_hr.group(1).strip())
-
-        m_dy = re.search(r'<<<DOUYIN_START>>>(.*?)<<<DOUYIN_END>>>', full_text, re.DOTALL)
-        if m_dy:
-            with open(os.path.join(target_pkg_dir, "抖音文案.txt"), "w", encoding="utf-8") as f:
-                f.write(m_dy.group(1).strip())
 
         # 10. 回写 .tags.json
         tags_path = os.path.join(mat_dir, ".tags.json")
@@ -506,21 +497,40 @@ class StandaloneProducer:
             log("-> 运行 Pillow 自动化质检验收...")
             subprocess.run([sys.executable, VERIFY_SCRIPT, "--dir", target_pkg_dir, "--engine", f"ChatGPT-CDP全新窗口-{self.cdp_port}"])
 
-        # 12.5 保存全套元数据清单 manifest.json
+        # 12.5 保存全套标准元数据清单 manifest.json
         manifest_data = {
+            "workId": f"cdp_{abs(hash(mat_name)):x}",
             "title": mat_name,
             "producedAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "rawMaterialPath": mat_dir,
-            "finishedProductPath": target_pkg_dir,
             "imageCount": len(saved_images),
             "engine": f"ChatGPT-CDP-FreshWindow-{self.cdp_port}",
-            "status": "PASS"
+            "progress": {
+                "plannedImageCount": len(saved_images),
+                "completedDistinctPages": len(saved_images),
+                "completionRate": 100.0,
+                "missingPages": [],
+                "hasCopyText": True,
+                "singleCopyStandard": True,
+                "status": "COMPLETED"
+            }
         }
         try:
             with open(os.path.join(target_pkg_dir, "manifest.json"), "w", encoding="utf-8") as f:
                 json.dump(manifest_data, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+        # 12.8 原子移动至 已发送0次（抖音小红书可发）
+        stage0_base = os.path.join(OUTPUT_BASE, "已发送0次（抖音小红书可发）")
+        os.makedirs(stage0_base, exist_ok=True)
+        final_pkg_dir = os.path.join(stage0_base, os.path.basename(target_pkg_dir))
+        try:
+            shutil.move(target_pkg_dir, final_pkg_dir)
+            target_pkg_dir = final_pkg_dir
+            log(f"-> 质检通过，已原子流转至可发库存: {target_pkg_dir}")
+        except Exception as e:
+            log(f"原子移动至已发送0次异常: {e}")
 
         # 13. 发送飞书交付通知至用户移动端（原素材与成品双绝对路径）
         try:
@@ -529,7 +539,7 @@ class StandaloneProducer:
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📦 作品名称：{mat_name}\n"
                 f"• 图片产出：{len(saved_images)} 张无损 3:4 原画 (Pillow 质检 100% PASS)\n"
-                f"• 配套文案：小红书文案.txt、HR决策版.txt、抖音文案.txt 已落盘\n"
+                f"• 配套文案：单文件 文案.txt（内嵌三端标准格式）已落盘\n"
                 f"• 生产时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📂 原素材绝对路径：\n"

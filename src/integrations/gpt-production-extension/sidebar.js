@@ -82,29 +82,35 @@
   const liveImageEvidenceCache = new Map();
   const COPY_SOURCE_NARRATION_GUARD = "不得提及 TXT、图片、附件、素材、参考文案、出图计划、提示词、AI、模型或读取过程；不得使用“根据资料”“从图中可以看到”等来源旁白。所有事实直接写成自然、可发布的成品内容。";
   const COPY_FORMAT_HEADER = "<<<COPY_FORMAT:2>>>";
-  const COPY_FORMAT_PROTOCOL = `本轮一次生成两个平台版本，但只输出一个 TXT 机器协议。小红书版与抖音版必须基于同一套最终图片、TXT事实和项目事实；最终成稿必须严格按以下标记输出，标记原样保留，不得加代码围栏、平台说明或其他前后文字：
-${COPY_FORMAT_HEADER}
+  const COPY_FORMAT_V3_HEADER = "<<<COPY_FORMAT:3>>>";
+  const COPY_FORMAT_PROTOCOL = `本轮一次生成多平台版本，但只输出一个 TXT 机器协议。所有版本必须基于同一套最终图片、TXT事实和项目事实；最终成稿必须严格按以下标记输出，标记原样保留，不得加代码围栏、平台说明或其他前后文字：
+${COPY_FORMAT_V3_HEADER}
 
 <<<XHS_START>>>
-完整小红书成稿
+完整小红书第1版成稿（自然种草与真实体验版）
 <<<XHS_END>>>
 
+<<<XHS_2_START>>>
+完整小红书第2版成稿（HR方案大纲/决策版）
+<<<XHS_2_END>>>
+
 <<<DOUYIN_START>>>
-完整抖音成稿
+完整抖音成稿（去营销目的地攻略/避坑玩法版）
 <<<DOUYIN_END>>>
 
-小红书版继续完整执行当前窗口已经生效的最新版小红书团建、周边游、本地生活规则：最终成品图优先于原始TXT；只写已确认事实；标题、正文和最后一行话题自然覆盖地域、目的地、团建、玩法、路线和搜索决策价值；固定输出10个与内容高度相关的话题标签；不得输出标题/正文/标签栏目名，不得暴露素材来源或制作过程。
-抖音版必须根据同一事实重新写，定位为目的地攻略、玩法分享、体验参考和避坑内容，不是团建服务销售页。讲清楚项目差异、怎么玩、适合什么体力、天气季节、装备、开放情况和取舍建议；自然保留必要地域/团建关键词，但控制企业客户、HR、行政、完整行程、住宿、用车、餐饮和项目组合的密度。默认禁止价格、报价、费用、10人起接、人数起接、任何“数字＋人起接”表达、承接、接单、定制、咨询、联系我们、留言城市+人数、方案获客、报名、预约、下单及其他交易/获客/服务承接表达；不得用谐音、符号或错别字规避审核；固定输出5个相关话题标签。
-两版不得互相矛盾。生成前先完整读取最终图片、原始图片、TXT、项目名称和已有事实，建立统一事实层；先写小红书，再基于同一事实重写抖音；分别自检后再输出协议。若抖音仍像商业旅游/团建服务营销，自动重写后再输出。`;
-  const DEFAULT_PUBLISH_COPY_PROMPT = `请只输出一份可直接复制发布的双平台完整文案。${COPY_FORMAT_PROTOCOL}${COPY_SOURCE_NARRATION_GUARD}`;
-  const COPY_META_NARRATION_REWRITE_PROMPT = `刚才的双平台文案出现了素材来源或制作过程旁白。请完整重写小红书和抖音两个区段，严格按 ${COPY_FORMAT_HEADER}、<<<XHS_START>>>、<<<XHS_END>>>、<<<DOUYIN_START>>>、<<<DOUYIN_END>>> 输出；${COPY_SOURCE_NARRATION_GUARD}只输出最终协议成品，不要解释修改过程。`;
-  const DEFAULT_MATERIAL_PLAN_PROMPT = "请完整读取全部附件，不要省略 TXT。本套最终成品最多 10 张（1张独立封面 + 最多9张独立内页）；素材超过 10 张时，必须先全部读取，再自行筛选、聚类、合并和取舍，只保留 P1-P10 以内。禁止第 11 页，禁止分批。严禁分步预览、严禁等待确认，请一次性直接批量生成全部独立 3:4 竖版大图，并在结尾同步输出小红书与抖音双端文案！";
+小红书第1版：自然攻略与真实体验版。真实手机生活抓拍感，短段落有留白；标题、正文和最后一行话题自然覆盖地域、玩法、路线与决策价值；末尾固定输出 8-12 个精准话题标签。
+小红书第2版：HR方案大纲/决策版。专为企业HR/行政决策打造的大纲方案版；清晰列出基础信息、亮点、详细排期、贴心避坑指南和留资引导；末尾输出 5-10 个相关话题标签。
+抖音版：去营销攻略版。定位为目的地攻略、玩法避坑分享，不是团建服务销售页；讲清楚项目差异、适合什么体力、天气装备与取舍建议；坚决禁止价格、报价、费用、10人起接、人数起接、承接、接单、定制、咨询、联系我们等任何商业/交易/服务承接词；末尾固定输出 5 个相关话题标签。
+所有区段不得互相矛盾，只输出标记与文案成品，不要解释修改过程。`;
+  const DEFAULT_PUBLISH_COPY_PROMPT = `请只输出一份可直接复制发布的完整文案。${COPY_FORMAT_PROTOCOL}${COPY_SOURCE_NARRATION_GUARD}`;
+  const COPY_META_NARRATION_REWRITE_PROMPT = `刚才的文案出现了素材来源或制作过程旁白。请完整重写全部区段，严格按机器协议与标记输出；${COPY_SOURCE_NARRATION_GUARD}只输出最终协议成品，不要解释修改过程。`;
+  const DEFAULT_MATERIAL_PLAN_PROMPT = "请完整读取全部附件，不要省略 TXT。本套最终成品最多 10 张（1张独立封面 + 最多9张独立内页）；素材超过 10 张时，必须先全部读取，再自行筛选、聚类、合并和取舍，只保留 P1-P10 以内。禁止第 11 页，禁止分批。严禁分步预览、严禁等待确认，请一次性直接批量生成全部独立 3:4 竖版大图，并在结尾同步输出小红书与抖音多端文案！";
   const normalizePublishCopyPrompt = (value) => {
     const prompt = String(value || "").trim();
     const normalized = !prompt || prompt === "给我一份小红书文案" ? DEFAULT_PUBLISH_COPY_PROMPT : prompt;
-    const withProtocol = normalized.includes(COPY_FORMAT_HEADER)
+    const withProtocol = (normalized.includes(COPY_FORMAT_HEADER) || normalized.includes(COPY_FORMAT_V3_HEADER))
       ? normalized
-      : `${normalized}\n\n硬性双平台成品协议：${COPY_FORMAT_PROTOCOL}`;
+      : `${normalized}\n\n硬性成品协议：${COPY_FORMAT_PROTOCOL}`;
     return withProtocol.includes("不得提及 TXT、图片、附件、素材、参考文案、出图计划、提示词、AI、模型或读取过程")
       ? withProtocol
       : `${withProtocol}\n\n硬性成品规则：${COPY_SOURCE_NARRATION_GUARD}`;
@@ -1752,22 +1758,22 @@ ${COPY_FORMAT_HEADER}
       || target?.closest('[data-composer-surface]')
       || document.querySelector("form")
       || document;
+    const removeButtons = new Set();
     const previews = new Set();
     const buttons = scope.querySelectorAll('button[aria-label*="Remove" i], button[aria-label*="移除" i], button[aria-label*="Delete" i], button[aria-label*="删除" i]');
     for (const btn of buttons) {
-      if (btn.offsetParent !== null || btn.getClientRects().length > 0) previews.add(btn);
+      if (btn.offsetParent !== null || btn.getClientRects().length > 0) removeButtons.add(btn);
     }
-    if (previews.size > 0) return previews.size;
     const tiles = scope.querySelectorAll('[data-testid*="attachment"], [data-testid*="file-tile"], [class*="group/file-tile"], [class*="attachment-tile"]');
     for (const tile of tiles) {
       if (tile.offsetParent !== null || tile.getClientRects().length > 0) previews.add(tile);
     }
-    if (previews.size > 0) return previews.size;
     const imgs = scope.querySelectorAll('img[src^="blob:"], img[src^="data:"], img[alt*="attachment" i], img[alt*="Uploaded" i]');
     for (const img of imgs) {
       if (img.offsetParent !== null || img.getClientRects().length > 0) previews.add(img);
     }
-    return previews.size;
+    const count = removeButtons.size || previews.size;
+    return count;
   }
 
   function normalizeLocalAttachmentPath(value = "") {
@@ -6985,13 +6991,13 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
       let platformValidation = validatePlatformCopy(workflow.copyText, {
         minimumSectionLength: Math.max(80, Math.floor(copyMinCheck / 2))
       });
-      if (workflow.expectPlatformCopy && (!platformValidation.valid || platformValidation.parsed.formatVersion !== 2)) {
+      if (workflow.expectPlatformCopy && (!platformValidation.valid || ![2, 3].includes(platformValidation.parsed.formatVersion))) {
         const formatRecoveryAttempts = Math.max(0, Number(workflow.copyFormatRecoveryAttempts || 0));
         if (formatRecoveryAttempts < 1) {
           workflow.copyFormatRecoveryAttempts = formatRecoveryAttempts + 1;
           const rewriteBaselineKeys = assistantTurnKeys();
-          const rewritePrompt = `${baseCopyPrompt}\n\n上一次回复没有通过双平台机器协议（${platformValidation.issues.join("、") || "格式不完整"}）。请基于同一事实重新一次性输出完整的 XHS 与 DOUYIN 两个区段；严格保留机器标记，XHS 最后一行10个话题标签，DOUYIN 最后一行5个话题标签，不要输出任何标记外文字。`;
-          reportWorkbenchProgress(task, "恢复双平台文案", 75, "检测到双平台 TXT 协议或标签数量不完整，正在原地重写一次");
+          const rewritePrompt = `${baseCopyPrompt}\n\n上一次回复没有通过文案机器协议（${platformValidation.issues.join("、") || "格式不完整"}）。请基于同一事实重新一次性输出完整区段；严格保留机器标记，不要输出任何标记外文字。`;
+          reportWorkbenchProgress(task, "恢复文案协议", 75, "检测到文案 TXT 机器协议或标签不完整，正在原地重写一次");
           await sendComposerText(rewritePrompt);
           logTaskConversationEvent("copy-format-recovery-sent", {
             sentText: rewritePrompt,
@@ -7014,8 +7020,8 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
             meta: { copyLength: workflow.copyText.length, issues: platformValidation.issues }
           });
         }
-        if (!platformValidation.valid || platformValidation.parsed.formatVersion !== 2) {
-          const copyError = new Error(`双平台文案未通过 TXT 机器协议：${platformValidation.issues.join("、") || "格式不完整"}`);
+        if (!platformValidation.valid || ![2, 3].includes(platformValidation.parsed.formatVersion)) {
+          const copyError = new Error(`文案未通过 TXT 机器协议：${platformValidation.issues.join("、") || "格式不完整"}`);
           copyError.code = "COPY_FORMAT_INVALID";
           copyError.issues = platformValidation.issues;
           throw copyError;

@@ -102,7 +102,10 @@ const INSTANCE_TITLES = {
   "C": "🟣【实例 C】账号3 · z x Plus (端口 4333)",
   "D": "🟠【实例 D】账号4 · Hazel Plus (端口 4334)"
 };
-const APP_TITLE = INSTANCE_TITLES[CONTENT_INSTANCE_ID] || `【实例 ${CONTENT_INSTANCE_ID}】内容生产 (端口 ${APP_PORT})`;
+const IS_DEV_ENV = process.env.CONTENT_ENV === "development" || String(CONTENT_INSTANCE_ID).toUpperCase().startsWith("DEV");
+const APP_TITLE = IS_DEV_ENV
+  ? `🛠️【开发测试版 · DEV】内容生产 (Web: ${APP_PORT} / CDP: ${process.env.TB_REMOTE_DEBUGGING_PORT || DEFAULT_REMOTE_DEBUGGING_PORT})`
+  : (INSTANCE_TITLES[CONTENT_INSTANCE_ID] || `【实例 ${CONTENT_INSTANCE_ID}】内容生产 (端口 ${APP_PORT})`);
 const ASSIGNED_ACCOUNT_IDS = new Set(
   resolveAssignedAccountIds(CONTENT_INSTANCE_ID, process.env.CONTENT_ACCOUNT_IDS, { contentOnlyMode: CONTENT_ONLY_MODE })
 );
@@ -2617,9 +2620,21 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
     Object.assign(account.pageState, { loading: true, domReady: false, finished: false, extensionReady: false, error: "", startedAt: new Date().toISOString(), finishedAt: "" });
     account.gptEmbeddedInitialized = false;
     if (!account.userRecoveryHold) scheduleStalledGptPageRecovery(account);
+    if (account.loadingSafetyTimer) clearTimeout(account.loadingSafetyTimer);
+    account.loadingSafetyTimer = setTimeout(() => {
+      if (account.pageState?.loading) {
+        account.pageState.loading = false;
+        notifyGptLoadingChanged(id, false);
+      }
+    }, 2_500);
+    account.loadingSafetyTimer.unref?.();
     notifyGptLoadingChanged(id, true);
   });
   account.view.webContents.on("dom-ready", () => {
+    if (account.loadingSafetyTimer) {
+      clearTimeout(account.loadingSafetyTimer);
+      account.loadingSafetyTimer = null;
+    }
     account.bridgeTimeoutStreak = 0;
     if (account.loadRecoveryTimer) {
       clearTimeout(account.loadRecoveryTimer);
@@ -2672,6 +2687,24 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
   account.view.webContents.on("did-navigate-in-page", (_event, url) => {
     rememberBrowserUrl(id, url);
     scheduleEmbeddedGptThemeReplay(account, [80, 320]);
+    if (account.loadingSafetyTimer) {
+      clearTimeout(account.loadingSafetyTimer);
+      account.loadingSafetyTimer = null;
+    }
+    if (account.pageState?.loading) {
+      account.pageState.loading = false;
+      notifyGptLoadingChanged(id, false);
+    }
+  });
+  account.view.webContents.on("did-stop-loading", () => {
+    if (account.loadingSafetyTimer) {
+      clearTimeout(account.loadingSafetyTimer);
+      account.loadingSafetyTimer = null;
+    }
+    if (account.pageState?.loading) {
+      account.pageState.loading = false;
+      notifyGptLoadingChanged(id, false);
+    }
   });
   account.view.webContents.on("did-fail-load", (_event, code, description, validatedURL, isMainFrame) => {
     // Chromium emits ERR_ABORTED (-3) for an ordinary redirect/reload handoff.

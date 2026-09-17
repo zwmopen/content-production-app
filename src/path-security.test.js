@@ -335,6 +335,30 @@ test('extension product tree exposes every local folder and rejects path escape'
   }
 });
 
+test('extension product tree does not mark workflow metadata as uploadable files', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-product-file-tree-'));
+  const root = path.join(parent, 'products');
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, '会话追踪.txt'), '母版URL: https://chatgpt.com/c/example\n完成时间: 2026-09-08 06:48:07', 'utf8');
+  fs.writeFileSync(path.join(root, '质量报告_20260908.txt'), '质量检查记录', 'utf8');
+  fs.writeFileSync(path.join(root, '小红书文案.md'), '标题\n正文', 'utf8');
+  try {
+    const snapshot = server.extensionProductTreeSnapshot('', root);
+    const session = snapshot.entries.find((entry) => entry.name === '会话追踪.txt');
+    const report = snapshot.entries.find((entry) => entry.name === '质量报告_20260908.txt');
+    const copy = snapshot.entries.find((entry) => entry.name === '小红书文案.md');
+    assert.equal(session.uploadable, false);
+    assert.equal(session.textCount, 0);
+    assert.deepEqual(session.attachments, []);
+    assert.equal(report.uploadable, false);
+    assert.equal(copy.uploadable, true);
+    assert.equal(copy.textCount, 1);
+    assert.deepEqual(copy.attachments, [path.join(root, '小红书文案.md')]);
+  } finally {
+    cleanup(parent);
+  }
+});
+
 test('material usage ledger records prepared and used without moving source files', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-material-usage-'));
   const root = path.join(parent, 'materials');

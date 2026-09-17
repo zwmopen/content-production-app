@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { chooseCaptionFileName } = require("../../lib/caption-file-policy");
 const {
   createTaskId,
   checkAiToEarnAdapter,
@@ -186,7 +187,11 @@ function readPlatformSource(input, { isAllowedFile, exists }) {
     .slice(0, PLATFORM_SOURCE_MAX_IMAGES);
   const textEntries = entries
     .filter((entry) => entry.isFile() && PLATFORM_SOURCE_TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase()));
-  const copyEntry = textEntries.find((entry) => /小红书文案|文案/i.test(entry.name)) || textEntries[0];
+  const captionName = chooseCaptionFileName(textEntries.map((entry) => entry.name), { allowMarkdown: true });
+  const copyEntry = textEntries.find((entry) => entry.name === captionName);
+  if (!copyEntry) {
+    throw platformSourceError("当前成品无可发布文案（只发现会话追踪、生产记录等元数据）");
+  }
   let body = "";
   if (copyEntry) {
     const copyPath = path.join(workId, copyEntry.name);

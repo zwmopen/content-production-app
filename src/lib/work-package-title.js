@@ -11,6 +11,7 @@ function publishTitleFromClipboard(clipboardText, fallbackTitle = "") {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
+    .filter((line) => !/^<<<[A-Za-z0-9_:]+>>>$/.test(line))
     .map((line) => line.replace(/^(?:标题|title)\s*[：:]\s*/i, "").trim())
     .find((line) => line && !/^(?:标题|正文|话题|title|body|hashtags?)$/i.test(line));
   return normalizeWorkPackageTitle(firstCopyLine) || normalizeWorkPackageTitle(fallbackTitle);

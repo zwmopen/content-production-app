@@ -122,6 +122,7 @@ function safeOutputDir(input) {
   const target = path.resolve(requested || defaultOutputDir());
   const allowedRoots = [
     path.resolve(defaultOutputDir()),
+    path.resolve(path.join(defaultOutputDir(), "素材下载")),
     path.resolve("D:\\Download"),
     path.resolve("D:\\Download\\素材下载")
   ];

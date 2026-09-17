@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $env:CONTENT_INSTANCE_ID = "A"
 $env:CONTENT_INSTANCE_LABEL = "实例 A · account-1"
 $env:PORT = "4331"
@@ -29,4 +29,6 @@ if (Test-Path $staleLock) {
 New-Item -ItemType Directory -Force -Path $env:TEAMBUILDING_DASHBOARD_RUNTIME | Out-Null
 
 $electronExe = Join-Path $PSScriptRoot "src\node_modules\electron\dist\electron.exe"
-& $electronExe --no-sandbox desktop\main.js
+$proc = Start-Process -FilePath $electronExe -ArgumentList "--remote-debugging-port=9431", "--no-sandbox", "desktop\main.js" -WorkingDirectory (Join-Path $PSScriptRoot "src") -PassThru
+Write-Host "Instance A started with PID: $($proc.Id)"
+

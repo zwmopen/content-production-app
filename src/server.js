@@ -2091,8 +2091,14 @@ function validateGptWorkPackageImageCount(actualImageCount, expectedImageCount =
 }
 
 function runExtensionWorkPackage(body = {}) {
-  const script = path.join(DOWNLOAD_ROOT, "make_work_package.ps1");
-  if (!exists(script)) {
+  const scriptCandidates = [
+    path.join(DOWNLOAD_ROOT, "GPT作品助手", "make_work_package.ps1"),
+    path.join(DOWNLOAD_ROOT, "make_work_package.ps1"),
+    path.join(WORKPKG_SCRIPT_ROOT, "make_work_package.ps1"),
+    "D:\\AICode\\运行数据\\chatgpt-work-package\\make_work_package.ps1"
+  ];
+  const script = scriptCandidates.find((candidate) => exists(candidate));
+  if (!script) {
     throw new Error("本地打包程序不存在，请先在设置中恢复正式打包程序");
   }
   const clipboardText = String(body.clipboardText || "");
@@ -2118,7 +2124,13 @@ function runExtensionWorkPackage(body = {}) {
   const effectivePortfolioOutputRoot = configuredPackedRoot
     ? path.resolve(configuredPackedRoot)
     : stageRoots.mobile;
-  const configPath = path.join(DOWNLOAD_ROOT, "workpkg_config.json");
+  const configCandidates = [
+    path.join(DOWNLOAD_ROOT, "GPT作品助手", "workpkg_config.json"),
+    path.join(DOWNLOAD_ROOT, "workpkg_config.json"),
+    path.join(WORKPKG_SCRIPT_ROOT, "workpkg_config.json"),
+    "D:\\AICode\\运行数据\\chatgpt-work-package\\workpkg_config.json"
+  ];
+  const configPath = configCandidates.find((candidate) => fs.existsSync(candidate)) || path.join(path.dirname(script), "workpkg_config.json");
   const originalConfig = fs.existsSync(configPath) ? fs.readFileSync(configPath) : null;
   let configRestored = false;
   const restoreWorkPackageConfig = () => {

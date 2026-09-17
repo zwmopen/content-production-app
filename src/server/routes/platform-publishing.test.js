@@ -95,6 +95,7 @@ test("platform publishing source route loads the full copy and image paths from 
   const workPath = path.join(runtimeRoot, "成品-完整文案");
   fs.mkdirSync(workPath, { recursive: true });
   fs.writeFileSync(path.join(workPath, "小红书文案.md"), "第一段\n\n第二段：完整正文", "utf8");
+  fs.writeFileSync(path.join(workPath, "会话追踪.txt"), "母版URL: https://chatgpt.com/c/example", "utf8");
   fs.writeFileSync(path.join(workPath, "01.png"), "image", "utf8");
   fs.writeFileSync(path.join(workPath, "02.webp"), "image", "utf8");
   fs.writeFileSync(path.join(workPath, "README.md"), "不应优先于文案文件", "utf8");
@@ -107,6 +108,19 @@ test("platform publishing source route loads the full copy and image paths from 
   assert.equal(payload.source.body, "第一段\n\n第二段：完整正文");
   assert.deepEqual(payload.source.images, [path.join(workPath, "01.png"), path.join(workPath, "02.webp")]);
   assert.equal(payload.source.sourceCollection, "团建合集");
+  fs.rmSync(runtimeRoot, { recursive: true, force: true });
+});
+
+test("platform publishing source route rejects metadata-only text", async () => {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tb-platform-source-metadata-only-"));
+  const workPath = path.join(runtimeRoot, "成品-只有追踪记录");
+  fs.mkdirSync(workPath, { recursive: true });
+  fs.writeFileSync(path.join(workPath, "会话追踪.txt"), "母版URL: https://chatgpt.com/c/example\n完成时间: 2026-09-08 06:48:07", "utf8");
+  fs.writeFileSync(path.join(workPath, "01.png"), "image", "utf8");
+  const result = response();
+  await handle({ method: "POST", body: JSON.stringify({ workId: workPath }) }, result, "/api/platform-publishing/source", {}, context(runtimeRoot));
+  assert.equal(result.status, 400);
+  assert.match(result.body, /无可发布文案/);
   fs.rmSync(runtimeRoot, { recursive: true, force: true });
 });
 

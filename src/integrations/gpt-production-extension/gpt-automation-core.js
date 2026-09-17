@@ -370,9 +370,12 @@
   }
 
   const COPY_FORMAT_HEADER = "<<<COPY_FORMAT:2>>>";
+  const COPY_FORMAT_V3_HEADER = "<<<COPY_FORMAT:3>>>";
   const COPY_MARKERS = Object.freeze({
     xhsStart: "<<<XHS_START>>>",
     xhsEnd: "<<<XHS_END>>>",
+    xhs2Start: "<<<XHS_2_START>>>",
+    xhs2End: "<<<XHS_2_END>>>",
     douyinStart: "<<<DOUYIN_START>>>",
     douyinEnd: "<<<DOUYIN_END>>>"
   });
@@ -397,6 +400,81 @@
 
   function parsePlatformCopy(text) {
     const source = String(text || "").replace(/\r\n?/g, "\n").trim();
+    const hasV3Header = source.split(COPY_FORMAT_V3_HEADER).length - 1 === 1;
+    const hasV2Header = source.split(COPY_FORMAT_HEADER).length - 1 === 1;
+    const hasXhs2Markers = source.includes(COPY_MARKERS.xhs2Start) || source.includes(COPY_MARKERS.xhs2End);
+
+    if (hasV3Header || hasXhs2Markers) {
+      const v3MarkerEntries = [
+        ["xhsStart", COPY_MARKERS.xhsStart],
+        ["xhsEnd", COPY_MARKERS.xhsEnd],
+        ["xhs2Start", COPY_MARKERS.xhs2Start],
+        ["xhs2End", COPY_MARKERS.xhs2End],
+        ["douyinStart", COPY_MARKERS.douyinStart],
+        ["douyinEnd", COPY_MARKERS.douyinEnd]
+      ];
+      const markerCount = Object.fromEntries(v3MarkerEntries.map(([key, marker]) => [
+        key,
+        source.split(marker).length - 1
+      ]));
+      const hasAnyMarker = v3MarkerEntries.some(([key]) => markerCount[key] > 0);
+      const hasAllMarkers = v3MarkerEntries.every(([key]) => markerCount[key] === 1);
+      const headerPresent = hasV3Header;
+      if (!hasAllMarkers || !headerPresent) {
+        return {
+          formatVersion: 1,
+          legacy: true,
+          strict: false,
+          valid: Boolean(source),
+          xhs: source,
+          xhs2: "",
+          douyin: "",
+          issues: hasAnyMarker ? ["COPY_FORMAT_MARKERS_INCOMPLETE"] : []
+        };
+      }
+      const headerIndex = source.indexOf(COPY_FORMAT_V3_HEADER);
+      const xhsStart = source.indexOf(COPY_MARKERS.xhsStart);
+      const xhsEnd = source.indexOf(COPY_MARKERS.xhsEnd, xhsStart + COPY_MARKERS.xhsStart.length);
+      const xhs2Start = source.indexOf(COPY_MARKERS.xhs2Start);
+      const xhs2End = source.indexOf(COPY_MARKERS.xhs2End, xhs2Start + COPY_MARKERS.xhs2Start.length);
+      const douyinStart = source.indexOf(COPY_MARKERS.douyinStart);
+      const douyinEnd = source.indexOf(COPY_MARKERS.douyinEnd, douyinStart + COPY_MARKERS.douyinStart.length);
+      const ordered = xhsStart >= 0
+        && xhsEnd > xhsStart
+        && xhs2Start > xhsEnd
+        && xhs2End > xhs2Start
+        && douyinStart > xhs2End
+        && douyinEnd > douyinStart;
+      const outside = ordered
+        ? `${source.slice(0, Math.max(0, headerIndex))}${source.slice(douyinEnd + COPY_MARKERS.douyinEnd.length)}`.trim()
+        : source;
+      const xhs = ordered
+        ? source.slice(xhsStart + COPY_MARKERS.xhsStart.length, xhsEnd).trim()
+        : "";
+      const xhs2 = ordered
+        ? source.slice(xhs2Start + COPY_MARKERS.xhs2Start.length, xhs2End).trim()
+        : "";
+      const douyin = ordered
+        ? source.slice(douyinStart + COPY_MARKERS.douyinStart.length, douyinEnd).trim()
+        : "";
+      const issues = [];
+      if (!ordered) issues.push("COPY_FORMAT_ORDER_INVALID");
+      if (outside && headerIndex !== 0) issues.push("COPY_FORMAT_EXTRA_OUTPUT");
+      if (!xhs) issues.push("XHS_EMPTY");
+      if (!xhs2) issues.push("XHS_2_EMPTY");
+      if (!douyin) issues.push("DOUYIN_EMPTY");
+      return {
+        formatVersion: 3,
+        legacy: false,
+        strict: issues.length === 0,
+        valid: Boolean(xhs && xhs2 && douyin),
+        xhs,
+        xhs2,
+        douyin,
+        issues
+      };
+    }
+
     const markerEntries = [
       ["xhsStart", COPY_MARKERS.xhsStart],
       ["xhsEnd", COPY_MARKERS.xhsEnd],
@@ -409,7 +487,7 @@
     ]));
     const hasAnyMarker = markerEntries.some(([key]) => markerCount[key] > 0);
     const hasAllMarkers = markerEntries.every(([key]) => markerCount[key] === 1);
-    const headerPresent = source.split(COPY_FORMAT_HEADER).length - 1 === 1;
+    const headerPresent = hasV2Header;
     if (!hasAllMarkers || !headerPresent) {
       return {
         formatVersion: 1,
@@ -417,6 +495,7 @@
         strict: false,
         valid: Boolean(source),
         xhs: source,
+        xhs2: "",
         douyin: "",
         issues: hasAnyMarker ? ["COPY_FORMAT_MARKERS_INCOMPLETE"] : []
       };
@@ -450,6 +529,7 @@
       strict: issues.length === 0,
       valid: Boolean(xhs && douyin),
       xhs,
+      xhs2: "",
       douyin,
       issues
     };
@@ -474,28 +554,53 @@
     const requiredXhsHashtags = Math.max(0, Number(options.requiredXhsHashtags ?? 10));
     const requiredDouyinHashtags = Math.max(0, Number(options.requiredDouyinHashtags ?? 5));
     const issues = [...parsed.issues];
-    if (parsed.formatVersion !== 2) issues.push("COPY_FORMAT_VERSION_LEGACY");
+    if (![2, 3].includes(parsed.formatVersion)) issues.push("COPY_FORMAT_VERSION_LEGACY");
     if (parsed.xhs.replace(/\s/g, "").length < minimumSectionLength) issues.push("XHS_TOO_SHORT");
+    if (parsed.formatVersion === 3 && parsed.xhs2.replace(/\s/g, "").length < minimumSectionLength) issues.push("XHS_2_TOO_SHORT");
     if (parsed.douyin.replace(/\s/g, "").length < minimumSectionLength) issues.push("DOUYIN_TOO_SHORT");
     const xhsHashtags = countCopyHashtags(parsed.xhs);
+    const xhs2Hashtags = parsed.formatVersion === 3 ? countCopyHashtags(parsed.xhs2) : 0;
     const douyinHashtags = countCopyHashtags(parsed.douyin);
-    const douyinForbiddenPhrases = parsed.formatVersion === 2
+    const douyinForbiddenPhrases = [2, 3].includes(parsed.formatVersion)
       ? detectDouyinForbiddenPhrases(parsed.douyin)
       : [];
     if (parsed.formatVersion === 2 && xhsHashtags !== requiredXhsHashtags) issues.push("XHS_HASHTAG_COUNT_INVALID");
     if (parsed.formatVersion === 2 && douyinHashtags !== requiredDouyinHashtags) issues.push("DOUYIN_HASHTAG_COUNT_INVALID");
+    if (parsed.formatVersion === 3) {
+      if (xhsHashtags < 5) issues.push("XHS_HASHTAG_COUNT_INVALID");
+      if (douyinHashtags < 3) issues.push("DOUYIN_HASHTAG_COUNT_INVALID");
+    }
     if (douyinForbiddenPhrases.length) issues.push("DOUYIN_FORBIDDEN_PHRASES");
     return {
       valid: issues.length === 0,
       parsed,
       issues: [...new Set(issues)],
       xhsHashtags,
+      xhs2Hashtags,
       douyinHashtags,
       douyinForbiddenPhrases
     };
   }
 
-  function formatPlatformCopy({ xhs = "", douyin = "" } = {}) {
+  function formatPlatformCopy({ xhs = "", xhs2 = "", douyin = "" } = {}) {
+    if (xhs2) {
+      return [
+        COPY_FORMAT_V3_HEADER,
+        "",
+        COPY_MARKERS.xhsStart,
+        String(xhs || "").trim(),
+        COPY_MARKERS.xhsEnd,
+        "",
+        COPY_MARKERS.xhs2Start,
+        String(xhs2 || "").trim(),
+        COPY_MARKERS.xhs2End,
+        "",
+        COPY_MARKERS.douyinStart,
+        String(douyin || "").trim(),
+        COPY_MARKERS.douyinEnd,
+        ""
+      ].join("\n");
+    }
     return [
       COPY_FORMAT_HEADER,
       "",
@@ -517,10 +622,12 @@
   function isLikelyPublishCopy(text, minimum = 300) {
     const source = String(text || "").trim();
     const platformCopy = parsePlatformCopy(source);
-    if (platformCopy.formatVersion === 2) {
+    if (platformCopy.formatVersion === 2 || platformCopy.formatVersion === 3) {
+      const minPerSection = Math.max(1, Math.floor(Number(minimum || 300) / (platformCopy.formatVersion === 3 ? 3 : 2)));
       return platformCopy.strict
-        && platformCopy.xhs.replace(/\s/g, "").length >= Math.max(1, Number(minimum || 300) / 2)
-        && platformCopy.douyin.replace(/\s/g, "").length >= Math.max(1, Number(minimum || 300) / 2)
+        && platformCopy.xhs.replace(/\s/g, "").length >= minPerSection
+        && platformCopy.douyin.replace(/\s/g, "").length >= minPerSection
+        && (platformCopy.formatVersion !== 3 || platformCopy.xhs2.replace(/\s/g, "").length >= minPerSection)
         && (countCopyHashtags(platformCopy.xhs) > 0 || countCopyHashtags(platformCopy.douyin) > 0);
     }
     if (!isCompleteCopy(source, minimum)) return false;
@@ -1169,6 +1276,7 @@
     limitGeneratedImageUrls,
     resolveDurableImageBoundary,
     COPY_FORMAT_HEADER,
+    COPY_FORMAT_V3_HEADER,
     COPY_MARKERS,
     DOUYIN_FORBIDDEN_TERMS,
     parsePlatformCopy,

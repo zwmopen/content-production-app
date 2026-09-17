@@ -6,6 +6,20 @@ const path = require("node:path");
 
 const wechatDraft = require("./wechat-draft");
 
+test("wechat draft scanner never treats session tracking as publish copy", () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "wechat-caption-policy-"));
+  try {
+    fs.writeFileSync(path.join(folder, "会话追踪.txt"), "母版URL: https://chatgpt.com/c/example\n执行账号: 账号1", "utf8");
+    fs.writeFileSync(path.join(folder, "01.jpg"), "image", "utf8");
+    assert.equal(wechatDraft.findTxtFile(folder).path, null);
+
+    fs.writeFileSync(path.join(folder, "小红书文案.txt"), "标题\n正文", "utf8");
+    assert.equal(path.basename(wechatDraft.findTxtFile(folder).path), "小红书文案.txt");
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
 test("wechat account settings merge accounts and never persist AppSecret", () => {
   const runtime = fs.mkdtempSync(path.join(os.tmpdir(), "wechat-draft-settings-"));
   const previousRuntime = process.env.TEAMBUILDING_DASHBOARD_RUNTIME;

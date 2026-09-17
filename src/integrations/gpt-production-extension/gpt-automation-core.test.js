@@ -179,6 +179,41 @@ test("旧版单篇文案仍可识别，但不会冒充双平台协议", () => {
   assert.ok(validation.issues.includes("COPY_FORMAT_VERSION_LEGACY"));
 });
 
+test("三平台文案协议(Format 3)严格分区(XHS/XHS_2/DOUYIN)并核对有效性", () => {
+  const xhs = `杭州周边团建玩法参考\n${"适合收藏的真实玩法与天气提醒。".repeat(8)}\n${hashtags("小红书", 10)}`;
+  const xhs2 = `杭州周边团建方案大纲\n${"专为HR和行政打造的决策排期。".repeat(8)}\n${hashtags("方案", 8)}`;
+  const douyin = `杭州周边怎么玩\n${"漂流和森林项目的体验差异、装备和体力提醒。".repeat(8)}\n${hashtags("抖音", 5)}`;
+  const formatted = formatPlatformCopy({ xhs, xhs2, douyin });
+  const parsed = parsePlatformCopy(formatted);
+  const validation = validatePlatformCopy(formatted, { minimumSectionLength: 30 });
+  assert.equal(parsed.formatVersion, 3);
+  assert.equal(parsed.strict, true);
+  assert.equal(parsed.valid, true);
+  assert.equal(parsed.xhs, xhs);
+  assert.equal(parsed.xhs2, xhs2);
+  assert.equal(parsed.douyin, douyin);
+  assert.deepEqual(validation.issues, []);
+  assert.equal(validation.xhsHashtags, 10);
+  assert.equal(validation.xhs2Hashtags, 8);
+  assert.equal(validation.douyinHashtags, 5);
+  assert.equal(isLikelyPublishCopy(formatted, 100), true);
+});
+
+test("三平台协议拒绝标记外文本与违禁词", () => {
+  const xhs = `杭州周边团建玩法参考\n${"适合收藏的真实玩法与天气提醒。".repeat(8)}\n${hashtags("小红书", 10)}`;
+  const xhs2 = `杭州周边团建方案大纲\n${"专为HR和行政打造的决策排期。".repeat(8)}\n${hashtags("方案", 8)}`;
+  const douyinForbidden = `杭州周边怎么玩\n${"10人起接，咨询报价，承接企业定制。".repeat(8)}\n${hashtags("抖音", 5)}`;
+  const formattedForbidden = formatPlatformCopy({ xhs, xhs2, douyin: douyinForbidden });
+  const validation = validatePlatformCopy(formattedForbidden, { minimumSectionLength: 30 });
+  assert.equal(validation.valid, false);
+  assert.ok(validation.issues.includes("DOUYIN_FORBIDDEN_PHRASES"));
+
+  const extraOutput = `一些说明文字\n${formatPlatformCopy({ xhs, xhs2, douyin: "正规抖音文案。".repeat(10) + "\n" + hashtags("抖音", 5) })}`;
+  const validationExtra = validatePlatformCopy(extraOutput, { minimumSectionLength: 30 });
+  assert.equal(validationExtra.valid, false);
+  assert.ok(validationExtra.issues.includes("COPY_FORMAT_EXTRA_OUTPUT"));
+});
+
 test("copy recovery selects the last assistant fragment before the next user turn", () => {
   assert.equal(lastAssistantIndexAfterPrompt(["user", "assistant", "assistant"], 0), 2);
   assert.equal(lastAssistantIndexAfterPrompt(["user", "assistant", "assistant", "user", "assistant"], 0), 2);

@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-0.2.0-blue.svg" alt="版本 0.2.0" />
+  <img src="https://img.shields.io/badge/版本-0.2.2-blue.svg" alt="版本 0.2.2" />
   <img src="https://img.shields.io/badge/核心技术-Electron%20%2B%20CDP%20%2B%20WebSocket-orange.svg" alt="核心技术" />
   <img src="https://img.shields.io/badge/实例矩阵-四核物理级全隔离-brightgreen.svg" alt="实例矩阵" />
   <img src="https://img.shields.io/badge/自愈能力-底层按键穿透%20%2B%20熔断恢复-blueviolet.svg" alt="自愈能力" />

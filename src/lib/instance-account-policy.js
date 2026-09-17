@@ -2,7 +2,9 @@ const INSTANCE_CONFIG = Object.freeze({
   A: Object.freeze({ id: "A", accountId: "account-1", port: 4331, remoteDebuggingPort: 9431 }),
   B: Object.freeze({ id: "B", accountId: "account-2", port: 4332, remoteDebuggingPort: 9432 }),
   C: Object.freeze({ id: "C", accountId: "account-3", port: 4333, remoteDebuggingPort: 9433 }),
-  D: Object.freeze({ id: "D", accountId: "account-4", port: 4334, remoteDebuggingPort: 9434 })
+  D: Object.freeze({ id: "D", accountId: "account-4", port: 4334, remoteDebuggingPort: 9434 }),
+  "DEV-C": Object.freeze({ id: "DEV-C", accountId: "account-3", port: 4353, remoteDebuggingPort: 9453 }),
+  DEV: Object.freeze({ id: "DEV", accountId: "account-3", port: 4353, remoteDebuggingPort: 9453 })
 });
 
 const DEFAULT_ACCOUNT_BY_INSTANCE = Object.freeze(Object.fromEntries(

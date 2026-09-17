@@ -23,6 +23,7 @@ import asyncio
 import websockets
 import subprocess
 import base64
+import shutil
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -536,11 +537,13 @@ async def run_semi_auto_flow(specified_material=None, interactive=True):
         log(f"未在规定时间内出满 {target_cards} 张图（当前 {len(final_cards)} 张），拒绝无脑打包残次品！请在浏览器手动核查。")
         return False
 
-    # 步骤 6：Blob-to-Canvas 导出无损大图与入库
+    # 步骤 6：Blob-to-Canvas 导出无损大图与入库（落盘至 _制作中）
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest_dir = os.path.join(BASE_DIR, f"{timestamp}_{title}")
+    producing_dir = os.path.join(BASE_DIR, "_制作中")
+    os.makedirs(producing_dir, exist_ok=True)
+    dest_dir = os.path.join(producing_dir, f"{timestamp}_{title}")
     os.makedirs(dest_dir, exist_ok=True)
-    log(f"【步骤 6 纯无损原画导出】保存至: {dest_dir}")
+    log(f"【步骤 6 纯无损原画导出】制作中暂存至: {dest_dir}")
 
     async with websockets.connect(ws_url, max_size=100*1024*1024) as ws:
         for idx, card in enumerate(final_cards):
@@ -609,6 +612,17 @@ async def run_semi_auto_flow(specified_material=None, interactive=True):
     ledger[mat_path]["last_used_at"] = datetime.datetime.now().isoformat()
     ledger[mat_path]["last_product_dir"] = dest_dir
     save_ledger(ledger)
+
+    # 步骤 8：原子流转至 已发送0次（抖音小红书可发）
+    stage0_base = os.path.join(BASE_DIR, "已发送0次（抖音小红书可发）")
+    os.makedirs(stage0_base, exist_ok=True)
+    final_pkg_dir = os.path.join(stage0_base, os.path.basename(dest_dir))
+    try:
+        shutil.move(dest_dir, final_pkg_dir)
+        dest_dir = final_pkg_dir
+        log(f"-> 质检合格，已原子流转至可发库存: {dest_dir}")
+    except Exception as e:
+        log(f"原子移动至已发送0次异常: {e}")
 
     send_toast("🎉 应用 C 半自动交付成功", f"{title} ({len(final_cards)}P 原版复刻无损原画 + 三平台文案已落盘)")
     log(f"🎉【全部工序圆满闭环】单套高品质方案已成功落盘！\n")

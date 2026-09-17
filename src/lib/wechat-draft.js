@@ -18,11 +18,11 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const https = require("node:https");
 const { parsePlatformCopy } = require("../integrations/gpt-production-extension/gpt-automation-core");
+const { chooseCaptionFileName } = require("./caption-file-policy");
 
 // ─── 常量 ─────────────────────────────────────────────
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
-const TXT_CANDIDATES = ["文案.txt", "copywriting.txt", "content.txt"];
 const MAX_SCAN_DEPTH = 5;
 const MAX_IMAGES = 10;
 const MIN_IMAGES = 1;
@@ -147,8 +147,9 @@ function naturalCompare(a, b) {
 
 /**
  * 在文件夹中查找TXT文案文件
- * 优先级：文案.txt > copywriting.txt > content.txt > 文件名含"文案"的TXT > 唯一TXT
- * 返回 { path, ambiguous } - ambiguous=true 表示有多个无法判断的TXT
+ * 优先级：文案.txt > 小红书文案.txt > 抖音文案.txt > 已知兼容名/唯一候选
+ * 会话追踪、生产记录、质量报告等元数据 TXT 永远不能作为文案；多个未知候选不猜选。
+ * 返回 { path, ambiguous } - 元数据-only 或无明确文案时不生成草稿。
  */
 function findTxtFile(dirPath) {
   const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -158,24 +159,8 @@ function findTxtFile(dirPath) {
 
   if (txtFiles.length === 0) return null;
 
-  // 按优先级查找
-  for (const candidate of TXT_CANDIDATES) {
-    const found = txtFiles.find((name) => name.toLowerCase() === candidate);
-    if (found) return { path: path.join(dirPath, found), ambiguous: false };
-  }
-
-  // 文件名含"文案"的TXT
-  const copywritingNamed = txtFiles.filter((name) => name.includes("文案"));
-  if (copywritingNamed.length === 1) {
-    return { path: path.join(dirPath, copywritingNamed[0]), ambiguous: false };
-  }
-
-  // 唯一TXT
-  if (txtFiles.length === 1) {
-    return { path: path.join(dirPath, txtFiles[0]), ambiguous: false };
-  }
-
-  // 多个无法判断
+  const captionName = chooseCaptionFileName(txtFiles);
+  if (captionName) return { path: path.join(dirPath, captionName), ambiguous: false };
   return { path: null, ambiguous: true, candidates: txtFiles };
 }
 
@@ -211,13 +196,14 @@ function readTxtContent(filePath) {
 function parseTxtContent(content) {
   const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const platformCopy = parsePlatformCopy(normalized);
-  if (platformCopy.formatVersion === 2 && platformCopy.strict) {
+  if ([2, 3].includes(platformCopy.formatVersion) && platformCopy.strict) {
     const xhs = parseTxtContent(platformCopy.xhs);
     const douyin = parseTxtContent(platformCopy.douyin);
+    const xhs2 = platformCopy.formatVersion === 3 ? parseTxtContent(platformCopy.xhs2) : null;
     return {
       ...xhs,
-      copyFormatVersion: 2,
-      platformCopies: { xhs, douyin },
+      copyFormatVersion: platformCopy.formatVersion,
+      platformCopies: { xhs, xhs2, douyin },
       platformCopy
     };
   }
