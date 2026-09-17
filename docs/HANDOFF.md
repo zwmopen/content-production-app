@@ -1,3 +1,28 @@
+# 2026-09-17 / 内容生产流水线 v2.6.0 Stable 固化与手机局域网分发基准交付
+
+- **版本发布与 Git 基线**：
+  - 代码工程：`D:\AICode\工具开发\projects\content-production-app`
+  - Commit：`ed04cbe992131d9e30869939d4148790361ce8fe`
+  - Tag：`v2.6.0-stable-20260917`（Annotated Tag）
+  - 启动器 Commit（根目录）：`bb897794`
+- **灾备手册与独立离线备份**：
+  - 权威手册：`D:\AICode\工具开发\projects\content-production-app\PRODUCTION_RECOVERY.md`
+  - 环境配置模板：`D:\AICode\工具开发\projects\content-production-app\.env.example`
+  - 独立备份位置：`D:\AICode\Backups\production_stable_v2.6.0_20260917\`
+  - 归档 ZIP：`D:\AICode\Backups\production_stable_v2.6.0_20260917.zip`（276.80 MB，SHA-256: `d849b8987277a2a2b7056c9897e0903a5d38d58ee38380b231600c28c1186ffd`，包含 3809 个核心文件）
+- **实机运行与质检验真**：
+  - 当前主力产线：四脚本双浏览器 CDP 异步协程流水线（实例 A 端口 9431 / 实例 C 端口 9433 并行直连），主脑 `dual_browser_autonomous_producer.py`；
+  - 累计合格成品：`D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）\已发送0次（抖音小红书可发）` 已实盘沉淀 **270 套** 标准画册；
+  - 交付标准：全部图片严格 1086×1448 黄金 3:4 竖屏，Pillow 校验通过率 100%；Format 3 三端合一单文案，消除手机端报红；
+  - 飞书总表验真：工作簿 `D7OMsirIChkd2gt8TMBcPHD9ndc`（子表 `pVD1I4`）登记至第 218 行，revision 5255，大图内嵌与回读 100% 闭环。
+- **手机分发局域网测速与瓶颈结论（真机华为 P30 实测）**：
+  - 3 套作品（63.97 MB，52 个文件）实测：
+    - 原逐套单独传输（方案 A）：耗时 49.19s，平均 1.30 MB/s；
+    - 整包聚合传输（方案 B，`ZIP_STORED` 单流推流）：耗时 41.35s，平均 1.55 MB/s，提速 1.19 倍；
+  - **核心物理瓶颈定位**：实测当前 Wi-Fi 处于 **2.4 GHz 频段（802.11n）**，Ping 延迟高达 100~200ms，信道干扰将 TCP 单流吞吐死锁在 1.5 MB/s；
+  - **USB Benchmark 对比**：同素材走 USB MTP 传输仅需 **2.0 ~ 2.5 秒**（速度 25~35 MB/s），局域网相比 USB 慢 15~20 倍；
+  - **操作结论**：小批量直接无线分发，大批量（10+套）坚决保留 USB 直拷作为黄金兜底，建议将 Wi-Fi 切换至 5GHz 频段提速。
+
 # 2026-09-11 / 发布文案与会话追踪文件隔离修复（0.2.2，待运行实例重启加载）
 
 - **用户现场问题**：手机端复制动作本身没有把 `母版URL/分支URL/执行账号/生成卡片数/归档目录/完成时间` 这类会话信息变成文案；桌面/本地扫描阶段把 `会话追踪.txt` 当成普通 TXT，并在没有真实文案时静默选择它。
