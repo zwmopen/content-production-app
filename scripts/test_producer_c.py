@@ -807,7 +807,26 @@ class TestProducerC:
         # 10. 记录作品大图落地成功（同步 3小时滑动窗口40张 + 全天180张 双重配额账本）
         record_generation_success("C", len(saved_files), attached_cnt, mat_name)
 
-        # 11. 保存标准单文件文案与全量记录
+        # 11. 【空壳/截断守卫】保存标准单文件文案与全量记录
+        #     落盘前校验三平台槽位/版本块实质字数，不达标即判废（清理产出目录并抛错重做），
+        #     杜绝"标记齐全但正文全空"的空壳作品混进库存与手机端分发。
+        try:
+            _fdir = r"d:\AICode\.agents\skills\copy-collab-distributor\scripts"
+            if _fdir not in sys.path:
+                sys.path.insert(0, _fdir)
+            import copy_formatter as _cf
+            _report = _cf.assert_copy_usable(copy_text)
+            log(f"  ✓ 文案守卫通过：实质 {_report['total']} 字 | 槽位/版本 {_report['legacy'] or _report['versions']}")
+        except ImportError as ie:
+            log(f"⚠️ copy_formatter 不可用，空壳守卫降级跳过: {ie}")
+        except Exception as ce:
+            if ce.__class__.__name__ == "CopyRejected":
+                log(f"🚨【空文案判废】应用 C 捕获空壳/截断文案，废弃本套重做：{ce}")
+                shutil.rmtree(target_dir, ignore_errors=True)
+                isolate_abnormal_material(mat_dir, reason=f"文案空壳判废: {ce}")
+                raise
+            raise
+
         with open(os.path.join(target_dir, "文案.txt"), "w", encoding="utf-8") as f:
             f.write(copy_text)
         with open(os.path.join(target_dir, "三平台文案.txt"), "w", encoding="utf-8") as f:

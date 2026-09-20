@@ -572,6 +572,25 @@ async def export_cards(worker_id, job):
             else:
                 log(f"  [{worker_id}] -> 导出失败 {name}: {res.get('err')}")
 
+    # 【空壳/截断守卫】落盘前校验文案实质字数，不达标即判废（清理目录并抛错），
+    # 杜绝空壳作品流入库存（历史教训：三平台槽位标记齐全但正文全空）。
+    try:
+        _fdir = r"d:\AICode\.agents\skills\copy-collab-distributor\scripts"
+        if _fdir not in sys.path:
+            sys.path.insert(0, _fdir)
+        import copy_formatter as _cf
+        _report = _cf.assert_copy_usable(job.get('copy_text'))
+        log(f"  [{worker_id}] ✓ 文案守卫通过：实质 {_report['total']} 字")
+    except ImportError as ie:
+        log(f"  [{worker_id}] ⚠️ copy_formatter 不可用，空壳守卫降级跳过: {ie}")
+    except Exception as ce:
+        if ce.__class__.__name__ == "CopyRejected":
+            log(f"  [{worker_id}] 🚨【空文案判废】空壳/截断文案，废弃本套：{ce}")
+            import shutil as _shutil
+            _shutil.rmtree(dest_path, ignore_errors=True)
+            raise
+        raise
+
     with open(os.path.join(dest_path, "小红书文案.txt"), "w", encoding="utf-8") as f:
         f.write(job['copy_text'])
 

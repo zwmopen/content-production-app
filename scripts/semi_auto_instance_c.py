@@ -173,20 +173,26 @@ def build_prompt_1(batch_id, title, region_name, img_count):
 3. 业务与地域锁定：锁定为【江浙沪＋企业团建＋10人起接】。
 
 【三平台文案输出协议（COPY_FORMAT:3）】：
-请在出图计划之前，先输出完整的三平台成稿，严格使用 <<<COPY_FORMAT:3>>> 机器协议，格式如下：
+请在出图计划之前，先输出完整的三平台成稿，严格使用 <<<COPY_FORMAT:3>>> 机器协议。
+【全局硬性排版铁律】：
+1. 单标题铁律：每个区段首行必须且仅为 1 个纯文本标题，严禁加 # 号、严禁包裹大中文括号【】、严禁任何数字编号或备选！
+2. 【绝对防吞空行铁律】：小红书与抖音发布后台会自动压缩连续纯换行导致文字严重挤缩。段落、小标与标签之间的空行，必须填入不可见盲文空格字符“⠀”（Unicode U+2800，格式为 \\n⠀\\n）。严禁输出裸露纯 \\n\\n！
+3. 话题标签置于文末单行。
+4. 【抖音绝对去涉旅化/去商业化】：抖音成稿必须定位为纯个人自驾/户外探索避坑指南，坚决严禁使用“团建、组织团队、路线、行程单、排期、营地、大本营、包车、包栋、破冰、人均、起接、费用、定制、私信、留资”等任何旅行社专营业务词！
+
+格式如下：
 <<<COPY_FORMAT:3>>>
 <<<XHS_START>>>
-[单标题，不带任何编号或备选]
+纯文本单标题（带吸引力与emoji）
 
-[小红书第1版成稿：自然种草与真实体验版，短段落、真实生活抓拍感、真实避坑]
+小红书第1版正文（自然种草与真实体验版，短段落、真实生活抓拍感、真实避坑，段落间强制填入盲文空格⠀防吞行）
 
 #江浙沪团建 #企业团建 #[地点]团建 #[玩法]团建 ...（末尾固定输出 8-12 个精准话题标签）
 <<<XHS_END>>>
 <<<XHS_2_START>>>
-[单标题]
+纯文本单标题
 
-# [主标题]
-> 专为HR/行政打造的企业号大纲方案版
+企业号大纲方案版
 
 【基础信息】
 ▫️ 适合人数：10人起接（企业团队/部门定制）
@@ -205,16 +211,16 @@ def build_prompt_1(batch_id, title, region_name, img_count):
 【贴心避坑指南】
 [真实提炼的避坑建议或出行Tips]
 
-留下【团建+人数】获取专属定制方案
+负责组织的小伙伴可以先收藏做备选参考
 
 #江浙沪团建 #企业团建 #团建方案 #团建策划 #[地点]团建（5-10个话题标签）
 <<<XHS_2_END>>>
 <<<DOUYIN_START>>>
-[单标题]
+纯文本单标题
 
-[抖音完整成稿：去营销目的地攻略/避坑玩法版。纯攻略玩法分享，绝不出现价格、报价、费用、10人起接、定制、咨询、联系我们等任何商业/交易/服务承接词汇]
+抖音完整成稿：纯个人自驾/户外休闲避坑版。纯攻略玩法分享，绝不出现团建、大本营、营地、包车、包栋、人均、起接、定制、咨询、私信等任何涉旅或商业承接词汇！
 
-#江浙沪周边游 #目的地旅游攻略 #[玩法]攻略 ...（末尾固定输出 5 个相关话题标签）
+#江浙沪周边游 #目的地旅游攻略 #[玩法]攻略 ...（末尾固定输出 5 个相关生活/户外话题标签）
 <<<DOUYIN_END>>>
 
 【出图前规划与闸口】：
@@ -229,13 +235,38 @@ def build_nudge_prompt(done_count, target_cards):
 
 def parse_and_save_copy(copy_text, dest_dir):
     """
-    保存文案五大件：
-    - 文案.txt (完整机器协议原文)
-    - 小红书文案.txt (第1版 自然种草与真实体验版)
-    - 小红书文案_HR方案决策版.txt (第2版 HR方案大纲/决策版)
-    - 抖音文案.txt (去营销目的地攻略/避坑版)
+    保存文案标准套件并进行严格排版清洗 (含盲文空格防吞行)
+
+    【空壳/截断守卫】落盘前用 copy_formatter.assert_copy_usable 校验实质字数，
+    不达标直接抛 CopyRejected 判废（调用方清理半成品目录），坚决不入库空壳作品。
     """
     clean_raw = str(copy_text or "").strip()
+
+    formatter_dir = r"d:\AICode\.agents\skills\copy-collab-distributor\scripts"
+    if formatter_dir not in sys.path:
+        sys.path.insert(0, formatter_dir)
+    try:
+        import copy_formatter
+    except Exception as fe:
+        copy_formatter = None
+        log(f"⚠️ copy_formatter 不可用，空壳守卫降级跳过: {fe}")
+
+    if copy_formatter is not None:
+        # 先判废再落盘：空壳/截断作品不产生任何文案文件
+        try:
+            guard_report = copy_formatter.assert_copy_usable(clean_raw)
+            log(f"  ✓ 文案守卫通过：实质 {guard_report['total']} 字 | "
+                f"槽位/版本 {guard_report['legacy'] or guard_report['versions']}")
+        except copy_formatter.CopyRejected as ce:
+            log(f"🚨【空文案判废】应用 C 捕获空壳/截断文案，坚决不入库：{ce}")
+            raise
+        try:
+            ok, formatted_copy, mode = copy_formatter.clean_entire_copy(clean_raw, mobile_safe=True)
+            if ok and formatted_copy:
+                clean_raw = formatted_copy
+        except Exception as fe:
+            log(f"⚠️ copy_formatter 预清洗告警: {fe}")
+
     with open(os.path.join(dest_dir, "文案.txt"), "w", encoding="utf-8") as f:
         f.write(clean_raw)
 
@@ -581,9 +612,17 @@ async def run_semi_auto_flow(specified_material=None, interactive=True):
             else:
                 log(f"  ✕ 导出失败: {file_name}")
 
-    # 步骤 6.2：保存多平台文案
+    # 步骤 6.2：保存多平台文案（含空壳/截断守卫，判废即清理半成品并中止本套）
     log(f"【步骤 6.2 多平台文案落盘】")
-    parse_and_save_copy(captured_copy_text, dest_dir)
+    try:
+        parse_and_save_copy(captured_copy_text, dest_dir)
+    except Exception as ce:
+        if ce.__class__.__name__ == "CopyRejected":
+            log(f"🚨【空壳作品判废】应用 C 放弃本套产出，清理半成品目录：{dest_dir}")
+            shutil.rmtree(dest_dir, ignore_errors=True)
+            send_toast("🚨 空壳作品已判废", f"{title} 文案实质内容不足，已废弃重做")
+            raise
+        raise
 
     # 写入作品标签.json 与 会话追踪.txt
     with open(os.path.join(dest_dir, "作品标签.json"), "w", encoding="utf-8") as f:
