@@ -415,3 +415,11 @@ AI/skills/技能包/技能
 # 0.19.23 朋友圈月度采集调度
 
 朋友圈自动化现在分成两条互不混淆的定时链路：每日发布准备由 `scheduleWindowStart` / `scheduleWindowEnd` 驱动，当前为北京时间 `10:00–12:00` 窗口，窗口内尽早执行；月度采集由 `collectionScheduleEnabled`、`collectionScheduleDay` 和 `collectionScheduleTime` 独立驱动。两套时间都由本地 `app-settings.json` 持久化并可分别修改。每日链路使用日期加窗口的幂等键，超过窗口不补发；月度链路读取同一 `moments.libraryRoot`，调用现有 WeFlow 采集器并复用其逐条落盘、去重和标签整理，不创建第二个素材库。每月运行键和最近回执写入该目录的 `state/collection-scheduler-state.json`，因此服务重启不会重复采集。
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-09-17 23:11 | 💻 本地 PC / 反重力 | 初始化创建文档并补齐变更记录历史 |

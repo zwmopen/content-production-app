@@ -188,15 +188,13 @@ function generateTemplateCatalog({ templateRoot, registryPath, onlinePath } = {}
   const onlineFile = onlinePath || path.join(root, "链接模板.txt");
   const repositoryConfigPath = path.join(root, "模板仓库配置.json");
   const output = path.join(root, "模板仓库.html");
-  const legacyOutput = path.join(root, "模板台账.html");
   const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
   const repositoryConfig = readTemplateRepositoryConfig(repositoryConfigPath);
   const rows = buildRows(registry, readOnlineRows(onlineFile), repositoryConfig);
   const generatedAt = new Date().toLocaleString("zh-CN", { hour12: false });
   const html = renderHtml(rows, registry, generatedAt, repositoryConfig);
   fs.writeFileSync(output, html, "utf8");
-  if (legacyOutput !== output) fs.writeFileSync(legacyOutput, html, "utf8");
-  return { output, legacyOutput, repositoryConfigPath, total: rows.length, complete: rows.filter((row) => row.status === "齐全").length };
+  return { output, repositoryConfigPath, total: rows.length, complete: rows.filter((row) => row.status === "齐全").length };
 }
 
 if (require.main === module) {

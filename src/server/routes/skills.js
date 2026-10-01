@@ -39,7 +39,7 @@ const TEMPLATE_REPOSITORY_HTML = process.env.TEAMBUILDING_TEMPLATE_REPOSITORY_HT
 const TEMPLATE_COLLECTOR_LEDGER = process.env.TEAMBUILDING_TEMPLATE_COLLECTOR_LEDGER
   || path.join(TEMPLATE_REPOSITORY_ROOT, "采集", "聚光作品采集索引.json");
 const TEMPLATE_PROJECT_LEDGER_HTML = process.env.TEAMBUILDING_TEMPLATE_PROJECT_HTML
-  || path.join(TEMPLATE_REPOSITORY_PROJECT_ROOT, "02-模板库", "模板台账.html");
+  || path.join(TEMPLATE_REPOSITORY_PROJECT_ROOT, "02-模板库", "模板仓库.html");
 const DEVICE_TRANSFER_SKILL_ROOT = process.env.DEVICE_TRANSFER_SKILL_ROOT
   || path.join(MAINTENANCE_SKILL_ROOT, DEVICE_TRANSFER_SKILL_ID);
 const DEVICE_TRANSFER_SCRIPT = path.join(DEVICE_TRANSFER_SKILL_ROOT, "scripts", "send_to_device.py");
@@ -820,7 +820,7 @@ function templateRepositorySkillStatus(skill = NATIVE_SKILLS[TEMPLATE_REPOSITORY
 function templateRepositoryEntry() {
   const candidates = [
     { scope: "global", label: "全局模板仓库", path: TEMPLATE_REPOSITORY_HTML },
-    { scope: "project", label: "当前项目模板台账", path: TEMPLATE_PROJECT_LEDGER_HTML }
+    { scope: "project", label: "当前项目模板仓库", path: TEMPLATE_PROJECT_LEDGER_HTML }
   ];
   const selected = candidates.find((item) => exists(item.path)) || candidates[0];
   return {

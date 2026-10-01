@@ -17,6 +17,7 @@ const {
   recipeForTemplate
 } = require("./lib/production-recipes");
 const { getJuguangSnapshot, queryKeywords } = require("./lib/juguang-data");
+const { isMetadataTextName } = require("./lib/caption-file-policy");
 const {
   appendWorkflowOperation,
   classifyCollectionName,
@@ -171,6 +172,7 @@ const settingsRoute = require("./server/routes/settings");
 const distributionRoute = require("./server/routes/distribution");
 const platformPublishingRoute = require("./server/routes/platform-publishing");
 const productionRoute = require("./server/routes/production");
+const templateMigrationRoute = require("./server/routes/template-migration");
 const gptExtensionRoute = require("./server/routes/gpt-extension");
 const conversionRoute = require("./server/routes/conversion");
 const skillsRoute = require("./server/routes/skills");
@@ -1915,7 +1917,8 @@ function extensionProductTreeSnapshot(requestedPath = "", rootOverride = "") {
         .map((child) => path.join(entryPath, child.name));
       const attachments = directFiles.filter((file) => {
         const extension = path.extname(file).toLowerCase();
-        return imageExts.has(extension) || textExts.has(extension);
+        const isMeta = isMetadataTextName(path.basename(file));
+        return imageExts.has(extension) || (textExts.has(extension) && !isMeta);
       });
       return {
         id: entryPath,
@@ -1926,7 +1929,7 @@ function extensionProductTreeSnapshot(requestedPath = "", rootOverride = "") {
         folderCount: children.filter((child) => child.isDirectory()).length,
         fileCount: directFiles.length,
         imageCount: attachments.filter((file) => imageExts.has(path.extname(file).toLowerCase())).length,
-        textCount: attachments.filter((file) => textExts.has(path.extname(file).toLowerCase())).length,
+        textCount: attachments.filter((file) => textExts.has(path.extname(file).toLowerCase()) && !isMetadataTextName(path.basename(file))).length,
         attachments: attachments.slice(0, 30)
       };
     }
@@ -1935,7 +1938,10 @@ function extensionProductTreeSnapshot(requestedPath = "", rootOverride = "") {
       size = fs.statSync(entryPath).size;
     } catch {}
     const extension = path.extname(entry.name).toLowerCase();
-    const uploadable = imageExts.has(extension) || textExts.has(extension);
+    const isMeta = isMetadataTextName(entry.name);
+    const isImage = imageExts.has(extension);
+    const isText = textExts.has(extension) && !isMeta;
+    const uploadable = isImage || isText;
     return {
       id: entryPath,
       kind: "file",
@@ -1943,8 +1949,8 @@ function extensionProductTreeSnapshot(requestedPath = "", rootOverride = "") {
       path: entryPath,
       size,
       uploadable,
-      imageCount: imageExts.has(extension) ? 1 : 0,
-      textCount: textExts.has(extension) ? 1 : 0,
+      imageCount: isImage ? 1 : 0,
+      textCount: isText ? 1 : 0,
       attachments: uploadable ? [entryPath] : []
     };
   });
@@ -9781,6 +9787,8 @@ async function route(req, res) {
   if (await settingsRoute.handle(req, res, pathname, parsed, routeCtx)) return;
 
   if (await productionRoute.handle(req, res, pathname, parsed, routeCtx)) return;
+
+  if (await templateMigrationRoute.handle(req, res, pathname, parsed, routeCtx)) return;
 
   if (await backupRoute.handle(req, res, pathname, parsed, routeCtx)) return;
 

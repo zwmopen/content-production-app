@@ -162,7 +162,7 @@ test("normalizeDistributionEvents gives people a clear result before technical d
   assert.ok(device.details.some((item) => item.includes("文件：74 个")));
   assert.ok(device.details.some((item) => item.includes("大小：169.2 MB")));
   assert.ok(device.details.some((item) => item.includes("技术") || item.includes("distribution-1786666665746-lo91gd")));
-  assert.equal(move.title, "已移动到微信公众号");
+  assert.equal(move.title, "已移动到已发送1次（微信公众号可发）");
   assert.ok(move.details.some((item) => item.includes("原位置")));
   assert.equal(automatic.title, "VIVO 自动发送完成，共收到 1 个作品集");
   assert.equal(automatic.message, "已完成");

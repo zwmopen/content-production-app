@@ -38,12 +38,16 @@ async function evaluate(webSocketDebuggerUrl, expression) {
 
 (async () => {
   const targets = await getJson(`http://127.0.0.1:${debugPort}/json/list`);
-  const target = targets.find((item) => item.type === "page" && /^http:\/\/127\.0\.0\.1:43(?:31|32)\/(?:\?|$)/.test(item.url));
+  const contentTarget = targets.find((item) => item.type === "page" && /^http:\/\/127\.0\.0\.1:43(?:31|32|33)\/(?:\?|$)/.test(item.url));
+  const chatTarget = targets.find((item) => item.type === "page" && /chatgpt\.com/.test(item.url));
+  const target = (debugPort === 9431 || debugPort === 9433) ? chatTarget : contentTarget;
   if (!target) throw new Error(`No content renderer on debug port ${debugPort}`);
   const result = await evaluate(target.webSocketDebuggerUrl, `(() => ({
     title: document.title,
     readyState: document.readyState,
     bodyText: String(document.body?.innerText || '').slice(0, 5000),
+    bodyTextTail: String(document.body?.innerText || '').slice(-5000),
+    images: Array.from(document.images || []).map((img) => ({ src: img.currentSrc || img.src || '', alt: img.alt || '', width: img.naturalWidth || img.width || 0, height: img.naturalHeight || img.height || 0 })).slice(-30),
     accounts: typeof gptBrowserProfiles !== 'undefined' ? gptBrowserProfiles.map((item) => ({ id: item.id, name: item.name, mode: item.mode, workflowVariant: item.workflowVariant })) : [],
     activeAccountId: typeof activeGptBrowserId !== 'undefined' ? activeGptBrowserId : '',
     queue: typeof gptProductionQueue !== 'undefined' ? { running: Boolean(gptProductionQueue.running), paused: Boolean(gptProductionQueue.paused), tasks: gptProductionQueue.tasks?.length || 0 } : null

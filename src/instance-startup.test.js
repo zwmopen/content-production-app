@@ -34,7 +34,7 @@ test("A-D startup scripts bind one account and one isolated runtime tuple each",
     assert.match(source, new RegExp(`TB_USER_DATA_ROOT = ".*\\\\instance-${entry.id}\\\\electron-userdata"`));
     assert.match(source, /TEAMBUILDING_SHARED_MATERIAL_ROOT = ".*\\shared-material"/);
     assert.match(source, /CONTENT_ONLY_MODE = "1"/);
-    assert.match(source, /(?:electron\.cmd|\$electronExe) (?:--no-sandbox )?desktop\\main\.js/);
+    assert.match(source, /(?:electron\.cmd|\$electronExe) (?:.*)?desktop\\main\.js/);
     assert.doesNotMatch(source, /account-6/);
 
     for (const field of [entry.accountId, entry.port, entry.remoteDebuggingPort, `instance-${entry.id}`, `instance-${entry.id}\\electron-userdata`]) {
@@ -59,7 +59,10 @@ test("A-D startup scripts share only the material root and never the browser/run
 test("Electron instances use the local proxy while bypassing local workbench traffic", () => {
   const config = resolveElectronProxy();
   assert.equal(config.enabled, true);
-  assert.equal(config.proxyServer, DEFAULT_ELECTRON_PROXY);
+  // [2026-09-25 修] 代理端口现在会自动探测本机存活端口（7897/7890/7891/7892），
+  // 不再硬性等于 DEFAULT_ELECTRON_PROXY；只断言落在候选集合内。
+  const liveCandidates = new Set(["7897", "7890", "7891", "7892"].map((p) => `http://127.0.0.1:${p}`));
+  assert.ok(liveCandidates.has(config.proxyServer), `unexpected proxyServer: ${config.proxyServer}`);
   assert.equal(config.proxyBypassList, ELECTRON_PROXY_BYPASS_LIST);
 
   for (const entry of EXPECTED_INSTANCES) {

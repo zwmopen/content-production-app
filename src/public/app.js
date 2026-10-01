@@ -2239,7 +2239,7 @@ const GPT_MODE_DEFINITIONS = Object.freeze({
   // normalized settings no longer expose or run the multi-account mode.
   rotate: { label: "旧多账号全自动", defaultName: "旧多账号全自动", shortName: "旧多账号", continuous: true, multi: true, rotation: true, autoWindow: true, hidden: true, legacy: true, description: "旧版多账号模式已移除；旧配置会迁移为单账号全自动。" },
   patrol: { label: "多对话巡检", defaultName: "多对话巡检", shortName: "巡检", continuous: true, multi: false, manualWindow: true, patrol: true, description: "单账号下多个对话轮流巡检生产，每个对话独立处理一个素材。适合单账号多对话并行场景。" },
-  replicate: { label: "新绘画复刻模式（V5高阶）", defaultName: "新绘画复刻模式（V5高阶）", shortName: "V5复刻", continuous: false, multi: false, description: "V5高阶轻复刻模式：场景稳定防乱写，原图微机位+全量换人换物，NO.1-NO.9序号递增但内容对调洗牌，出V5计划后出图归档。" },
+  replicate: { label: "V6.0 单窗口直出复刻模式（外部中控主力）", defaultName: "V6.0 单窗口直出复刻模式", shortName: "V6.0复刻", continuous: true, multi: false, description: "小红书团建拼图大字营销封面轻复刻去重修图师 V6.0：单窗口直出生图、名企文字深度去重、Format 3 三端文案、Pillow 质检入库，外部 Python CDP 调度器自主驱动。" },
   // Kept as a compatibility profile for configurations created before the
   // mode rename. Hidden from the selector but still readable for old configs.
   "semi-auto": { label: "半自动（兼容）", defaultName: "半自动（兼容）", shortName: "半自动", continuous: false, multi: false, semiAuto: true, hidden: true, description: "自动上传并发送，计划完成后暂停等待人工确认。确认后自动完成出图→文案→打包归档。仅保留兼容性，新配置请使用其他模式。" },
@@ -2625,7 +2625,7 @@ function loadGptModeProfiles() {
   const defaults = {
     manual: { name: GPT_MODE_DEFINITIONS.manual.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("manual") },
     automatic: { name: GPT_MODE_DEFINITIONS.automatic.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("automatic") },
-    replicate: { name: GPT_MODE_DEFINITIONS.replicate.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("replicate") },
+    replicate: { name: GPT_MODE_DEFINITIONS.replicate.defaultName, useCurrentSession: false, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("replicate") },
     "semi-auto": { name: GPT_MODE_DEFINITIONS["semi-auto"].defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("semi-auto") },
     single: { name: GPT_MODE_DEFINITIONS.single.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("single") },
     scheduled: { name: GPT_MODE_DEFINITIONS.scheduled.defaultName, useCurrentSession: true, confirmText: "1", copyPrompt: GPT_PUBLISH_COPY_PROMPT, steps: defaultGptWorkflowSteps("scheduled") },

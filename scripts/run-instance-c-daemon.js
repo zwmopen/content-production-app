@@ -14,21 +14,22 @@ const env = {
   TB_USER_DATA_ROOT: 'D:\\AICode\\运行数据\\江湖有旅人\\内容生产App\\instance-C\\electron-userdata',
   CONTENT_ACCOUNT_IDS: 'account-3',
   CONTENT_ONLY_MODE: '1',
-  TB_MAIN_WINDOW_SANDBOX: '0'
+  TB_MAIN_WINDOW_SANDBOX: '0',
+  TB_DESKTOP_HIDDEN: '1'
 };
 
 const electronPath = 'D:\\AICode\\工具开发\\projects\\content-production-app\\src\\node_modules\\electron\\dist\\electron.exe';
 const mainPath = 'D:\\AICode\\工具开发\\projects\\content-production-app\\src\\desktop\\main.js';
 
 function start() {
-  console.log('[Instance C Daemon] 正在启动实例 C Electron 进程...');
+  console.log('[Instance C Daemon] 正在启动实例 C Electron 进程 (后台静默模式)...');
   
   const lock = path.join(env.TB_USER_DATA_ROOT, 'SingletonLock');
   if (fs.existsSync(lock)) {
     try { fs.unlinkSync(lock); } catch(e) {}
   }
 
-  const proc = spawn(electronPath, ['--remote-debugging-port=9433', '--no-sandbox', mainPath], {
+  const proc = spawn(electronPath, ['--remote-debugging-port=9433', '--no-sandbox', '--hidden', mainPath], {
     env,
     cwd: 'D:\\AICode\\工具开发\\projects\\content-production-app\\src'
   });

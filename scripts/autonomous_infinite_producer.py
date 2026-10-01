@@ -343,16 +343,76 @@ class StandaloneProducer:
                 log(f"-> 生成已结束，已获取 {img_count} 张大图，继续后续流程。")
                 break
 
-        # 6. 发送 Format 3 三分文案提示词
-        log("-> 发送 Format 3 三端文案生成指令...")
+        # 6. 发送多版本文案中枢 V4.5 指令（11 大排版视觉指纹标准）
+        log("-> 发送多版本文案中枢 V4.5 指令（11 大排版视觉指纹标准）...")
         copy_prompt = (
-            f"请根据上面刚刚生成的全套大图与原素材真实行程，立即生成 Format 3 标准三端文案。\n"
+            f"请根据上面刚刚生成的全套大图与原素材真实行程，立即生成【多版本文案中枢 V4.5】全套标准成稿。\n"
             f"【原素材参考正文】：\n{context_block}\n\n"
-            "必须包含以下标签完整输出：\n"
-            "<<<COPY_FORMAT:3>>>\n"
-            "<<<XHS_START>>>\n[小红书主标题]\n\n[小红书种草正文，带两日详细行程排期、亮点提炼与真实避坑，拒绝空话]\n\n[12个同行热门话题标签]\n<<<XHS_END>>>\n"
-            "<<<XHS_2_START>>>\n[HR方案决策版大纲，包含方案名称、适用对象、预算参考、决策亮点与服务保障]\n<<<XHS_2_END>>>\n"
-            "<<<DOUYIN_START>>>\n[抖音短平快口播脚本，痛点切入+亮点+留资号召]\n<<<DOUYIN_END>>>\n"
+            "【最高执行铁律】：\n"
+            "1. 坚决杜绝干瘪公文垃圾：严禁出现“方案名称：/适用对象：/预算参考：”等体制内申报公文腔，必须是小红书野生高赞爆款感！\n"
+            "2. 视觉指纹命名（严格最多 4 个纯汉字按钮名）：\n"
+            "   每个版本必须用 <<<VERSION_START:最多4字版本名>>> ... <<<VERSION_END>>> 包裹。\n"
+            "3. 单标题铁律：每个版本首行必须且仅有 1 个纯文本标题，严禁加 # 号、严禁包裹大中文括号【】、严禁任何序号！\n"
+            "4. 防吞空行铁律：段落之间空行必须填入不可见盲文空格“⠀”（Unicode U+2800，格式为 \\n⠀\\n），绝不输出裸露 \\n\\n！\n"
+            "5. 抖音避坑版绝对去商业化：定位纯个人自驾/生活探索经验，绝无“团建/组织/方案/路线/报价”等涉旅敏感词！\n"
+            "6. 严防末尾截断：每一版必须完整展开并以单行话题标签结尾，紧跟 <<<VERSION_END>>>，严禁半句断尾！\n\n"
+            "【请生成以下 11 个排版视觉指纹版本成稿】：\n"
+            "<<<COPY_FORMAT:MULTI>>>\n"
+            "<<<VERSION_START:数字爆款>>>\n"
+            "真实大厂回购爆款主标题（带吸引力与emoji）\n"
+            "正文（1️⃣2️⃣3️⃣ 大数字键帽 + ‼️ + 💯 轰炸，痛点切入，节奏极快）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:分天动线>>>\n"
+            "海岛度假慢调漫步主标题\n"
+            "正文（𝗗𝗔𝗬❶ 𝗗𝗔𝗬❷ 加粗西文 + 🔅 🔹 🔸 几何圆圈动线，松弛不赶路）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:三箭头体>>>\n"
+            "大自然森系吸氧主标题\n"
+            "正文（- 》》》 招牌三箭头 + ✅ 双勾 + 治愈自然Emoji符号清单）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:杂志长条>>>\n"
+            "杂志级画册选型指南主标题\n"
+            "正文（—— 🌿【企划】—— 长横线装饰条 + 01 ｜ 空间美学配置）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:时间轴体>>>\n"
+            "秋日轻奢慢节奏日程主标题\n"
+            "正文（08:30 | 竖线精准时间颗粒度行程，优雅松弛）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:原生种草>>>\n"
+            "真实博主亲历自用劝退主标题\n"
+            "正文（第一人称口语化，真实体验避坑，零广告套路感）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:决策矩阵>>>\n"
+            "HR向上汇报横向比选主标题\n"
+            "正文（📊 横向维度比对、适合/不适合团队分析、选型建议）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:货架明细>>>\n"
+            "预算清晰拆解防超标主标题\n"
+            "正文（📦 模块化费用清单：大巴/门票/餐饮/住宿人均透明列式）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:包院私享>>>\n"
+            "独栋私密小院沉浸研讨主标题\n"
+            "正文（山野院落、高管复盘、星空夜话，私密高端体验）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:案例背书>>>\n"
+            "名企实操落地全记录主标题\n"
+            "正文（真实团队案例复盘，高满意度与无加班焦虑背书）\n"
+            "#热门话题标签\n"
+            "<<<VERSION_END>>>\n\n"
+            "<<<VERSION_START:抖音避坑>>>\n"
+            "纯个人自驾生活避坑短卡主标题\n"
+            "正文（去商业去涉旅敏感词，口语化纯经验避坑与装备建议）\n"
+            "#5个生活类标签\n"
+            "<<<VERSION_END>>>\n"
         )
         js_inject_copy = f"""(() => {{
             const ta = document.querySelector('#prompt-textarea') || document.querySelector('div[contenteditable="true"]');
@@ -440,9 +500,34 @@ class StandaloneProducer:
             else:
                 log(f"  [X] 拉取失败: {fname}")
 
-        # 9. 保存文案文件（核心铁律：单文件 文案.txt 适配相册 APK）
+        # 9. 保存文案文件（核心铁律：单文件 文案.txt 适配相册 APK，注入 V4.5 标准）
+        clean_copy = full_text.strip()
+        try:
+            formatter_dir = r"d:\AICode\.agents\skills\copy-collab-distributor\scripts"
+            if formatter_dir not in sys.path:
+                sys.path.insert(0, formatter_dir)
+            import copy_formatter
+            ok, formatted_copy, mode = copy_formatter.clean_entire_copy(clean_copy, mobile_safe=True)
+            if ok and formatted_copy:
+                clean_copy = formatted_copy
+                log(f"-> copy_formatter 二次清洗完成 (mode={mode})")
+        except Exception as e:
+            log(f"copy_formatter 清洗异常: {e}")
+
+        # 9.5 【空文案/截断守卫】落盘前校验实质字数，杜绝空壳作品入库，不达标判废重做。
+        _substance = re.sub(r'<<<[^>]*>>>', '', clean_copy)
+        _substance = re.sub(r'[\s\u2800]+', '', _substance)
+        MIN_COPY_SUBSTANCE = 300
+        if len(_substance) < MIN_COPY_SUBSTANCE:
+            log(f"🚨【空文案判废】文案实质内容仅 {len(_substance)} 字（要求 ≥ {MIN_COPY_SUBSTANCE} 字），"
+                f"判定为空壳/截断产出，坚决不入库！废弃重做。")
+            if os.path.exists(target_pkg_dir):
+                import shutil
+                shutil.rmtree(target_pkg_dir, ignore_errors=True)
+            raise RuntimeError(f"文案实质内容不足（{len(_substance)} 字 < {MIN_COPY_SUBSTANCE}），空壳判废重做")
+
         with open(os.path.join(target_pkg_dir, "文案.txt"), "w", encoding="utf-8") as f:
-            f.write(full_text.strip())
+            f.write(clean_copy)
 
         with open(os.path.join(target_pkg_dir, "全量生成记录.txt"), "w", encoding="utf-8") as f:
             f.write(full_text)

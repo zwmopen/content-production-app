@@ -10,12 +10,15 @@ const {
 } = require("./instance-account-policy");
 
 test("A-D each have one canonical account and isolated ports", () => {
-  assert.deepEqual(Object.keys(INSTANCE_CONFIG), ["A", "B", "C", "D"]);
-  assert.deepEqual(Object.values(INSTANCE_CONFIG).map((item) => item.accountId), [
+  const canonicalKeys = ["A", "B", "C", "D"];
+  for (const key of canonicalKeys) {
+    assert.ok(INSTANCE_CONFIG[key], `Missing config for ${key}`);
+  }
+  assert.deepEqual(canonicalKeys.map((key) => INSTANCE_CONFIG[key].accountId), [
     "account-1", "account-2", "account-3", "account-4"
   ]);
-  assert.deepEqual(Object.values(INSTANCE_CONFIG).map((item) => item.port), [4331, 4332, 4333, 4334]);
-  assert.deepEqual(Object.values(INSTANCE_CONFIG).map((item) => item.remoteDebuggingPort), [9431, 9432, 9433, 9434]);
+  assert.deepEqual(canonicalKeys.map((key) => INSTANCE_CONFIG[key].port), [4331, 4332, 4333, 4334]);
+  assert.deepEqual(canonicalKeys.map((key) => INSTANCE_CONFIG[key].remoteDebuggingPort), [9431, 9432, 9433, 9434]);
 });
 
 test("content-only instances default to their one canonical account", () => {

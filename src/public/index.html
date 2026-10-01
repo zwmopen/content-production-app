@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>内容生产</title>
   <link rel="stylesheet" href="/styles.css?v=0.1.0" />
+  <link rel="stylesheet" href="/template-migration.css?v=0.1.0" />
   </head>
   <body>
     <div class="liquid-bg">
@@ -31,6 +32,10 @@
         <button class="tab rail-tab rail-tab-test" data-tab="gptProductionTest" type="button" title="内容制作" aria-label="内容制作">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 4v-14Z"/><path d="m10 8 1 2.6 2.6 1-2.6 1L10 15l-1-2.4-2.6-1 2.6-1L10 8Z"/><path d="M15 8h2M15 11h2"/></svg>
           <span>内容制作</span>
+        </button>
+        <button class="tab rail-tab rail-tab-template-migration" data-tab="templateMigration" type="button" title="模板迁移：锁定一个模板，递归读取素材并逐套生产" aria-label="模板迁移">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h6v6H5zM13 5h6v6h-6zM5 13h6v6H5zM13 13h6v6h-6z"/><path d="M11 8h2M8 11v2M16 11v2M11 16h2"/></svg>
+          <span>模板迁移</span>
         </button>
         <button class="tab rail-tab" data-tab="skills" type="button" title="技能中心：运行已连接的可执行技能" aria-label="技能中心">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 14 8l4.5 2-4.5 2-2 4.5-2-4.5-4.5-2 4.5-2L12 3.5Z"/><path d="m18.5 15 .9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1Z"/></svg>
@@ -498,20 +503,20 @@
                   <div class="gpt-mode-action-row">
                     <div class="gpt-mode-row">
                       <select id="gptProductionMode" aria-label="生产模式" title="右键打开当前生产模式设置">
-                        <option value="manual">纯手动模式</option>
-                        <option value="automatic">选好后跑完这批</option>
+                        <option value="replicate" selected>V6.0 单窗口直出复刻模式（外部中控主力）</option>
                         <option value="single">全自动持续生产（主力）</option>
+                        <option value="automatic">选好后跑完这批</option>
+                        <option value="manual">纯手动模式</option>
                         <option value="scheduled">定时全自动跑（早7-晚2）</option>
                         <option value="patrol">多对话巡检</option>
-                        <option value="replicate">新绘画复刻模式（V5高阶）</option>
                         <option value="semi-auto" hidden>半自动（兼容）</option>
                       </select>
                       <span class="gpt-current-account-chip" title="当前窗口"> <strong id="gptCockpitAccount">未选择</strong></span>
                     </div>
                     <div class="gpt-workflow-variant-row">
                       <select id="gptWorkflowVariant" aria-label="当前窗口流水线版本" title="每个账号窗口独立保存；切换只影响该窗口后续创建的作品">
-                        <option value="legacy-v1">接着当前对话做</option>
-                        <option value="fresh-session-fixed-template">每套新开独立对话</option>
+                        <option value="fresh-session-fixed-template" selected>每套新开独立对话</option>
+                        <option value="legacy-v1">接着当前对话做 (已停用)</option>
                       </select>
                       <small id="gptWorkflowVariantHint">按当前账号窗口独立保存</small>
                     </div>
@@ -585,6 +590,65 @@
                 <input id="gptBrowserAddressInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="默认 ChatGPT，可输入其他网址，按回车访问" aria-label="默认 ChatGPT，可输入其他网址，按回车访问" />
                 <button id="gptBrowserGoBtn" class="secondary-button gpt-browser-go-button" type="button" title="访问当前网址" aria-label="访问当前网址">→</button>
               </footer>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="templateMigrationView">
+        <section class="template-migration-shell">
+          <header class="template-migration-heading">
+            <div>
+              <p class="label">模板迁移套板迁移生产</p>
+              <h2>一个窗口，一套流程</h2>
+              <p>先锁定一个模板，再递归扫描素材库；计划阶段停在“等待 1”，确认后按素材包逐套推进。</p>
+            </div>
+            <div class="template-migration-heading-status">
+              <span id="templateMigrationStateBadge" class="template-migration-state-badge" data-state="idle">未建立批次</span>
+              <button id="templateMigrationRefreshBtn" class="secondary-button" type="button">刷新状态</button>
+            </div>
+          </header>
+
+          <div class="template-migration-grid">
+            <section class="template-migration-card template-migration-input-card">
+              <header><span class="template-migration-index">01</span><div><strong>输入与锁定</strong><small>模板一次确认；素材可给整个分类库</small></div></header>
+              <label>模板路径<input id="templateMigrationTemplatePath" type="text" placeholder="粘贴模板文件或模板文件夹路径" /></label>
+              <label>素材库路径<input id="templateMigrationMaterialRoot" type="text" placeholder="粘贴大分类、小分类或整个素材库路径" /></label>
+              <label>成品库路径<input id="templateMigrationOutputRoot" type="text" placeholder="粘贴成品库根目录路径" /></label>
+              <div class="template-migration-folder-preview"><span>固定落位</span><code id="templateMigrationOutputLibrary">成品库\_套板迁移</code></div>
+              <div class="template-migration-actions">
+                <button id="templateMigrationCreateBtn" class="primary-button" type="button">扫描并建立批次</button>
+                <button id="templateMigrationRescanBtn" class="secondary-button" type="button" disabled>重新扫描素材</button>
+              </div>
+              <p id="templateMigrationInputStatus" class="template-migration-inline-status" aria-live="polite">等待输入三条路径。</p>
+            </section>
+
+            <section class="template-migration-card template-migration-material-card">
+              <header><span class="template-migration-index">02</span><div><strong>递归素材库</strong><small id="templateMigrationMaterialSummary">尚未扫描</small></div><button id="templateMigrationSelectAllBtn" class="text-button" type="button" disabled>全选</button></header>
+              <div id="templateMigrationCategories" class="template-migration-categories" aria-label="素材大分类和小分类"></div>
+              <div id="templateMigrationMaterials" class="template-migration-materials" aria-label="待迁移素材包"></div>
+            </section>
+
+            <section class="template-migration-card template-migration-progress-card">
+              <header><span class="template-migration-index">03</span><div><strong>批次进度</strong><small>模板、素材、当前套数一屏可见</small></div></header>
+              <dl class="template-migration-facts">
+                <div><dt>当前模板</dt><dd id="templateMigrationTemplateName">未选择</dd></div>
+                <div><dt>当前素材</dt><dd id="templateMigrationCurrentMaterial">未开始</dd></div>
+                <div><dt>当前套数</dt><dd id="templateMigrationCurrentSet">0 / 0</dd></div>
+                <div><dt>成品落位</dt><dd id="templateMigrationCurrentFolder">确认后创建</dd></div>
+              </dl>
+              <div class="template-migration-progress-track" aria-label="模板迁移进度"><span id="templateMigrationProgressBar"></span></div>
+              <div class="template-migration-progress-meta"><strong id="templateMigrationProgressPercent">0%</strong><span id="templateMigrationProgressLabel">等待建立批次</span></div>
+              <div id="templateMigrationPlan" class="template-migration-plan" aria-live="polite">
+                <strong>计划规则</strong>
+                <p>模板控制视觉结构；素材控制事实、图片、文案和原有标签；单套最多 10 页；不补写未知事实。</p>
+                <p class="template-migration-confirm-hint">建立批次后，这里会显示逐套计划，并等待输入 <b>1</b>。</p>
+              </div>
+              <div class="template-migration-actions template-migration-confirm-actions">
+                <button id="templateMigrationConfirmBtn" class="primary-button" type="button" disabled>确认 1，进入第一套</button>
+                <button id="templateMigrationCompleteBtn" class="secondary-button" type="button" disabled>标记当前完成</button>
+              </div>
+              <p id="templateMigrationStatus" class="template-migration-status" aria-live="polite">尚未建立生产批次。</p>
             </section>
           </div>
         </section>
@@ -1230,6 +1294,7 @@
   <script src="/gpt-startup-stagger.js?v=0.1.0"></script>
   <script src="/gpt-patrol-scheduler.js?v=0.1.0"></script>
   <script src="/gpt-progress-display.js?v=0.1.0"></script>
+  <script src="/template-migration-panel.js?v=0.1.0"></script>
   <script src="/distribution-ui.js?v=0.1.0"></script>
   <script src="/material-workspace.js?v=0.1.0"></script>
   <script src="/moments-publisher-panel.js?v=0.1.0"></script>

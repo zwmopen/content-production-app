@@ -49,9 +49,9 @@ test("模板仓库路径校验拒绝工作区之外的路径", () => {
 test("模板仓库提供可打开的全局/当前项目 HTML 入口", () => {
   const entry = templateRepositoryEntry();
   assert.ok(["global", "project"].includes(entry.scope));
-  assert.match(entry.path, /模板(?:仓库|台账)\.html$/);
+  assert.match(entry.path, /模板仓库\.html$/);
   assert.match(entry.globalPath, /模板仓库\.html$/);
-  assert.match(entry.projectPath, /模板台账\.html$/);
+  assert.match(entry.projectPath, /模板仓库\.html$/);
 });
 
 test("聚光卡片采集请求按 noteId 生成可去重的 explore 地址", () => {

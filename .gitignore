@@ -39,7 +39,15 @@ Thumbs.db
 /src/.test-success-*/
 /src/.test-rollback-*/
 /src/workbench-test-output.txt
+*.bak
 *.bak.*
+*.bak-*
+*.bak_*
+*.bak2-*
+*.WORKING_*
+*_last_upload_tokens.json
+.workbuddy/
 
 # 技能工作目录（含本地端口与令牌）
 /.superpowers/
+

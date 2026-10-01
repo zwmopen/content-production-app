@@ -33,9 +33,7 @@ test("模板仓库同时生成新入口和旧台账兼容入口，并包含描�
 
     const result = generateTemplateCatalog({ templateRoot: root });
     const html = fs.readFileSync(result.output, "utf8");
-    const legacyHtml = fs.readFileSync(result.legacyOutput, "utf8");
     assert.equal(path.basename(result.output), "模板仓库.html");
-    assert.equal(path.basename(result.legacyOutput), "模板台账.html");
     assert.match(html, /<title>模板仓库<\/title>/);
     assert.match(html, /测试模板仓库/);
     assert.match(html, /data-category="travel"/);
@@ -51,7 +49,6 @@ test("模板仓库同时生成新入口和旧台账兼容入口，并包含描�
     assert.match(html, /tag-list\{display:flex;flex-wrap:wrap/);
     assert.doesNotMatch(html, /在线标题：/);
     assert.match(html, /navigator\.clipboard/);
-    assert.equal(legacyHtml, html);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

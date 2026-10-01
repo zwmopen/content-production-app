@@ -4,6 +4,8 @@ if (process.env.TB_REMOTE_DEBUGGING_PORT) {
   app.commandLine.appendSwitch("remote-debugging-port", String(process.env.TB_REMOTE_DEBUGGING_PORT));
 }
 
+const IS_DESKTOP_HIDDEN = process.env.TB_DESKTOP_HIDDEN === "1" || process.argv.includes("--hidden") || process.argv.includes("--background");
+
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -293,9 +295,9 @@ function assistantOverlayIsDetached() {
 function applyAssistantOverlayWindowMode(overlay = assistantOverlayWindow) {
   if (!overlay || overlay.isDestroyed()) return;
   const detached = assistantOverlayIsDetached();
-  const alwaysOnTop = assistantOverlayState.settings?.alwaysOnTop === true;
   overlay.setParentWindow(detached ? null : mainWindow);
-  overlay.setAlwaysOnTop(detached && alwaysOnTop, "floating", 1);
+  // 严格杜绝系统级置顶，禁止挡在用户屏幕和当前工作窗口前方
+  overlay.setAlwaysOnTop(false);
 }
 
 function hideAttachedAssistantOverlayWhenInactive() {
@@ -308,6 +310,7 @@ function hideAttachedAssistantOverlayWhenInactive() {
 }
 
 function showAssistantOverlayForWorkbench() {
+  if (IS_DESKTOP_HIDDEN) return;
   if (!assistantOverlayWindow || assistantOverlayWindow.isDestroyed()) return;
   if (assistantOverlayState.catVisible === false) return;
   if (assistantOverlayIsDetached() || mainWindow?.isFocused()) assistantOverlayWindow.showInactive();
@@ -4402,6 +4405,18 @@ function restoreMainWindow() {
   mainWindow.focus();
 }
 
+// [2026-09-25 修] 用户铁律：实例日常必须在后台最小化运行，严禁启动时抢焦点/置顶。
+// 启动路径统一走这里：showInactive（不夺焦点）+ minimize（收进任务栏），用户手动打开才恢复前台。
+function showMainWindowBackgrounded() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (!mainWindow.isVisible()) mainWindow.showInactive();
+    if (!mainWindow.isMinimized()) mainWindow.minimize();
+  } catch (error) {
+    appendDesktopLog("background-show-failed", error.message);
+  }
+}
+
 let gptWindowRestoreTimer = null;
 function notifyWindowRestored(reason = "show") {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -4591,7 +4606,7 @@ async function createWindow() {
     minWidth: 1120,
     minHeight: 700,
     title: APP_TITLE,
-    show: true,
+    show: !IS_DESKTOP_HIDDEN,
     skipTaskbar: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -4606,8 +4621,9 @@ async function createWindow() {
   });
   mainWindow = window;
   window.on("page-title-updated", (event) => event.preventDefault());
-  window.show();
-  window.focus();
+  if (!IS_DESKTOP_HIDDEN) {
+    showMainWindowBackgrounded();
+  }
   window.on("minimize", () => {
     hideAllGptViews();
     hideOnlinePlatformViews();
@@ -4652,25 +4668,7 @@ async function createWindow() {
   });
 
   window.once("ready-to-show", () => {
-    if (process.env.TB_DESKTOP_HIDDEN !== "1") window.show();
-  });
-  // The "show" event may fire before the renderer's DOM is ready, causing
-  // notifyWindowRestored to send desktop:window-restored into the void.
-  // Re-trigger after the page finishes loading so the renderer can actually
-  // receive it and restore the embedded GPT surface.
-  window.webContents.once("did-finish-load", () => {
-    setTimeout(() => notifyWindowRestored("did-finish-load"), 200);
-  });
-  window.webContents.on("did-fail-load", (_event, code, description, validatedURL, isMainFrame) => {
-    appendDesktopLog("shell-load-failed", `code=${code} main=${isMainFrame} url=${validatedURL} ${description}`);
-  });
-  window.webContents.on("render-process-gone", (_event, details) => {
-    gptAccounts.clear();
-    mainWindow = null;
-  });
-
-  window.once("ready-to-show", () => {
-    if (process.env.TB_DESKTOP_HIDDEN !== "1") window.show();
+    if (!IS_DESKTOP_HIDDEN) showMainWindowBackgrounded();
   });
   // The "show" event may fire before the renderer's DOM is ready, causing
   // notifyWindowRestored to send desktop:window-restored into the void.
@@ -4689,9 +4687,10 @@ async function createWindow() {
   const versionedUrl = new URL(APP_URL);
   versionedUrl.searchParams.set("appVersion", APP_VERSION);
   await window.loadURL(versionedUrl.toString());
-  window.show();
-  window.focus();
-  await ensureAssistantOverlay();
+  if (!IS_DESKTOP_HIDDEN) {
+    showMainWindowBackgrounded();
+    await ensureAssistantOverlay();
+  }
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -4699,11 +4698,17 @@ appendDesktopLog("desktop-instance-lock", `id=${CONTENT_INSTANCE_ID} name=${app.
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, commandLine) => {
     if (!mainWindow) return;
+    const forceShow = Array.isArray(commandLine) && commandLine.some(arg => arg === "--show" || arg === "--restore");
+    if (IS_DESKTOP_HIDDEN && !forceShow) {
+      appendDesktopLog("second-instance-ignored-in-hidden-mode", `args=${(commandLine || []).join(" ")}`);
+      return;
+    }
+    // [2026-09-25 修] second-instance 唤醒一律不夺焦点：恢复可见但不置顶，
+    // 根治守护重启风暴期间窗口反复弹到最前的问题。用户要前台请走托盘菜单。
     if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    mainWindow.showInactive();
   });
   app.whenReady().then(() => {
     appendDesktopLog(

@@ -1,3 +1,11 @@
+# 2026-09-28 / 模板迁移套板迁移生产面板（首版，待真实路径验收）
+
+- 新增共享技能：`D:\AICode\AI\skills\技能包\技能\template-migration-production`，运行时通过 Codex/Agents junction 接入；显示名为“模板迁移套板迁移生产”。
+- 新增内容生产面板入口：`模板迁移`。输入模板路径、素材库路径、成品库路径后，递归扫描素材分类和素材包，建立批次并显示当前模板、当前素材、当前套数和进度。
+- 新增批次状态接口：`/api/template-migration/session`、`/refresh`、`/confirm`、`/advance`；固定准备目录为成品库根目录下的 `_套板迁移`，用户输入 `1` 后才创建当前套目录。
+- 新增本地测试：`src/lib/template-migration.test.js`、`src/server/routes/template-migration.test.js`；已通过模板锁定、递归标签读取、等待 `1` 和目录创建回归。
+- 当前边界：面板和批次状态已落地，但尚未凭空接入真实图像生成；待用户提供三条路径后，再用当前内容生产单窗口完成真实生产验收。面板“标记当前完成”不能替代本地图片、文案、`manifest.json` 和质检证据。
+
 # 2026-09-17 / 内容生产流水线 v2.6.0 Stable 固化与手机局域网分发基准交付
 
 - **版本发布与 Git 基线**：
