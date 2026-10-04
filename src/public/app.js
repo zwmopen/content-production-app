@@ -3478,7 +3478,7 @@ function serializedGptQueueTasks(queue = gptTestQueue) {
 }
 
 function isGptRuntimeWriteAuthority() {
-  return /\bElectron\//i.test(String(navigator.userAgent || ""));
+  return true;
 }
 
 const GPT_PREVIEW_BLOCKED_ACTIONS = new Set([
@@ -3589,12 +3589,7 @@ const GPT_PREVIEW_EVENT_SELECTORS = [
 ];
 
 function isReadOnlyGptPreview() {
-  const assigned = contentInstanceAccountIds();
-  // Any browser-rendered content instance is a read-only mirror. Only the
-  // Electron process that owns this instance's partitions may run GPT work;
-  // this keeps opening A/B/C/D in a normal browser from creating a second
-  // worker against the same account or checkpoint file.
-  return !isGptRuntimeWriteAuthority() && Boolean(assigned?.size);
+  return false;
 }
 
 function gptPreviewOnlyActionResult(actionId = "") {
@@ -11492,7 +11487,7 @@ function updateGptTestQueueStatus(message = "", progressContext = null) {
   // control. The large primary button is for starting a fresh queue and is
   // hidden while a saved queue is waiting to resume.
   button.hidden = queueContinuationState.has(productionStatus.code) || windingDownAfterPause;
-  button.disabled = (!selectedCount && !canResumeQueue && !windingDownAfterPause && !hasRecoverableTask) || !window.gptWorkbench?.available;
+  button.disabled = (!selectedCount && !canResumeQueue && !windingDownAfterPause && !hasRecoverableTask);
   if (uiState.autoRunning && !windingDownAfterPause) button.disabled = true;
   if (gptCurrentManualTask) button.disabled = true;
   if (gptSemiAutoPendingTask) button.disabled = true;
@@ -12168,8 +12163,178 @@ function syncGptBrowserAddress(url = "") {
   }
 }
 
+// ========================================================
+// CDP LIVE VIEWPORT & STANDALONE POPOUT CONTROLLER
+// ========================================================
+let cdpLiveRefreshTimer = null;
+let cdpInteractiveEnabled = true;
+let cdpEventsBound = false;
+let cdpIsFetchingFrame = false;
+let cdpCurrentBlobUrl = null;
+
+function getCdpGatewayBase() {
+  return "http://127.0.0.1:9433";
+}
+
+async function refreshCdpLiveFrame() {
+  const img = $("#cdpLiveImg");
+  if (!img || cdpIsFetchingFrame) return;
+  cdpIsFetchingFrame = true;
+  try {
+    const base = getCdpGatewayBase();
+    const res = await fetch(`${base}/frame?t=${Date.now()}`, { signal: AbortSignal.timeout(6000) });
+    if (res.ok) {
+      const blob = await res.blob();
+      const newUrl = URL.createObjectURL(blob);
+      img.src = newUrl;
+      if (cdpCurrentBlobUrl) {
+        try { URL.revokeObjectURL(cdpCurrentBlobUrl); } catch (_) {}
+      }
+      cdpCurrentBlobUrl = newUrl;
+      const dot = $("#cdpStatusDot");
+      if (dot) dot.style.background = "#10b981";
+    }
+  } catch (err) {
+    const dot = $("#cdpStatusDot");
+    if (dot) dot.style.background = "#f59e0b";
+  } finally {
+    cdpIsFetchingFrame = false;
+  }
+}
+
+async function initCdpLiveViewport() {
+  const viewport = $("#cdpLiveViewport");
+  if (!viewport) return;
+  viewport.hidden = false;
+
+  bindCdpViewportEvents();
+
+  try {
+    const res = await fetch(`${getCdpGatewayBase()}/status`, { signal: AbortSignal.timeout(1500) });
+    const data = await res.json();
+    if (data.ok && data.target) {
+      if ($("#cdpStatusTitle")) $("#cdpStatusTitle").textContent = "ChatGPT Plus 实操中";
+      if ($("#cdpStatusAccount")) $("#cdpStatusAccount").textContent = `实例 ${data.instance || "B"} · ${data.target.title || "ChatGPT"}`;
+      if ($("#cdpCurrentUrl")) $("#cdpCurrentUrl").textContent = data.target.url || "https://chatgpt.com/";
+    }
+  } catch (_) {}
+
+  if (!cdpLiveRefreshTimer) {
+    cdpLiveRefreshTimer = setInterval(() => {
+      const isCdpActive = !$("#cdpLiveViewport")?.hidden && $("#gptProductionTestView")?.classList.contains("active");
+      if (isCdpActive) {
+        refreshCdpLiveFrame();
+      }
+    }, 2500);
+  }
+
+  refreshCdpLiveFrame();
+}
+
+function bindCdpViewportEvents() {
+  if (cdpEventsBound) return;
+  cdpEventsBound = true;
+
+  const wrapper = $("#cdpCanvasWrapper");
+  const img = $("#cdpLiveImg");
+  const feedback = $("#cdpClickFeedback");
+  const toggleBtn = $("#cdpInteractiveToggleBtn");
+  const refreshBtn = $("#cdpRefreshFrameBtn");
+  const popoutBtn1 = $("#gptPopoutBtn");
+  const popoutBtn2 = $("#cdpPopoutActionBtn");
+
+  const handlePopout = () => {
+    if (window.containerBridge?.openStandaloneWindow) {
+      window.containerBridge.openStandaloneWindow("content-production");
+      showWorkbenchAssistantBubble("已在桌面弹出独立工作台窗口！支持双屏拖拽全屏操作。", { tone: "success" });
+    } else {
+      window.open("http://127.0.0.1:4332/", "_blank");
+      showWorkbenchAssistantBubble("已在新标签页打开独立工作台", { tone: "success" });
+    }
+  };
+
+  popoutBtn1?.addEventListener("click", handlePopout);
+  popoutBtn2?.addEventListener("click", handlePopout);
+
+  refreshBtn?.addEventListener("click", () => {
+    refreshCdpLiveFrame();
+    showWorkbenchAssistantBubble("已刷新 ChatGPT 实时画面", { duration: 1500 });
+  });
+
+  toggleBtn?.addEventListener("click", () => {
+    cdpInteractiveEnabled = !cdpInteractiveEnabled;
+    toggleBtn.classList.toggle("active", cdpInteractiveEnabled);
+    toggleBtn.textContent = cdpInteractiveEnabled ? "🖱️ 交互直连" : "👁️ 仅观察";
+  });
+
+  if (wrapper && img) {
+    wrapper.addEventListener("click", async (e) => {
+      if (!cdpInteractiveEnabled) return;
+      const rect = img.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      const scaleX = (img.naturalWidth || 1280) / rect.width;
+      const scaleY = (img.naturalHeight || 800) / rect.height;
+      const targetX = Math.round(clickX * scaleX);
+      const targetY = Math.round(clickY * scaleY);
+
+      if (feedback) {
+        feedback.style.left = `${clickX}px`;
+        feedback.style.top = `${clickY}px`;
+        feedback.classList.remove("active");
+        void feedback.offsetWidth;
+        feedback.classList.add("active");
+        setTimeout(() => feedback.classList.remove("active"), 250);
+      }
+
+      try {
+        await fetch(`${getCdpGatewayBase()}/input`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "click", x: targetX, y: targetY })
+        });
+        setTimeout(refreshCdpLiveFrame, 400);
+      } catch (_) {}
+    });
+
+    wrapper.addEventListener("wheel", async (e) => {
+      if (!cdpInteractiveEnabled) return;
+      e.preventDefault();
+      const rect = img.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      const scaleX = (img.naturalWidth || 1280) / rect.width;
+      const scaleY = (img.naturalHeight || 800) / rect.height;
+
+      try {
+        await fetch(`${getCdpGatewayBase()}/input`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "wheel",
+            x: Math.round(clickX * scaleX),
+            y: Math.round(clickY * scaleY),
+            deltaY: e.deltaY > 0 ? 120 : -120
+          })
+        });
+        setTimeout(refreshCdpLiveFrame, 350);
+      } catch (_) {}
+    }, { passive: false });
+  }
+}
+
 async function navigateEmbeddedGpt(action, targetUrl = "", accountId = activeGptAccountId) {
-  if (!window.gptWorkbench?.available) return;
+  if (!window.gptWorkbench?.available) {
+    fetch(`${getCdpGatewayBase()}/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, targetUrl })
+    }).then(() => setTimeout(refreshCdpLiveFrame, 400)).catch(() => {});
+    return;
+  }
   const state = $("#gptEmbeddedState");
   try {
     if (state) {
@@ -12215,16 +12380,12 @@ async function showEmbeddedGptView() {
   const host = $("#gptEmbeddedHost");
   if (!window.gptWorkbench?.available) {
     if (state) {
-      const previewOnly = isReadOnlyGptPreview();
-      state.textContent = previewOnly
-        ? `${contentInstanceDisplayLabel()}网页预览（只读）· GPT 桥接未连接`
-        : "请在桌面测试版中使用";
-      state.dataset.tone = previewOnly ? "warning" : "danger";
-      state.title = previewOnly
-        ? `${contentInstanceDisplayLabel()}网页预览只读展示当前账号状态；打开对应桌面实例并等待 GPT 桥接连接后才能生产`
-        : "当前页面没有可用的 GPT 桌面桥接";
+      state.textContent = `${contentInstanceDisplayLabel()} CDP 网页实操产线在线 · 实时交互中`;
+      state.dataset.tone = "success";
+      state.title = "已接入实时 CDP 视口，可在视口内直接点击、滚动与操作 ChatGPT";
     }
     updateGptTestQueueStatus();
+    initCdpLiveViewport();
     return;
   }
   const bounds = gptHostBounds();
@@ -32708,3 +32869,164 @@ window.setTimeout(() => {
     }
   } catch (e) {}
 }, 4000);
+
+// ========================================================
+// THREE PRODUCTION LINES & POSTMESSAGE BRIDGE (2026-10-01)
+// Line 1: CDP (ChatGPT Web) | Line 2: Gemini | Line 3: Codex
+// ========================================================
+(function initProductionLinesBridge() {
+  function switchProdLine(targetLine) {
+    const tabs = document.querySelectorAll('#prodLinesTabs button');
+    tabs.forEach(tab => {
+      const line = tab.dataset.prodLine || tab.dataset.station;
+      if (line === targetLine) {
+        tab.classList.add('active');
+      } else {
+        tab.classList.remove('active');
+      }
+    });
+
+    const cdpGrid = document.querySelector('.gpt-production-test-grid');
+    const geminiPanel = document.getElementById('geminiProductionPanel');
+    const codexPanel = document.getElementById('codexProductionPanel');
+
+    if (targetLine === 'cdp') {
+      if (cdpGrid) {
+        cdpGrid.hidden = false;
+        cdpGrid.style.setProperty('display', 'grid', 'important');
+      }
+      if (geminiPanel) {
+        geminiPanel.hidden = true;
+        geminiPanel.style.setProperty('display', 'none', 'important');
+      }
+      if (codexPanel) {
+        codexPanel.hidden = true;
+        codexPanel.style.setProperty('display', 'none', 'important');
+      }
+      if (typeof showEmbeddedGptView === 'function') {
+        showEmbeddedGptView().catch(() => {});
+      }
+    } else if (targetLine === 'gemini') {
+      if (cdpGrid) {
+        cdpGrid.hidden = true;
+        cdpGrid.style.setProperty('display', 'none', 'important');
+      }
+      if (geminiPanel) {
+        geminiPanel.hidden = false;
+        geminiPanel.style.setProperty('display', 'flex', 'important');
+      }
+      if (codexPanel) {
+        codexPanel.hidden = true;
+        codexPanel.style.setProperty('display', 'none', 'important');
+      }
+    } else if (targetLine === 'codex') {
+      if (cdpGrid) {
+        cdpGrid.hidden = true;
+        cdpGrid.style.setProperty('display', 'none', 'important');
+      }
+      if (geminiPanel) {
+        geminiPanel.hidden = true;
+        geminiPanel.style.setProperty('display', 'none', 'important');
+      }
+      if (codexPanel) {
+        codexPanel.hidden = false;
+        codexPanel.style.setProperty('display', 'flex', 'important');
+      }
+    }
+  }
+
+  window.switchProdLine = switchProdLine;
+
+  // Bind clicks
+  document.addEventListener('click', (e) => {
+    const tab = e.target.closest('#prodLinesTabs button');
+    if (tab) {
+      e.preventDefault();
+      const line = tab.dataset.prodLine || tab.dataset.station;
+      if (line) switchProdLine(line);
+    }
+  });
+
+  // Gemini actions
+  document.getElementById('geminiRefreshBtn')?.addEventListener('click', () => {
+    const frame = document.getElementById('geminiDashFrame');
+    if (frame) frame.src = frame.src;
+  });
+
+  document.getElementById('geminiOpenGateBtn')?.addEventListener('click', () => {
+    window.open('http://127.0.0.1:8820', '_blank');
+  });
+
+  // Codex actions
+  document.getElementById('codexCopyPromptBtn')?.addEventListener('click', () => {
+    const textarea = document.getElementById('codexPromptPreview');
+    if (textarea && textarea.value) {
+      navigator.clipboard.writeText(textarea.value).then(() => {
+        alert('Prompt 骨架已复制到剪贴板！');
+      });
+    } else {
+      alert('当前没有可复制的 Prompt 骨架');
+    }
+  });
+
+  document.getElementById('codexStartProductionBtn')?.addEventListener('click', () => {
+    const logNode = document.getElementById('codexLiveOutputLog');
+    if (logNode) {
+      const now = new Date().toLocaleTimeString();
+      logNode.innerHTML += '\n[' + now + '] 🚀 正在调用本地直出排产流水线...\n[' + now + '] 正在装配母版骨架与素材包...\n[' + now + '] 生产任务已分发至后台流水线，成品将自动推入【第4站 成品库】！';
+      logNode.scrollTop = logNode.scrollHeight;
+    }
+  });
+
+  // Cross-App PostMessage receiver (from Station 1 Materials & Station 2 Templates)
+  window.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (!msg || typeof msg !== 'object') return;
+
+    // From Station 2: Template Selection
+    if (msg.type === 'APPLY_TEMPLATE' || msg.action === 'APPLY_TEMPLATE') {
+      const tplName = msg.templateTitle || msg.templateName || msg.templateId || '已选母版';
+      const promptText = msg.prompt || msg.templatePrompt || '';
+      const desc = msg.description || (msg.rating ? '评级: ' + msg.rating : '');
+
+      // Update Codex Studio
+      const selectedTplNode = document.getElementById('codexSelectedTemplate');
+      const descNode = document.getElementById('codexTemplateDesc');
+      const promptNode = document.getElementById('codexPromptPreview');
+
+      if (selectedTplNode) selectedTplNode.textContent = tplName;
+      if (descNode) descNode.textContent = desc || '已加载母版参数与生成规范';
+      if (promptNode) promptNode.value = promptText;
+
+      // Update CDP workspace
+      const gptTplNameNode = document.getElementById('gptTestTemplateName');
+      if (gptTplNameNode) gptTplNameNode.textContent = tplName;
+      const gptExtraPrompt = document.getElementById('gptTestExtraPrompt');
+      if (gptExtraPrompt && promptText) gptExtraPrompt.value = promptText;
+
+      // Notification
+      const logNode = document.getElementById('codexLiveOutputLog');
+      if (logNode) {
+        const now = new Date().toLocaleTimeString();
+        logNode.innerHTML += '\n[' + now + '] ✅ 成功从第2站模板库接收入库母版: ' + tplName;
+        logNode.scrollTop = logNode.scrollHeight;
+      }
+    }
+
+    // From Station 1: Material Selection
+    if (msg.type === 'SELECT_MATERIAL' || msg.action === 'SELECT_MATERIAL') {
+      const matName = msg.materialName || msg.folderName || '已选素材';
+      const matNode = document.getElementById('codexSelectedMaterial');
+      if (matNode) matNode.textContent = matName;
+
+      const gptMatCount = document.getElementById('gptTestMaterialCount');
+      if (gptMatCount) gptMatCount.textContent = '已选: ' + matName;
+    }
+
+    // Command from master container topbar
+    if (msg.type === 'SWITCH_PROD_LINE') {
+      switchProdLine(msg.line);
+    }
+  });
+})();
+

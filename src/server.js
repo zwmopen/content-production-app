@@ -9440,6 +9440,11 @@ async function route(req, res) {
     }
   }
 
+  if (pathname.startsWith("/api/cdp/")) {
+    const cdpViewportService = require("./lib/cdp-viewport-service");
+    return cdpViewportService.handleRoute(req, res, pathname, parsed);
+  }
+
   if (await conversionRoute.handleEarly(req, res, pathname, parsed, routeCtx)) return;
 
   if (remoteRequest) {
@@ -9870,6 +9875,11 @@ if (require.main === module) {
       startMomentsScheduler();
     }
     if (!contentOnlyMode) startMaterialWatcher();
+    try {
+      require("./lib/cdp-gateway");
+    } catch (e) {
+      console.warn("[CDP Gateway AutoStart]", e.message);
+    }
   });
 }
 

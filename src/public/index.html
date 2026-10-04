@@ -6,6 +6,13 @@
   <title>内容生产</title>
   <link rel="stylesheet" href="/styles.css?v=0.1.0" />
   <link rel="stylesheet" href="/template-migration.css?v=0.1.0" />
+  <script>
+    (function() {
+      if (window.location.search.includes('embedded=1') || window.self !== window.top) {
+        document.documentElement.classList.add('embedded-mode');
+      }
+    })();
+  </script>
   </head>
   <body>
     <div class="liquid-bg">
@@ -15,7 +22,7 @@
     </div>
 
     <main class="app-shell">
-      <nav class="workflow-rail glass" id="workflowRail" aria-label="工作流导航">
+      <nav class="workflow-rail glass" id="workflowRail" aria-label="工作流导航" style="display: none !important;">
         <div class="rail-brand">
           <button class="rail-collapse-button" id="railCollapseBtn" type="button" aria-label="收起侧边栏" aria-controls="workflowRail" aria-expanded="true" title="收起侧边栏">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
@@ -79,7 +86,7 @@
           </div>
         </div>
       </nav>
-      <header class="topbar glass">
+      <header class="topbar glass" style="display: none !important;">
         <section>
           <h1>内容生产</h1>
           <div class="subtitle">素材采集 · 本地预览 · 技能整理 · 可追溯维护</div>
@@ -430,12 +437,27 @@
       <section class="view active" id="gptProductionTestView">
         <section class="gpt-production-test-shell">
           <header class="gpt-production-test-heading">
-            <div>
-              <h2>素材与模板 × GPT 自动生产</h2>
+            <div class="prod-lines-master-header">
+              <div class="prod-lines-tabs" id="prodLinesTabs" role="tablist">
+                <button class="prod-line-tab active" data-prod-line="cdp" type="button" title="产线 1 · 网页 CDP 实操 (ChatGPT A/C 双实例)">
+                  <span class="prod-line-dot"></span>
+                  <span class="prod-line-name">产线 1 · 网页 CDP 实操</span>
+                  <span class="prod-line-tag">在线实操</span>
+                </button>
+                <button class="prod-line-tab" data-prod-line="gemini" type="button" title="产线 2 · 吉米 (Gemini) 视觉产线大盘 (8820 看板)">
+                  <span class="prod-line-dot gemini"></span>
+                  <span class="prod-line-name">产线 2 · 吉米 (Gemini) 视觉大盘</span>
+                  <span class="prod-line-tag">8820监控</span>
+                </button>
+                <button class="prod-line-tab" data-prod-line="codex" type="button" title="产线 3 · Codex / 本地直出排产台 (选料母版直接直出)">
+                  <span class="prod-line-dot codex"></span>
+                  <span class="prod-line-name">产线 3 · 本地直出工单台</span>
+                  <span class="prod-line-tag">自动化直出</span>
+                </button>
+              </div>
             </div>
             <div class="gpt-production-test-actions">
               <button id="gptProductionHistoryBtn" class="secondary-button" type="button" title="查看生产记录">生产记录</button>
-              <button class="page-help-button" type="button" data-page-help="gptProductionTestView" title="查看内容制作说明" aria-label="查看内容制作说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button>
               <button class="page-settings-button" type="button" data-open-page-settings="gptAuto" title="自动生产设置" aria-label="打开自动生产设置"><svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6A7 7 0 0 0 8.8 7L6.5 6.1l-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1A7 7 0 0 0 10.4 18l.3 2.6h4L15 18a7 7 0 0 0 1.5-1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg></button>
             </div>
           </header>
@@ -575,22 +597,117 @@
                   <button id="gptBrowserHomeBtn" type="button" title="打开 ChatGPT 首页" aria-label="打开 ChatGPT 首页">⌂</button>
                 </div>
                 <nav id="gptAccountTabs" class="gpt-account-tabs" aria-label="账号窗口切换"></nav>
+                <div class="gpt-toolbar-right-actions" style="display: flex; gap: 8px; align-items: center; margin-left: auto;">
+                  <button id="gptPopoutBtn" class="secondary-button cdp-popout-btn" type="button" title="独立弹出桌面窗口（支持双屏/拖拽操作）">◳ 独立窗口</button>
                   <button id="gptAddAccountBtn" class="gpt-add-account" type="button" title="添加账号窗口" aria-label="添加账号窗口">＋ 添加账号窗口</button>
+                </div>
               </header>
               <div id="gptEmbeddedHost" class="gpt-embedded-host" aria-label="当前账号窗口网页">
-                <div class="gpt-embedded-placeholder" data-gpt-preview-placeholder="shared">
-                  <span id="gptEmbeddedState" class="gpt-embedded-state" data-tone="busy" role="status" aria-live="polite">正在检查 GPT 窗口连接</span>
-                  <strong>正在读取 GPT 窗口状态</strong>
-                  <p>页面会根据当前实例和账号的连接状态更新；生产按钮仅在桌面桥接确认后可用。</p>
+                <div id="cdpLiveViewport" class="cdp-live-viewport">
+                  <div class="cdp-viewport-head">
+                    <div class="cdp-status-pill">
+                      <span class="cdp-status-dot pulsing" id="cdpStatusDot"></span>
+                      <strong id="cdpStatusTitle">ChatGPT 产线连通</strong>
+                      <span id="cdpStatusAccount" class="cdp-account-badge">实例 B · orlando</span>
+                    </div>
+                    <div class="cdp-url-pill">
+                      <span id="cdpCurrentUrl">https://chatgpt.com/</span>
+                    </div>
+                    <div class="cdp-actions-row">
+                      <button id="cdpRefreshFrameBtn" type="button" title="重新获取最新实时画面">↻ 刷新画面</button>
+                      <button id="cdpInteractiveToggleBtn" class="active" type="button" title="开启/关闭视口鼠标点击">🖱️ 交互直连</button>
+                      <button id="cdpPopoutActionBtn" class="cdp-popout-btn" type="button" title="弹出独立桌面窗口">◳ 独立浮窗</button>
+                    </div>
+                  </div>
+                  <div class="cdp-canvas-wrapper" id="cdpCanvasWrapper">
+                    <img id="cdpLiveImg" class="cdp-live-screen" alt="ChatGPT 实时操作画面" src="http://127.0.0.1:9433/frame" />
+                    <div id="cdpClickFeedback" class="cdp-click-indicator"></div>
+                  </div>
                 </div>
               </div>
-              <footer class="gpt-browser-addressbar" aria-label="当前账号窗口地址">
+              <footer class="gpt-browser-addressbar" aria-label="当前账号窗口地址" style="display: none !important;">
                 <span id="gptBrowserLoadingProgress" class="gpt-browser-loading-progress" role="progressbar" aria-label="网页加载进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="网页加载中" hidden><span id="gptBrowserLoadingBar"></span></span>
                 <label class="sr-only" for="gptBrowserAddressInput">网页地址</label>
                 <input id="gptBrowserAddressInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="默认 ChatGPT，可输入其他网址，按回车访问" aria-label="默认 ChatGPT，可输入其他网址，按回车访问" />
                 <button id="gptBrowserGoBtn" class="secondary-button gpt-browser-go-button" type="button" title="访问当前网址" aria-label="访问当前网址">→</button>
               </footer>
             </section>
+          </div>
+
+          <!-- 产线 2 · 吉米 Gemini 视觉产线监控大盘 -->
+          <div class="prod-line-panel" id="geminiProductionPanel" hidden>
+            <div class="gemini-dash-card codex-studio-card" style="height: 100%;">
+              <div class="codex-studio-card-head">
+                <h3><span>⚡</span> 吉米 (Gemini) 视觉高并发产线 · 8820 实时大盘</h3>
+                <div style="display: flex; gap: 8px;">
+                  <button class="secondary-button" id="geminiRefreshBtn" type="button">🔄 刷新数据</button>
+                  <button class="primary-button" id="geminiOpenGateBtn" type="button">🌐 独立窗口打开</button>
+                </div>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 8px;">
+                <div style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                  <div style="font-size: 11px; color: #94a3b8;">账号矩阵</div>
+                  <div style="font-size: 18px; font-weight: bold; color: #38bdf8;">6 大 Chrome Pro 账号</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                  <div style="font-size: 11px; color: #94a3b8;">可用总算力</div>
+                  <div style="font-size: 18px; font-weight: bold; color: #10b981;">290,304 点</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                  <div style="font-size: 11px; color: #94a3b8;">网关端口</div>
+                  <div style="font-size: 18px; font-weight: bold; color: #a855f7;">127.0.0.1:8792</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
+                  <div style="font-size: 11px; color: #94a3b8;">飞书自动入表</div>
+                  <div style="font-size: 18px; font-weight: bold; color: #f59e0b;">已接入 (双向同频)</div>
+                </div>
+              </div>
+              <iframe id="geminiDashFrame" src="http://127.0.0.1:8820" style="flex: 1; width: 100%; border: none; border-radius: 10px; background: #0b1320; min-height: 480px;"></iframe>
+            </div>
+          </div>
+
+          <!-- 产线 3 · Codex / 本地直出排产台 -->
+          <div class="prod-line-panel" id="codexProductionPanel" hidden>
+            <div class="codex-studio-shell">
+              <div class="codex-studio-card">
+                <div class="codex-studio-card-head">
+                  <h3><span>📥</span> 待生产工单 (选料 + 模板装配)</h3>
+                  <span class="prod-line-tag" id="codexJobStatus">待机 / 随时就绪</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 12px; flex: 1;">
+                  <div style="background: rgba(255,255,255,0.04); padding: 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.07);">
+                    <div style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">📂 选定素材包 (第1站素材库)</div>
+                    <div id="codexSelectedMaterial" style="font-size: 15px; font-weight: 600; color: #fff;">未选素材（可从第1站选料直通或在此选取）</div>
+                  </div>
+                  <div style="background: rgba(255,255,255,0.04); padding: 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.07);">
+                    <div style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">🎨 选定母版 (第2站模板库)</div>
+                    <div id="codexSelectedTemplate" style="font-size: 15px; font-weight: 600; color: #38bdf8;">未选母版（在第2站点击“🚀 套入制作”自动注入）</div>
+                    <div id="codexTemplateDesc" style="font-size: 12px; color: #cbd5e1; margin-top: 6px; line-height: 1.5;">暂无母版详细信息</div>
+                  </div>
+                  <div style="flex: 1; display: flex; flex-direction: column;">
+                    <div style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">📝 本地生成 Prompt 骨架与参数</div>
+                    <textarea id="codexPromptPreview" style="flex: 1; width: 100%; border-radius: 10px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); color: #e2e8f0; padding: 10px; font-family: monospace; font-size: 12px; resize: none; min-height: 120px;" placeholder="母版 Prompt 将在此处动态呈现..."></textarea>
+                  </div>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px;">
+                  <button class="secondary-button" id="codexCopyPromptBtn" type="button">📋 复制Prompt</button>
+                  <button class="primary-button" id="codexStartProductionBtn" type="button" style="background: linear-gradient(135deg, #a855f7, #6366f1); font-weight: 600;">🚀 一键本地自动化直出批跑</button>
+                </div>
+              </div>
+
+              <div class="codex-studio-card">
+                <div class="codex-studio-card-head">
+                  <h3><span>📊</span> 产出流水与成品直达</h3>
+                  <span class="prod-line-tag">自动推入第4站</span>
+                </div>
+                <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; text-align: center; color: #94a3b8; padding: 20px;">
+                  <div style="font-size: 40px;">🏭</div>
+                  <div style="font-weight: 600; color: #f1f5f9; font-size: 15px;">全自动无感直出交付流水线</div>
+                  <div style="font-size: 13px; line-height: 1.6; max-width: 320px;">选料与母版装配完成后，点击直出批跑，脚本将在后台自动生成成套 3:4 竖版大片，质检后无缝入库至【第4站 成品库】并自动完成台账登记。</div>
+                  <div id="codexLiveOutputLog" style="width: 100%; height: 160px; background: rgba(0,0,0,0.4); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); padding: 8px 12px; text-align: left; font-family: monospace; font-size: 11px; overflow-y: auto; color: #4ade80;">[就绪] 本地自动化生产流水线待机中...</div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
       </section>
