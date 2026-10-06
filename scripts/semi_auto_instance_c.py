@@ -652,16 +652,16 @@ async def run_semi_auto_flow(specified_material=None, interactive=True):
     ledger[mat_path]["last_product_dir"] = dest_dir
     save_ledger(ledger)
 
-    # 步骤 8：原子流转至 已发送0次（抖音小红书可发）
-    stage0_base = os.path.join(BASE_DIR, "已发送0次（抖音小红书可发）")
-    os.makedirs(stage0_base, exist_ok=True)
-    final_pkg_dir = os.path.join(stage0_base, os.path.basename(dest_dir))
+    # 步骤 8：原子流转至 成品库根目录
+    final_pkg_dir = os.path.join(BASE_DIR, os.path.basename(dest_dir))
     try:
+        if os.path.exists(final_pkg_dir):
+            shutil.rmtree(final_pkg_dir, ignore_errors=True)
         shutil.move(dest_dir, final_pkg_dir)
         dest_dir = final_pkg_dir
-        log(f"-> 质检合格，已原子流转至可发库存: {dest_dir}")
+        log(f"-> 质检合格，已原子流转至成品库: {dest_dir}")
     except Exception as e:
-        log(f"原子移动至已发送0次异常: {e}")
+        log(f"原子移动至成品库异常: {e}")
 
     send_toast("🎉 应用 C 半自动交付成功", f"{title} ({len(final_cards)}P 原版复刻无损原画 + 三平台文案已落盘)")
     log(f"🎉【全部工序圆满闭环】单套高品质方案已成功落盘！\n")

@@ -117,7 +117,7 @@ def inspect_single_work(work_dir: pathlib.Path, bucket_name: str):
     # 状态与分发时间
     usage_count = 0
     distributed_at = None
-    if bucket_name == "已发送0次（抖音小红书可发）":
+    if bucket_name in ("成品库（可直接分发）", "已发送0次（抖音小红书可发）"):
         status = "READY_TO_DISTRIBUTE"
         usage_count = 0
     elif bucket_name == "_制作中":
@@ -165,12 +165,10 @@ def inspect_single_work(work_dir: pathlib.Path, bucket_name: str):
 def scan_all_products():
     works = []
     
-    # 1. 扫描 已发送0次（抖音小红书可发）
-    stage0 = OUTPUT_BASE / "已发送0次（抖音小红书可发）"
-    if stage0.exists():
-        for d in sorted(stage0.iterdir()):
-            if d.is_dir() and not d.name.startswith('.'):
-                works.append(inspect_single_work(d, "已发送0次（抖音小红书可发）"))
+    # 1. 扫描 成品库根目录正式作品
+    for d in sorted(OUTPUT_BASE.iterdir()):
+        if d.is_dir() and not d.name.startswith(('.', '_', '已发送', '作品集', '不合格', '发布空间', '归档', '抖音小红书', '待制作')):
+            works.append(inspect_single_work(d, "成品库（可直接分发）"))
 
     # 2. 扫描 _制作中
     producing = OUTPUT_BASE / "_制作中"
@@ -178,11 +176,6 @@ def scan_all_products():
         for d in sorted(producing.iterdir()):
             if d.is_dir() and not d.name.startswith('.'):
                 works.append(inspect_single_work(d, "_制作中"))
-
-    # 3. 扫描 根目录在制品
-    for d in sorted(OUTPUT_BASE.iterdir()):
-        if d.is_dir() and not d.name.startswith(('.', '_', '已发送', '作品集', '不合格', '发布空间', '归档', '抖音小红书')):
-            works.append(inspect_single_work(d, "根目录暂存区"))
 
     # 4. 扫描 历史作品集 (作品集_XXX)
     for d in sorted(OUTPUT_BASE.iterdir()):
@@ -263,8 +256,8 @@ def generate_report():
     md.append(f"## 一、 全库宏观水位与库存汇总")
     md.append(f"| 统计维度 | 统计项 | 数量 | 说明 |")
     md.append(f"| :--- | :--- | :---: | :--- |")
-    md.append(f"| **全库成品总量** | 总计 | **{len(products)} 套** | 覆盖所有仓位作品 |")
-    md.append(f"| **可直接分发库存** | `已发送0次（可发库）` | **{len(by_bucket.get('已发送0次（抖音小红书可发）', []))} 套** | 手机端相册优先消费仓位 |")
+    ready_count = len(by_bucket.get('成品库（可直接分发）', [])) + len(by_bucket.get('已发送0次（抖音小红书可发）', []))
+    md.append(f"| **可直接分发库存** | `成品库直属目录` | **{ready_count} 套** | 手机端相册优先消费仓位 |")
     md.append(f"| **在制与暂存区** | `根目录暂存区` | **{len(by_bucket.get('根目录暂存区', []))} 套** | 15 套保持原状的在制品 |")
     md.append(f"| **历史已分发/归档** | `作品集容器/归档` | **{sum(len(v) for k, v in by_bucket.items() if k.startswith('作品集'))} 套** | 历史归档资产 |")
     md.append(f"| **生产模式分布** | `Codex-API` | **{len(by_mode.get('Codex-API', []))} 套** | 原素材驱动 5~20 张画册 |")

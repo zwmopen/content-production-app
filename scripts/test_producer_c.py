@@ -795,11 +795,9 @@ class TestProducerC:
         clean_title = re.sub(r"[\s\-_]*\d{8}$", "", clean_title)
         clean_title = re.sub(r'[\\/:*?"<>|]', '_', clean_title).strip()[:40]
         ts_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        folder_name = f"{ts_str}-网页CDP-{clean_title}"
+        folder_name = f"{ts_str}-网页CDP-C-zxplus-{clean_title}"
         producing_base = os.path.join(OUTPUT_BASE, "_制作中")
-        stage0_base = os.path.join(OUTPUT_BASE, "已发送0次（抖音小红书可发）")
         os.makedirs(producing_base, exist_ok=True)
-        os.makedirs(stage0_base, exist_ok=True)
         target_dir = os.path.join(producing_base, folder_name)
 
         saved_files = await self.download_and_verify(target_dir, expected_count=final_img_cnt)
@@ -838,25 +836,32 @@ class TestProducerC:
         manifest_data = {
             "title": mat_name,
             "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "pipeline": "xhs-card-replica-pipeline V5.0 原图排版骨架版",
+            "pipeline": "网页CDP-C-zxplus",
             "worker": "Instance-C",
+            "account": "zxplus",
+            "tags": ["待发送", "小红书可发", "抖音可发"],
             "rawMaterialPath": mat_dir,
+            "finishedProductPath": target_dir,
             "imageCount": len(saved_files),
             "plannedImageCount": attached_cnt,
-            "status": "PASS"
+            "status": "PASS",
+            "lifecycleStatus": "COMPLETED"
         }
         with open(os.path.join(target_dir, "manifest.json"), "w", encoding="utf-8") as f:
             json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 
-        # 13. 验真门禁通过，原子移动至 已发送0次（抖音小红书可发）
-        final_target_dir = os.path.join(stage0_base, folder_name)
+        # 13. 验真门禁通过，原子移动至成品库根目录
+        final_target_dir = os.path.join(OUTPUT_BASE, folder_name)
         try:
             import shutil
             if os.path.exists(final_target_dir):
                 shutil.rmtree(final_target_dir, ignore_errors=True)
             shutil.move(target_dir, final_target_dir)
             target_dir = final_target_dir
-            log(f"-> 质检验收通过，已原子移库至可发库: {target_dir}")
+            manifest_data["finishedProductPath"] = target_dir
+            with open(os.path.join(target_dir, "manifest.json"), "w", encoding="utf-8") as f:
+                json.dump(manifest_data, f, ensure_ascii=False, indent=2)
+            log(f"-> 质检验收通过，已原子移库至成品库根目录: {target_dir}")
         except Exception as e_mv:
             log(f"-> 移库异常（保留在_制作中）: {e_mv}")
 

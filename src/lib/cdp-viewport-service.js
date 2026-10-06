@@ -21,9 +21,19 @@ class CdpSession {
       const tabs = await res.json();
       if (!Array.isArray(tabs)) return null;
 
-      let target = tabs.find(t => t.url && /chatgpt\.com|chat\.openai\.com/i.test(t.url));
-      if (!target) {
-        target = tabs.find(t => t.type === "page" && !t.url.includes("assistant-overlay"));
+      // Filter out internal workbench, localhost, assistant overlays, file urls
+      const externalPages = tabs.filter(t =>
+        t.type === "page" &&
+        t.url &&
+        !t.url.includes("127.0.0.1") &&
+        !t.url.includes("localhost") &&
+        !t.url.includes("assistant-overlay") &&
+        !t.url.startsWith("file:")
+      );
+
+      let target = externalPages.find(t => /chatgpt\.com|chat\.openai\.com|auth.*\.openai\.com/i.test(t.url));
+      if (!target && externalPages.length > 0) {
+        target = externalPages[0];
       }
       return target || null;
     } catch (_) {
@@ -33,7 +43,13 @@ class CdpSession {
 
   async ensureConnection(port) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      return true;
+      if (this.target && this.target.url && (this.target.url.includes("127.0.0.1") || this.target.url.includes("localhost"))) {
+        try { this.ws.close(); } catch (_) {}
+        this.ws = null;
+        this.target = null;
+      } else {
+        return true;
+      }
     }
     if (this.connecting) {
       return this.connecting;
@@ -154,9 +170,8 @@ class CdpSession {
     try {
       const res = await this.send("Page.captureScreenshot", {
         format: "jpeg",
-        quality: 55,
-        captureBeyondViewport: true,
-        clip: { x: 0, y: 0, width: 1280, height: 800, scale: 1 }
+        quality: 80,
+        captureBeyondViewport: false
       }, 5000);
 
       if (res && res.data) {
@@ -238,7 +253,17 @@ class CdpSession {
   }
 }
 
-const cdpSession = new CdpSession();
+const sessionMap = new Map();
+
+function getCdpSession(port) {
+  const p = Number(port) || 9432;
+  if (!sessionMap.has(p)) {
+    sessionMap.set(p, new CdpSession());
+  }
+  return sessionMap.get(p);
+}
+
+const cdpSession = getCdpSession(9432);
 
 async function probeCdpPort() {
   const now = Date.now();
@@ -249,6 +274,7 @@ async function probeCdpPort() {
   const portsToTry = [
     Number(process.env.TB_REMOTE_DEBUGGING_PORT),
     9432,
+    9431,
     9333,
     9334
   ].filter(p => Number.isInteger(p) && p > 0);
@@ -272,6 +298,7 @@ let streamInterval = null;
 
 function ensureStreamPump(port) {
   if (streamInterval) return;
+  const session = getCdpSession(port);
   streamInterval = setInterval(async () => {
     if (streamClients.size === 0) {
       clearInterval(streamInterval);
@@ -279,7 +306,7 @@ function ensureStreamPump(port) {
       return;
     }
     try {
-      const buf = await cdpSession.captureFrame(port);
+      const buf = await session.captureFrame(port);
       const header = Buffer.from(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buf.length}\r\n\r\n`);
       const footer = Buffer.from("\r\n");
       for (const client of streamClients) {
@@ -306,16 +333,18 @@ async function handleRoute(req, res, pathname, parsed) {
     return res.end();
   }
 
-  const port = await probeCdpPort();
+  const queryPort = parsed?.query?.port ? Number(parsed.query.port) : null;
+  const port = (queryPort && Number.isInteger(queryPort) && queryPort > 0) ? queryPort : await probeCdpPort();
+  const session = getCdpSession(port);
 
   if (pathname === "/api/cdp/status" && req.method === "GET") {
-    const target = await cdpSession.getTarget(port);
+    const target = await session.getTarget(port);
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({
       ok: true,
       online: Boolean(target),
       port,
-      instance: process.env.CONTENT_INSTANCE_ID || "B",
+      instance: port === 9431 ? "A" : (port === 9432 ? "B" : (process.env.CONTENT_INSTANCE_ID || "B")),
       target: target ? {
         id: target.id,
         title: target.title,
@@ -327,7 +356,7 @@ async function handleRoute(req, res, pathname, parsed) {
 
   if (pathname === "/api/cdp/frame" && req.method === "GET") {
     try {
-      const buf = await cdpSession.captureFrame(port);
+      const buf = await session.captureFrame(port);
       res.writeHead(200, {
         "Content-Type": "image/jpeg",
         "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -374,11 +403,54 @@ async function handleRoute(req, res, pathname, parsed) {
         const { type, x = 0, y = 0, deltaX = 0, deltaY = 0, text = "" } = payload;
 
         if (type === "click") {
-          await cdpSession.dispatchClick(port, x, y);
+          await session.dispatchClick(port, x, y);
         } else if (type === "wheel") {
-          await cdpSession.dispatchWheel(port, x, y, deltaX, deltaY);
+          await session.dispatchWheel(port, x, y, deltaX, deltaY);
         } else if (type === "type") {
-          await cdpSession.insertText(port, text);
+          await session.insertText(port, text);
+        } else if (type === "prompt") {
+          const escaped = JSON.stringify(String(text || ''));
+          const injectScript = `
+            (() => {
+              const text = ${escaped};
+              const input = document.querySelector('#prompt-textarea') || document.querySelector('div[contenteditable="true"]') || document.querySelector('textarea');
+              if (!input) return false;
+              input.focus();
+              try {
+                document.execCommand('selectAll', false, null);
+                const inserted = document.execCommand('insertText', false, text);
+                if (!inserted) {
+                  if (input.tagName === 'TEXTAREA') {
+                    input.value = text;
+                  } else {
+                    input.innerText = text;
+                  }
+                  input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+              } catch (_) {
+                if (input.tagName === 'TEXTAREA') {
+                  input.value = text;
+                } else {
+                  input.innerText = text;
+                }
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+              setTimeout(() => {
+                const btn = document.querySelector('button[data-testid="send-button"]') ||
+                            document.querySelector('button[aria-label="Send prompt"]') ||
+                            document.querySelector('button[aria-label="发送提示词"]') ||
+                            document.querySelector('button[aria-label="发送消息"]') ||
+                            document.querySelector('button[aria-label*="发送"]');
+                if (btn && !btn.disabled) {
+                  btn.click();
+                } else {
+                  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                }
+              }, 250);
+              return true;
+            })()
+          `;
+          await session.evaluate(port, injectScript);
         }
 
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -391,6 +463,21 @@ async function handleRoute(req, res, pathname, parsed) {
     return;
   }
 
+  if (pathname === "/api/cdp/activate" && req.method === "POST") {
+    try {
+      const target = await session.getTarget(port);
+      if (target && target.id) {
+        await session.send("Target.activateTarget", { targetId: target.id }).catch(() => {});
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+    }
+    return;
+  }
+
   if (pathname === "/api/cdp/action" && req.method === "POST") {
     let body = "";
     req.on("data", chunk => body += chunk);
@@ -400,13 +487,13 @@ async function handleRoute(req, res, pathname, parsed) {
         const { action } = payload;
 
         if (action === "reload") {
-          await cdpSession.reload(port);
+          await session.reload(port);
         } else if (action === "home") {
-          await cdpSession.navigate(port, "https://chatgpt.com/");
+          await session.navigate(port, "https://chatgpt.com/");
         } else if (action === "back") {
-          await cdpSession.evaluate(port, "history.back()");
+          await session.evaluate(port, "history.back()");
         } else if (action === "forward") {
-          await cdpSession.evaluate(port, "history.forward()");
+          await session.evaluate(port, "history.forward()");
         }
 
         res.writeHead(200, { "Content-Type": "application/json" });

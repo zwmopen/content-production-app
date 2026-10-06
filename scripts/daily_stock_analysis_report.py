@@ -9,8 +9,8 @@ sys.stdout.reconfigure(encoding='utf-8')
 # 基础路径配置
 PROJECT_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目"
 BASE_STOCK_DIR = os.path.join(PROJECT_ROOT, r"成品库（GPT+本地脚本制作）")
-STAGE0_DIR = os.path.join(BASE_STOCK_DIR, r"已发送0次（抖音小红书可发）")
-STAGE1_DIR = os.path.join(BASE_STOCK_DIR, r"已发送1次（微信公众号可发）")
+STAGE0_DIR = BASE_STOCK_DIR
+STAGE1_DIR = os.path.join(BASE_STOCK_DIR, r"_已发送1次（微信公众号可发）")
 MATERIAL_AUTUMN_DIR = os.path.join(PROJECT_ROOT, r"01-素材库\秋季（9—11月·智能分类）")
 REPORT_OUTPUT_DIR = r"D:\AICode\运行数据\江湖有旅人\库存日报"
 
@@ -60,7 +60,7 @@ def scan_stage0():
 
     for item in os.listdir(STAGE0_DIR):
         item_path = os.path.join(STAGE0_DIR, item)
-        if not os.path.isdir(item_path):
+        if not os.path.isdir(item_path) or item in ('发布空间', '待制作待补全'):
             continue
 
         if item == '_夏季暂时不用':

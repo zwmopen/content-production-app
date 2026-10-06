@@ -76,6 +76,12 @@ _LABEL_RE = re.compile(
 # 整行只有标签、后面没内容（如单独的 `正文：`）→ 整行丢弃
 _DROP_RE = re.compile(r"^[ \t]*(?:正文|内容|话题|标题)[ \t]*[：:][ \t]*$")
 
+# 剥离网页端与客户端 UI 免责声明
+_FOOTER_STRIP_RE = re.compile(
+    r"(?:ChatGPT\s*可能会出错[。，\.]*请核查重要信息[。，\.]*|最新一条回复|内容由\s*AI\s*生成[，。]*仅供参考)",
+    re.IGNORECASE
+)
+
 
 def substance_of(text: str) -> int:
     """实质字数：剔除全部空白、U+2800 与 `<<<...>>>` 标记。"""
@@ -93,11 +99,22 @@ def _is_mark(line: str) -> bool:
 
 def clean_copy_text(text: str) -> tuple[str, int]:
     """纯净化：剥标签 + 分隔收敛成单个 `U+2800`。返回 (结果, 被剥离字符数)。"""
+    # 修复前缀截断
+    if text.startswith("ION_START:"):
+        text = "<<<VERS" + text
+    elif text.startswith("VERSION_START:"):
+        text = "<<<" + text
+
+    # 剥离 UI 声明
+    text_stripped = _FOOTER_STRIP_RE.sub("", text)
+    footer_removed = len(text) - len(text_stripped)
+    text = text_stripped
+
     # ⚠️ 产出方会写出 `\t\r\r\n`：只剥一个 \r 会让 `\t\r` 逃过判据，
     #    整份文件一行都修不上却报 0。必须 rstrip("\r") 全剥。
     raw_lines = [ln.rstrip("\r") for ln in text.split("\n")]
 
-    removed = 0
+    removed = footer_removed
     stage = []
     for ln in raw_lines:
         if _is_mark(ln):

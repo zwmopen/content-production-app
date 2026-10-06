@@ -50,14 +50,7 @@ function resolveStageDirectory(workflowRoot, primaryName, fallbackName) {
   if (fs.existsSync(primaryPath)) return primaryPath;
   const fallbackPath = path.join(workflowRoot, fallbackName);
   if (fs.existsSync(fallbackPath)) return fallbackPath;
-  return primaryPath;
-}
-
-function resolveStageDirectory(workflowRoot, primaryName, fallbackName) {
-  const primaryPath = path.join(workflowRoot, primaryName);
-  if (fs.existsSync(primaryPath)) return primaryPath;
-  const fallbackPath = path.join(workflowRoot, fallbackName);
-  if (fs.existsSync(fallbackPath)) return fallbackPath;
+  if (primaryName.includes("已发送0次")) return workflowRoot;
   return primaryPath;
 }
 
@@ -526,7 +519,7 @@ function renameCollectionType(options = {}) {
   const snapshot = getDistributionSnapshot({ publishRoot, libraryRoot });
   const item = snapshot.collections.find((entry) => entry.name === collection);
   if (!item?.sourcePath || !["mobile", "official"].includes(item.workflowStage)) {
-    throw new Error("只能修改已发送0次（抖音小红书可发）或已发送1次（微信公众号可发）里的真实作品集");
+    throw new Error("只能修改成品库（抖音小红书可发）或已发送1次（微信公众号可发）里的真实作品集");
   }
   const stageRoots = getWorkflowStageRoots(libraryRoot);
   const sourcePath = fs.realpathSync.native(item.sourcePath);

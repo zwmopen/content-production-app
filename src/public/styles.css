@@ -19818,11 +19818,85 @@ body[data-theme="midnight-glass"] .publishing-platform-web-surface {
 
 .gpt-production-test-grid {
   display: grid !important;
-  grid-template-columns: 440px 1fr !important;
-  gap: 14px !important;
+  grid-template-columns: minmax(260px, 280px) 1fr !important;
+  gap: 10px !important;
   flex: 1 1 auto !important;
   height: calc(100% - 64px) !important;
   min-height: 0 !important;
+  transition: grid-template-columns 0.25s ease !important;
+}
+
+.gpt-production-test-grid.library-collapsed,
+html.embedded-mode .gpt-production-test-grid.library-collapsed,
+body.is-embedded .gpt-production-test-grid.library-collapsed,
+[data-embedded="1"] .gpt-production-test-grid.library-collapsed {
+  grid-template-columns: 1fr !important;
+  gap: 0px !important;
+}
+
+.gpt-production-test-grid.library-collapsed .gpt-production-test-library,
+html.embedded-mode .gpt-production-test-grid.library-collapsed .gpt-production-test-library {
+  display: none !important;
+}
+
+.gpt-production-test-grid.library-collapsed .gpt-production-browser-panel,
+html.embedded-mode .gpt-production-test-grid.library-collapsed .gpt-production-browser-panel,
+body.is-embedded .gpt-production-test-grid.library-collapsed .gpt-production-browser-panel,
+[data-embedded="1"] .gpt-production-test-grid.library-collapsed .gpt-production-browser-panel {
+  grid-column: 1 !important;
+  width: 100% !important;
+}
+
+/* 嵌入主容器模式下全面释放垂直空间：彻底隐藏内嵌重复标题头与重复账号栏 */
+html.embedded-mode .gpt-production-test-heading,
+body.is-embedded .gpt-production-test-heading,
+[data-embedded="1"] .gpt-production-test-heading,
+body.is-embedded .prod-lines-master-header,
+[data-embedded="1"] .prod-lines-master-header {
+  display: none !important;
+}
+
+html.embedded-mode .gpt-production-test-grid,
+body.is-embedded .gpt-production-test-grid,
+[data-embedded="1"] .gpt-production-test-grid {
+  height: 100% !important;
+  grid-template-columns: minmax(250px, 280px) 1fr !important;
+  gap: 8px !important;
+}
+
+html.embedded-mode #gptAccountTabs,
+body.is-embedded #gptAccountTabs,
+[data-embedded="1"] #gptAccountTabs {
+  display: none !important;
+}
+
+html.embedded-mode .gpt-browser-toolbar,
+body.is-embedded .gpt-browser-toolbar {
+  padding: 4px 10px !important;
+  min-height: 32px !important;
+}
+
+/* 彻底清除违和小猫与悬浮挂件 */
+.workbench-assistant-launcher,
+.workbench-assistant-bubble,
+.workbench-assistant-cat,
+.workbench-assistant-mute-menu,
+#workbenchAssistantLauncher,
+.native-assistant-overlay {
+  display: none !important;
+}
+
+/* 隐藏“已选 0 个”等鸡肋无用信息 */
+#gptTestMaterialCount,
+#workbenchMaterialCount,
+#workbenchSelectedProductCount {
+  display: none !important;
+}
+
+.gpt-toolbar-right-actions button,
+.gpt-browser-toolbar button,
+.cdp-popout-btn {
+  white-space: nowrap !important;
 }
 
 .gpt-embedded-host {
@@ -20034,6 +20108,52 @@ body[data-theme="midnight-glass"] .publishing-platform-web-surface {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cdp-quick-input-bar {
+  flex: 1;
+  max-width: 520px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 2px 6px 2px 10px;
+  transition: border-color 0.2s;
+}
+
+.cdp-quick-input-bar:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.cdp-quick-input-bar input {
+  flex: 1;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  color: #f1f5f9 !important;
+  font-size: 12px !important;
+  padding: 4px 0 !important;
+}
+
+.cdp-quick-input-bar button {
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  border: none;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.cdp-quick-input-bar button:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
 }
 
 .cdp-actions-row {

@@ -606,16 +606,20 @@ class StandaloneProducer:
         except Exception:
             pass
 
-        # 12.8 原子移动至 已发送0次（抖音小红书可发）
-        stage0_base = os.path.join(OUTPUT_BASE, "已发送0次（抖音小红书可发）")
-        os.makedirs(stage0_base, exist_ok=True)
-        final_pkg_dir = os.path.join(stage0_base, os.path.basename(target_pkg_dir))
+        # 12.8 原子移动至成品库根目录（取消旧已发送0次目录）
+        final_pkg_dir = os.path.join(OUTPUT_BASE, os.path.basename(target_pkg_dir))
         try:
+            if os.path.exists(final_pkg_dir):
+                shutil.rmtree(final_pkg_dir, ignore_errors=True)
             shutil.move(target_pkg_dir, final_pkg_dir)
             target_pkg_dir = final_pkg_dir
-            log(f"-> 质检通过，已原子流转至可发库存: {target_pkg_dir}")
+            manifest_data["finishedProductPath"] = target_pkg_dir
+            manifest_data["tags"] = ["待发送", "小红书可发", "抖音可发"]
+            with open(os.path.join(target_pkg_dir, "manifest.json"), "w", encoding="utf-8") as f:
+                json.dump(manifest_data, f, ensure_ascii=False, indent=2)
+            log(f"-> 质检通过，已原子流转至成品库: {target_pkg_dir}")
         except Exception as e:
-            log(f"原子移动至已发送0次异常: {e}")
+            log(f"原子移动至成品库异常: {e}")
 
         # 13. 发送飞书交付通知至用户移动端（原素材与成品双绝对路径）
         try:

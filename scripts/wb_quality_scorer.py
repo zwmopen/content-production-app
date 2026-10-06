@@ -31,7 +31,7 @@ from PIL import Image
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
-POOL = r'D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）\已发送0次（抖音小红书可发）'
+POOL = r'D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）'
 OUT_XLSX = r'D:\AICode\运行数据\江湖有旅人\成品质量打分表.xlsx'
 IMG_EXT = {'.png', '.jpg', '.jpeg', '.webp'}
 PLACEHOLDER_LINE = re.compile(r'^[\[【][^\]】]{2,}[\]】]$')

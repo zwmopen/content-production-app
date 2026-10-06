@@ -1328,6 +1328,36 @@ def get_account_alias(instance_id):
     }
     return mapping.get(instance_id, f"实例 {instance_id}")
 
+def get_pipeline_info(instance_id):
+    iid = str(instance_id).strip().upper()
+    mapping = {
+        "A": {
+            "pipeline": "网页CDP-A-zwmrpg",
+            "account": "zwmrpg",
+            "worker": "Instance-A"
+        },
+        "B": {
+            "pipeline": "网页CDP-B-orlandocardozo706",
+            "account": "orlandocardozo706",
+            "worker": "Instance-B"
+        },
+        "C": {
+            "pipeline": "网页CDP-C-zxplus",
+            "account": "zxplus",
+            "worker": "Instance-C"
+        },
+        "D": {
+            "pipeline": "网页CDP-D-embraceping",
+            "account": "embraceping",
+            "worker": "Instance-D"
+        }
+    }
+    return mapping.get(iid, {
+        "pipeline": f"网页CDP-{iid}",
+        "account": f"account-{iid}",
+        "worker": f"Instance-{iid}"
+    })
+
 # 全局状态字典
 # 【2026-09-26 新增】每实例「连续失败」熔断：
 # 单套失败已有 retryCount<3 / clientFailCount<8 的素材级限制，但缺少"产线级"保护 ——
@@ -1763,9 +1793,9 @@ class InstanceWorker:
             _rc = await self.send_cmd("Runtime.evaluate", {"expression": """(() => {
                 const t = (document.querySelector('main')?.innerText || '');
                 const tail = t.slice(-300);
-                const stopBtn = Boolean(document.querySelector('button[data-testid="stop-button"]'));
+                const stopBtn = Boolean(document.querySelector('button[data-testid="stop-button"], button[aria-label*="停止"], button[aria-label*="Stop"]'));
                 const streaming = Boolean(document.querySelector('.result-streaming, [data-testid*="streaming"], [class*="streaming"]'));
-                const sketching = /正在勾勒草图|正在生成|Generating|思考中|草图\\s*\\d+%/i.test(tail);
+                const sketching = /正在勾勒草图|正在生成|Generating|思考中|草图\s*\d+%/i.test(tail);
                 return {gen: stopBtn || streaming || sketching, mainLen: t.length};
             })()""", "returnByValue": True}, timeout=15)
             v = _rc.get("result", {}).get("result", {}).get("value", {}) or {}
@@ -2059,7 +2089,7 @@ class InstanceWorker:
                 "Boolean(document.querySelector('[data-testid*=\"stop\"], "
                 "button[aria-label*=\"停止\"], button[aria-label*=\"Stop\"]'))"
             )
-            for _ in range(45):
+            for _ in range(60):
                 r_gen = await self.send_cmd(
                     "Runtime.evaluate",
                     {"expression": js_generating, "returnByValue": True},
@@ -2068,6 +2098,14 @@ class InstanceWorker:
                 if not r_gen.get("result", {}).get("result", {}).get("value", False):
                     break
                 await asyncio.sleep(2)
+            else:
+                log("⚠️ 页面停止按钮 120 秒未自动消失，主动点击停止按钮以释放编辑框...", self.id)
+                await self.send_cmd("Runtime.evaluate", {"expression": """(() => {
+                    const sb = document.querySelector('button[aria-label*="停止"], button[aria-label*="Stop"], [data-testid*="stop"]');
+                    if (sb) sb.click();
+                    return !!sb;
+                })()""", "returnByValue": True}, timeout=10)
+                await asyncio.sleep(3)
         except Exception:
             pass
         # 关键兼容修复：不要只派发合成 ClipboardEvent。
@@ -2354,8 +2392,9 @@ class InstanceWorker:
                 await self.send_cmd("Runtime.evaluate", {"expression": _JS_FIND_COMPOSER +
                     " if (_c) { _c.focus(); const _rb=document.querySelectorAll('button[aria-label*=\"移除文件\"], button[aria-label*=\"Remove file\"]');"
                     " const _im=document.querySelectorAll('form img[src^=\"blob:\"]');"
-                    " if (Math.max(_rb.length, _im.length) === 0) { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } }",
+                    " if (Math.max(_rb.length, _im.length) === 0) { const _sel=window.getSelection(); if (_sel) { const _rg=document.createRange(); _rg.selectNodeContents(_c); _sel.removeAllRanges(); _sel.addRange(_rg); } document.execCommand('delete', false, null); } }",
                     "returnByValue": True}, timeout=15)
+
                 for _i in range(0, len(prompt_text), 500):
                     await self.send_cmd("Input.insertText", {"text": prompt_text[_i:_i + 500]}, timeout=30)
                 await asyncio.sleep(1.5)
@@ -2375,8 +2414,9 @@ class InstanceWorker:
                 await self.send_cmd("Runtime.evaluate", {"expression": _JS_FIND_COMPOSER +
                     " if (_c) { _c.focus(); const _rb=document.querySelectorAll('button[aria-label*=\"移除文件\"], button[aria-label*=\"Remove file\"]');"
                     " const _im=document.querySelectorAll('form img[src^=\"blob:\"]');"
-                    " if (Math.max(_rb.length, _im.length) === 0) { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } }",
+                    " if (Math.max(_rb.length, _im.length) === 0) { const _sel=window.getSelection(); if (_sel) { const _rg=document.createRange(); _rg.selectNodeContents(_c); _sel.removeAllRanges(); _sel.addRange(_rg); } document.execCommand('delete', false, null); } }",
                     "returnByValue": True}, timeout=15)
+
                 for _i in range(0, len(prompt_text), 1000):
                     _ck = json.dumps(prompt_text[_i:_i + 1000], ensure_ascii=False).replace('\u2028', '\\u2028').replace('\u2029', '\\u2029')
                     await self.send_cmd("Runtime.evaluate", {"expression": """(() => {
@@ -2389,7 +2429,22 @@ class InstanceWorker:
                 await asyncio.sleep(1.5)
             except Exception as _e_ec:
                 log(f"⚠️ execCommand 重写异常: {str(_e_ec)[:100]}", self.id)
-            _st = await _editor_state_ready()
+            for _wait_ready in range(6):
+                _st = await _editor_state_ready()
+                if _st.get("btnEnabled"):
+                    break
+                try:
+                    await self.send_cmd("Runtime.evaluate", {"expression": """(() => {
+                        %s
+                        if (_c) {
+                            _c.focus();
+                            document.execCommand('insertText', false, ' ');
+                            document.execCommand('delete', false, null);
+                        }
+                    })()""" % _JS_FIND_COMPOSER, "returnByValue": True}, timeout=10)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.8)
 
         if _st.get("found") and not _st.get("btnEnabled"):
             log(f"🚨 四种注入通道都没能让 EditorState 收到内容（DOM {_st.get('domLen')} 字），"
@@ -2550,7 +2605,15 @@ class InstanceWorker:
                     const ct = clone.innerText || clone.textContent || '';
                     mainLen = ct.length;
                     const snip = %s;
-                    if (snip) { snippetFound = ct.indexOf(snip) >= 0; }
+                    if (snip) {
+                        const cleanCt = ct.replace(/\s+/g, ' ');
+                        const cleanSnip = String(snip).replace(/\s+/g, ' ').trim();
+                        if (cleanSnip && cleanSnip.length >= 10) {
+                            snippetFound = cleanCt.indexOf(cleanSnip.slice(0, 30)) >= 0;
+                        } else if (cleanSnip) {
+                            snippetFound = cleanCt.indexOf(cleanSnip) >= 0;
+                        }
+                    }
                 }
                 return {empty: text.length === 0, mainLen: mainLen,
                         url: location.href, generating: generating, snippetFound: snippetFound};
@@ -2573,8 +2636,10 @@ class InstanceWorker:
             _need = max(50, int(len(prompt_text) * 0.2))
             # 【2026-09-27 修】补第三条确认通道：编辑框已清空 + 指令片段确实出现在会话正文里。
             # 这是同会话内第二条指令（文案指令）唯一可靠的证据 —— 长度增长与 URL 变化在这都用不上。
+            # 【2026-10-05 补】生成态（generating）且已有文本流式输出（_growth >= 10）作为可靠提交确认。
             if _growth >= _need or (_url_now and _url_now != baseline_url and _main_now > 20) \
-                    or (confirmed.get("empty", False) and confirmed.get("snippetFound", False)):
+                    or (confirmed.get("empty", False) and confirmed.get("snippetFound", False)) \
+                    or (confirmed.get("generating", False) and _growth >= 10):
                 log(f"-> {action_desc}已由网页确认提交（真源：会话正文 {baseline_user_count} → {_main_now}，"
                     f"增长 {_growth} 字；片段命中={confirmed.get('snippetFound', False)}；"
                     f"生成中={confirmed.get('generating', False)}）", self.id)
@@ -2707,7 +2772,7 @@ class InstanceWorker:
 
         _cands = []
         _seen_nids = set()
-        for _round in range(5):
+        for _round in range(15):
             try:
                 _doc = await self.send_cmd("DOM.getDocument", {"depth": 1})
                 _root = _doc.get('result', {}).get('root', {}).get('nodeId', 1)
@@ -3335,9 +3400,14 @@ class InstanceWorker:
             "#5个生活类标签\n"
             "<<<VERSION_END>>>\n"
         )
-        sent_copy = await self.send_text_prompt(copy_prompt, "V4.5 多版本文案指令", max_wait_sec=15)
+        sent_copy = await self.send_text_prompt(copy_prompt, "V4.5 多版本文案指令", max_wait_sec=25)
         if not sent_copy:
-            log("🚨 文案指令提交未获网页确认，文案环节可能空转；仍尝试轮询抓取", self.id)
+            log("🚨 文案指令首次提交未获网页确认，等待 3 秒后重试一次发送...", self.id)
+            await asyncio.sleep(3)
+            sent_copy = await self.send_text_prompt(copy_prompt, "V4.5 多版本文案指令（重试）", max_wait_sec=25)
+        if not sent_copy:
+            log("🚨 文案指令重试后仍未获提交确认，坚决拒绝假抓取用户提问，终止本次以防误产空壳", self.id)
+            raise RuntimeError("文案指令无法提交至 ChatGPT 编辑框")
         log("多版本文案指令已发送，等待文本产出...", self.id)
 
         # 【2026-09-23 修复·旧 VERSION_END 污染】记录"文案指令提交瞬间"的页面基线。
@@ -3360,7 +3430,7 @@ class InstanceWorker:
                 let len = 0, full = '';
                 if (m) {
                     const clone = m.cloneNode(true);
-                    clone.querySelectorAll('form, textarea, [contenteditable="true"], [data-testid*="composer"]')
+                    clone.querySelectorAll('form, textarea, [contenteditable="true"], [data-testid*="composer"], [data-message-author-role="user"]')
                          .forEach(n => { try { n.remove(); } catch (e) {} });
                     full = clone.innerText || clone.textContent || '';
                     len = full.length;
@@ -3453,10 +3523,13 @@ class InstanceWorker:
                 // 这里以文案指令提交瞬间记录的基线为界，只取之后新增的内容。
                 const base = window.__copyBaseline || {mainLen: 0, asstCount: 0};
                 const asst = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
-                if (asst.length > base.asstCount) {
-                    const a = asst[asst.length - 1].innerText || '';
-                    if (a) candidates.push({src: 'assistant-node', text: a});
+                if (asst.length > 0 && asst.length <= base.asstCount) {
+                    // 新一轮文案尚未产生独立的 assistant 消息节点，模型仍在思考中，绝不提前抓取或误抓用户提问
+                    return {isGen: true, text: '', src: 'waiting-assistant', len: 0, has_ve: false};
                 }
+                const a = asst.length > 0 ? (asst[asst.length - 1].innerText || '') : '';
+
+                if (a) candidates.push({src: 'assistant-node', text: a});
                 const turns = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"]'));
                 for (let i = turns.length - 1; i >= 0; i--) {
                     const isUser = !!turns[i].querySelector('[data-message-author-role="user"]');
@@ -3467,9 +3540,9 @@ class InstanceWorker:
                 }
                 const mainEl = document.querySelector('main');
                 if (mainEl) {
-                    // 【2026-09-25 修·composer 自污染】与基线同口径：克隆后剔除表单/输入区，避免把输入框草稿当产出
+                    // 【2026-09-25 修·composer 自污染 + 2026-10-05 修·用户提问示例污染】与基线同口径：克隆后剔除表单/输入区与用户提问
                     const clone = mainEl.cloneNode(true);
-                    clone.querySelectorAll('form, textarea, [contenteditable="true"], [data-testid*="composer"]')
+                    clone.querySelectorAll('form, textarea, [contenteditable="true"], [data-testid*="composer"], [data-message-author-role="user"]')
                          .forEach(n => { try { n.remove(); } catch (e) {} });
                     const full = clone.innerText || clone.textContent || '';
                     const m = full.slice(base.mainLen);
@@ -3502,10 +3575,27 @@ class InstanceWorker:
                         }
                     }
                 }
-                // 选优：先找含 VERSION_END 的；否则取最长的一份
+                // 先修复各候选的前缀残缺
+                for (const c of candidates) {
+                    if (c && c.text) {
+                        if (/^ION_START:/.test(c.text)) c.text = '<<<VERS' + c.text;
+                        else if (/^VERSION_START:/.test(c.text)) c.text = '<<<' + c.text;
+                        else if (/^RSION_START:/.test(c.text)) c.text = '<<<VE' + c.text;
+                    }
+                }
+                // 选优：优先取 blocks-diff（结构最纯且完整）；若无则取含 VERSION_END 中最长的一份
                 let pick = null;
                 for (const c of candidates) {
-                    if (c.text.includes('VERSION_END') || c.text.includes('DOUYIN_END')) { pick = c; break; }
+                    if (c.src === 'blocks-diff' && (c.text.includes('VERSION_END') || c.text.includes('DOUYIN_END'))) {
+                        pick = c; break;
+                    }
+                }
+                if (!pick) {
+                    for (const c of candidates) {
+                        if (c.text.includes('VERSION_END') || c.text.includes('DOUYIN_END')) {
+                            if (!pick || c.text.length > pick.text.length) { pick = c; }
+                        }
+                    }
                 }
                 if (!pick) {
                     for (const c of candidates) {
@@ -3548,23 +3638,24 @@ class InstanceWorker:
                 # 【2026-09-25 修】原为 poll_idx >= 10（30 秒后才接受），窗口拉长后放宽到 >= 3，
                 # 避免"模型 3 秒就写完了"这种快样本被无谓闲置；基线机制仍负责挡旧残留。
                 # 【2026-09-25 重写·「流已断」判定（本故障的唯一止血点）】
-                # 旧实现把停滞判活的入口条件写成 `not is_gen_txt`，但实测（09-25 08:37 A / 08:47 B / 08:52 A）
-                # 断流时「停止回答」按钮会**永久滞留在页面上**（data-testid=stop-button 不消失），
-                # 于是 isGenerating 恒为 True → 每轮把 _stall_rounds 清零 → 判活从未触发 →
-                # 每次都在 600 秒窗口里空转到 200 轮才判废。**每套白扔 11 分钟，A/B 同时中招 = 全线零产出。**
                 # 现改为**内容级判活，完全不依赖任何按钮状态**：
                 #   · 抓取长度比历史峰值增长 > 4 字 → 流还活着，停滞计数清零
-                #   · 连续 _STALL_LIMIT 轮零增长 → 判定「流已断」，立即收工交给上层重试/熔断，
-                #     不再空耗那 600 秒。
+                #   · 连续 _STALL_LIMIT 轮零增长 → 判定「流已断」，立即收工交给上层重试/熔断
                 if len(txt) > _peak_len + 4:
                     _peak_len = len(txt)
                     _stall_rounds = 0
                 else:
                     _stall_rounds += 1
 
-                # 【2026-09-27 修·收工条件解锁】旧写法 `not is_gen_txt` 因 composer 常驻停止按钮恒为 False，
-                # 抓满 11 版也不肯收工。现改为：硬判据说停了 **或** 内容已连续 30 秒零增长（防 stop-button 残留）。
-                if (has_ve) and ((not is_gen_txt) or _stall_rounds >= 10) and poll_idx >= 3 and len(txt) > 200:
+                # 【2026-10-05 深度升级·杜绝中途早退与UI免责声明残缺】
+                # 只有当：
+                # 1. 包含 VERSION_END，且没有处于未闭合版本块中间（未闭合判据：VERSION_START 数量 > VERSION_END 数量）；
+                # 2. 且已完成全部 3 个标准版本（或包含“抖音避坑”），或者确实已经连续 10 轮零增长停滞；
+                # 3. 且 (前端明确停止回答 或 停滞 >= 10 轮)。
+                _has_open_block = txt.count('<<<VERSION_START:') > txt.count('<<<VERSION_END>>>')
+                _has_complete_v3 = (txt.count('<<<VERSION_END>>>') >= 3 or '<<<VERSION_START:抖音避坑>>>' in txt)
+                _ready_to_seal = (not _has_open_block) and (_has_complete_v3 or _stall_rounds >= 10)
+                if (has_ve) and _ready_to_seal and ((not is_gen_txt) or _stall_rounds >= 10) and poll_idx >= 3 and len(txt) > 200:
                     # 【2026-09-22 修复·文案三病之二】「实质产出校验」：剔除全部 <<<>>> 标记与空白后，
                     # 若实质正文仍不足 MIN_COPY_SUBSTANCE(300) 字，说明抓到的是模板壳/指令回显，绝不当作文案。
                     _probe_substance = re.sub(r'<<<[^>]*>>>', '', txt)
@@ -3674,17 +3765,16 @@ class InstanceWorker:
             img_urls = pre_copy_img_urls
         log(f"已捕获 {len(img_urls)} 张大图 URL，开始无损拉取...", self.id)
 
-        # 7. 创建规范成品目录：第一时间落盘至 _制作中 创作区
+        # 7. 创建规范成品目录：第一时间落盘至 待制作待补全 创作区
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         clean_title = re.sub(r"^评\d+-赞\d+-", "", mat_name)
         clean_title = re.sub(r"[\s\-_]*\d{8}$", "", clean_title)
         clean_title = re.sub(r'[\\/:*?"<>|]', '_', clean_title).strip()[:50]
-        pkg_folder = f"{ts}-网页CDP-{clean_title}"
+        pipe_info = get_pipeline_info(self.id)
+        pkg_folder = f"{ts}-{pipe_info['pipeline']}-{clean_title}"
         # 用户确认的客户端模式第一落点：待制作待补全；未闭环作品留在此处可断点续接。
         producing_base = os.path.join(OUTPUT_BASE, "待制作待补全")
-        stage0_base = os.path.join(OUTPUT_BASE, "已发送0次（抖音小红书可发）")
         os.makedirs(producing_base, exist_ok=True)
-        os.makedirs(stage0_base, exist_ok=True)
         target_pkg_dir = os.path.join(producing_base, pkg_folder)
         os.makedirs(target_pkg_dir, exist_ok=True)
 
@@ -3717,6 +3807,26 @@ class InstanceWorker:
                 log(f"  [√] 保存成功: {fname} ({len(raw_bytes)/1024/1024:.2f} MB)", self.id)
 
         # 9. 保存多版本/三端文案（支持 V4.5 11大排版指纹版本与 Format 3 向上兼容）
+        # 剥离 UI 尾部免责声明与异常前缀
+        _UI_FOOTERS = [
+            r'ChatGPT\s*可能会出错[。，\.]*请核查重要信息[。，\.]*',
+            r'最新一条回复',
+            r'内容由\s*AI\s*生成[，。]*仅供参考',
+            r'当前素材文件夹[：:][^\n]*',
+        ]
+        for _pat in _UI_FOOTERS:
+            copy_text = re.sub(_pat, '', copy_text, flags=re.IGNORECASE).strip()
+        if copy_text.startswith('ION_START:'):
+            copy_text = '<<<VERS' + copy_text
+        elif copy_text.startswith('VERSION_START:'):
+            copy_text = '<<<' + copy_text
+        # 如果末尾有未闭合的残缺 block，剔除末尾未闭合的残段
+        _last_start = copy_text.rfind('<<<VERSION_START:')
+        _last_end = copy_text.rfind('<<<VERSION_END>>>')
+        if _last_start > _last_end:
+            log(f"✂️ 剔除末尾未闭合的残缺版本块（起始于 {_last_start}，末尾闭合于 {_last_end}）", self.id)
+            copy_text = copy_text[:_last_start].strip()
+
         full_copy = copy_text.strip()
         xhs_copy = ""
         hr_copy = ""
@@ -3795,7 +3905,7 @@ class InstanceWorker:
         if len(_substance) < MIN_COPY_SUBSTANCE:
             # 【2026-09-22 修复·文案三病之一】判废必须真阻断，绝不再用本地模板兜底后
             # 静默入库。原实现在此处用「原料摘要拼三平台兜底模板」重新赋值 full_copy，
-            # 然后照常走到归档+飞书交付 → 空壳/模板壳成品混进「已发送0次」可发库。
+            # 然后照常走到归档+飞书交付 → 空壳/模板壳成品混进成品库。
             # 正确行为与残缺画册阻断（下方 valid_cnt < min_required 分支）同模式：
             # 删除半成品目录并抛 RuntimeError，交由 worker_loop 的 release_task_lock
             # 走「内容残缺类」标记（文案实质内容不足/文案截断/空壳）最多重试 3 次后隔离。
@@ -3876,8 +3986,8 @@ class InstanceWorker:
                 shutil.rmtree(target_pkg_dir, ignore_errors=True)
             raise RuntimeError(f"有效大图不足（仅 {valid_cnt}/{min_required} 张），废弃残缺产出并重做")
 
-        # 11. 暂留 _制作中；必须在飞书表格与群通知都成功后才归档。
-        final_pkg_dir = os.path.join(stage0_base, pkg_folder)
+        # 11. 终稿直接归档至成品库根目录（彻底取消已发送0次子目录）
+        final_pkg_dir = os.path.join(OUTPUT_BASE, pkg_folder)
 
         # 12. 登记生图配额账本（3小时滑动窗口40张 + 全天180张）
         record_generation_success(self.id, valid_cnt, len(img_paths), mat_name)
@@ -3886,12 +3996,15 @@ class InstanceWorker:
         manifest_data = {
             "title": mat_name,
             "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "pipeline": "xhs-card-replica-pipeline V5.0 原图排版骨架版",
-            "worker": f"Instance-{self.id}",
+            "pipeline": pipe_info["pipeline"],
+            "worker": pipe_info["worker"],
+            "account": pipe_info["account"],
+            "tags": ["待发送", "小红书可发", "抖音可发"],
             "rawMaterialPath": mat_dir,
             "finishedProductPath": target_pkg_dir,
             "imageCount": valid_cnt,
-            "status": "PASS"
+            "status": "PASS",
+            "lifecycleStatus": "IN_PROGRESS"
         }
         with open(os.path.join(target_pkg_dir, "manifest.json"), "w", encoding="utf-8") as f:
             json.dump(manifest_data, f, ensure_ascii=False, indent=2)
@@ -4077,7 +4190,7 @@ class InstanceWorker:
         if not feishu_notice_ok:
             raise RuntimeError("飞书群完成通知发送失败，作品保留在制作态并标记 failed")
 
-        # 16. 飞书表格与群通知均成功后，才原子归档到可发库。
+        # 16. 飞书表格与群通知均成功后，才原子归档直接移入成品库根目录。
         try:
             import shutil
             if os.path.exists(final_pkg_dir):
@@ -4098,7 +4211,7 @@ class InstanceWorker:
                     "--cells", json.dumps([[{"value": target_pkg_dir}]], ensure_ascii=False)
                 ]
                 subprocess.run(cmd_path, capture_output=True, text=True, encoding="utf-8", timeout=30)
-            log(f"-> 飞书闭环完成，已原子归档至可发库: {target_pkg_dir}", self.id)
+            log(f"-> 飞书闭环完成，已原子归档至成品库根目录: {target_pkg_dir}", self.id)
         except Exception as e_mv:
             raise RuntimeError(f"飞书闭环后归档移动失败: {e_mv}")
 
@@ -4731,8 +4844,8 @@ async def worker_loop(instance_id, cdp_port):
 COOLDOWN_RECYCLE_MIN_SEC = 900    # 冷却 ≥15 分钟才值得关（关+开一次约 1 分钟开销）
 COOLDOWN_RESTART_LEAD_SEC = 180   # 冷却结束前 3 分钟提前拉起，留足启动与页面就绪时间
 INSTANCE_START_BAT = {
-    "A": r"D:\AICode\工具开发\projects\content-production-app\start-a-direct.bat",
-    "B": r"D:\AICode\工具开发\projects\content-production-app\start-instance-b-gui.bat",
+    "A": r"D:\AICode\工具开发\content-production-app-instances\A\launch.bat",
+    "B": r"D:\AICode\工具开发\content-production-app-instances\B\launch.bat",
 }
 INSTANCE_RECYCLED = set()   # 记录已回收过的 (实例, 冷却截止)，避免重复关开
 # 【2026-09-27 新增】冷却回收计划的磁盘落盘位置（主脑重启后据此继续履约拉起）
@@ -5032,11 +5145,8 @@ async def main():
     # 解除方法：从本集合移除 "A" 即可恢复双线。
     # 【2026-09-26 21:00 用户指令】A/B 两条产线同时开工，取消 A 的手动模式。
     # 需要重新只跑 B 时，把 "A" 加回这个集合即可。
-    # 【2026-09-27 21:45 用户指令】A 账号（account-1）需冷却，且被模型侧判定软降级
-    # （实测 Worked 1m28s 就停、只出 1 张图、零文案）。在用户给出明确开工指令前，
-    # A 永不启动：主脑不挂载 A 协程、不拉起 A 实例、不提交任何 A 任务。
-    # 产线本轮只跑 B。恢复 A 的方法：把下面集合改回 set()（需用户明确指令）。
-    MANUAL_ONLY_INSTANCES = {"A"}
+    # 【2026-10-05 用户指令】AB 两条产线同时持续运转生产，取消 A 独占手动限制，恢复双线自动生产
+    MANUAL_ONLY_INSTANCES = set()
     active_tasks = []
 
     for inst_id, port in candidate_workers:

@@ -21,6 +21,25 @@ const server = http.createServer((req, res) => {
     query: Object.fromEntries(requestUrl.searchParams.entries())
   };
 
+  // Route pipeline-works directly
+  if (pathname === "/api/pipeline-works" || pathname === "/pipeline-works") {
+    try {
+      const scanner = require("D:\\AICode\\工具开发\\projects\\app-master-container\\src\\production-works-scanner");
+      const allWorks = scanner.getCachedPipelineWorks();
+      const screenshots = {
+        'cdp-a': scanner.getPipelineScreenshot('cdp-a', allWorks),
+        'cdp-b': scanner.getPipelineScreenshot('cdp-b', allWorks),
+        'codex-api': scanner.getPipelineScreenshot('codex-api', allWorks),
+        'gemini-1': scanner.getPipelineScreenshot('gemini-1', allWorks)
+      };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, works: allWorks, screenshots }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: false, error: err.message }));
+    }
+  }
+
   // Route directly using cdpViewportService
   // Standardize /frame -> /api/cdp/frame
   let normalizedPath = pathname;

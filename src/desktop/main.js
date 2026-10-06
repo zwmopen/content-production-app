@@ -383,7 +383,11 @@ async function ensureAssistantOverlay() {
     if (assistantCursorTimer) clearInterval(assistantCursorTimer);
     assistantCursorTimer = null;
   });
-  await overlay.loadURL(`${APP_URL}assistant-overlay.html?appVersion=${encodeURIComponent(APP_VERSION)}`);
+  try {
+    await overlay.loadURL(`${APP_URL}assistant-overlay.html?appVersion=${encodeURIComponent(APP_VERSION)}`);
+  } catch (err) {
+    appendDesktopLog("overlay-load-deferred", err?.message || String(err));
+  }
   sendAssistantOverlayState();
   if (!assistantCursorTimer) assistantCursorTimer = setInterval(updateAssistantCursorDirection, 50);
   if (mainWindow.isFocused() && assistantOverlayState.catVisible !== false) overlay.showInactive();
@@ -4686,7 +4690,15 @@ async function createWindow() {
 
   const versionedUrl = new URL(APP_URL);
   versionedUrl.searchParams.set("appVersion", APP_VERSION);
-  await window.loadURL(versionedUrl.toString());
+  try {
+    await window.loadURL(versionedUrl.toString());
+  } catch (err) {
+    if (err && (err.code === "ERR_ABORTED" || err.errno === -3 || (err.message && (err.message.includes("ERR_ABORTED") || err.message.includes("-3"))))) {
+      appendDesktopLog("load-url-aborted-nav-redirect", `Handled client navigation reload: ${err.message}`);
+    } else {
+      throw err;
+    }
+  }
   if (!IS_DESKTOP_HIDDEN) {
     showMainWindowBackgrounded();
     await ensureAssistantOverlay();

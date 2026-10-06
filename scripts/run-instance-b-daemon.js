@@ -14,9 +14,8 @@ const env = {
   CONTENT_INSTANCE_LABEL: '实例 B · account-2',
   PORT: '4332',
   TB_REMOTE_DEBUGGING_PORT: '9432',
-  // [2026-09-25 修] 7890/7891/7892 均已无服务监听，Clash 实际只听 7897（netstat 实测）。
-  // 实例 B 今天上午的 ERR_PROXY_CONNECTION_FAILED 即此根因。
-  CONTENT_HTTP_PROXY: 'http://127.0.0.1:7897',
+  // [2026-10-05 修] Clash 实际监听 17897，统一采用 17897
+  CONTENT_HTTP_PROXY: 'http://127.0.0.1:17897',
   TEAMBUILDING_DASHBOARD_RUNTIME: 'D:\\AICode\\运行数据\\江湖有旅人\\内容生产App\\instance-B',
   TEAMBUILDING_SHARED_MATERIAL_ROOT: 'D:\\AICode\\运行数据\\江湖有旅人\\内容生产App\\shared-material',
   TB_USER_DATA_ROOT: 'D:\\AICode\\运行数据\\江湖有旅人\\内容生产App\\instance-B\\electron-userdata',

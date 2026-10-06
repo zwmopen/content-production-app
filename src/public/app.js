@@ -5239,7 +5239,7 @@ function restoreGptQueue() {
         gptLastFailedStage = String(currentTask._stage || "");
         gptLastFailedPercent = Number(currentTask._percent || 0);
       }
-      showWorkbenchAssistantBubble(`发现上次未完成队列：从第 ${gptTestQueueIndex + 1}/${gptTestQueue.length} 套继续。`, { duration: 0 });
+      showWorkbenchAssistantBubble(`发现上次未完成队列：从第 ${gptTestQueueIndex + 1}/${gptTestQueue.length} 套继续。`, { duration: 4000 });
       if (gptMultiRunState?.status === "running") {
         persistGptMultiRun({
           status: "paused-restart",
@@ -12176,13 +12176,22 @@ function getCdpGatewayBase() {
   return "http://127.0.0.1:9433";
 }
 
+function getCurrentInstanceCdpPort() {
+  const p = window.location.port;
+  if (p === "4331") return 9431;
+  if (p === "4333") return 9433;
+  if (p === "4334") return 9434;
+  return 9432;
+}
+
 async function refreshCdpLiveFrame() {
   const img = $("#cdpLiveImg");
   if (!img || cdpIsFetchingFrame) return;
   cdpIsFetchingFrame = true;
   try {
     const base = getCdpGatewayBase();
-    const res = await fetch(`${base}/frame?t=${Date.now()}`, { signal: AbortSignal.timeout(6000) });
+    const cdpPort = getCurrentInstanceCdpPort();
+    const res = await fetch(`${base}/frame?port=${cdpPort}&t=${Date.now()}`, { signal: AbortSignal.timeout(6000) });
     if (res.ok) {
       const blob = await res.blob();
       const newUrl = URL.createObjectURL(blob);
@@ -12210,7 +12219,8 @@ async function initCdpLiveViewport() {
   bindCdpViewportEvents();
 
   try {
-    const res = await fetch(`${getCdpGatewayBase()}/status`, { signal: AbortSignal.timeout(1500) });
+    const cdpPort = getCurrentInstanceCdpPort();
+    const res = await fetch(`${getCdpGatewayBase()}/status?port=${cdpPort}`, { signal: AbortSignal.timeout(1500) });
     const data = await res.json();
     if (data.ok && data.target) {
       if ($("#cdpStatusTitle")) $("#cdpStatusTitle").textContent = "ChatGPT Plus 实操中";
@@ -12242,13 +12252,55 @@ function bindCdpViewportEvents() {
   const refreshBtn = $("#cdpRefreshFrameBtn");
   const popoutBtn1 = $("#gptPopoutBtn");
   const popoutBtn2 = $("#cdpPopoutActionBtn");
+  const toggleLibBtn = $("#btnToggleSideLibrary");
+  const quickInput = $("#cdpQuickInput");
+  const quickSendBtn = $("#cdpQuickSendBtn");
+
+  toggleLibBtn?.addEventListener("click", () => {
+    const grid = document.querySelector(".gpt-production-test-grid");
+    if (grid) {
+      grid.classList.toggle("library-collapsed");
+      toggleLibBtn.textContent = grid.classList.contains("library-collapsed") ? "↔ 还原视口" : "↔ 宽屏视口";
+      setTimeout(refreshCdpLiveFrame, 300);
+    }
+  });
+
+  const doQuickSend = async () => {
+    if (!quickInput || !quickInput.value.trim()) return;
+    const text = quickInput.value.trim();
+    quickInput.value = "";
+    if (quickSendBtn) quickSendBtn.textContent = "发送中...";
+    try {
+      const cdpPort = getCurrentInstanceCdpPort();
+      await fetch(`${getCdpGatewayBase()}/input`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "prompt", text, port: cdpPort })
+      });
+      setTimeout(refreshCdpLiveFrame, 600);
+      setTimeout(refreshCdpLiveFrame, 1800);
+    } catch (_) {}
+    finally {
+      if (quickSendBtn) quickSendBtn.textContent = "🚀 发送";
+    }
+  };
+  quickSendBtn?.addEventListener("click", doQuickSend);
+  quickInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      doQuickSend();
+    }
+  });
 
   const handlePopout = () => {
+    try {
+      fetch(`${getCdpGatewayBase()}/activate?port=${getCurrentInstanceCdpPort()}`, { method: "POST" }).catch(() => {});
+    } catch (_) {}
     if (window.containerBridge?.openStandaloneWindow) {
       window.containerBridge.openStandaloneWindow("content-production");
       showWorkbenchAssistantBubble("已在桌面弹出独立工作台窗口！支持双屏拖拽全屏操作。", { tone: "success" });
     } else {
-      window.open("http://127.0.0.1:4332/", "_blank");
+      window.open(window.location.href, "_blank");
       showWorkbenchAssistantBubble("已在新标签页打开独立工作台", { tone: "success" });
     }
   };
@@ -12294,7 +12346,7 @@ function bindCdpViewportEvents() {
         await fetch(`${getCdpGatewayBase()}/input`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "click", x: targetX, y: targetY })
+          body: JSON.stringify({ type: "click", x: targetX, y: targetY, port: getCurrentInstanceCdpPort() })
         });
         setTimeout(refreshCdpLiveFrame, 400);
       } catch (_) {}
@@ -12317,7 +12369,8 @@ function bindCdpViewportEvents() {
             type: "wheel",
             x: Math.round(clickX * scaleX),
             y: Math.round(clickY * scaleY),
-            deltaY: e.deltaY > 0 ? 120 : -120
+            deltaY: e.deltaY > 0 ? 120 : -120,
+            port: getCurrentInstanceCdpPort()
           })
         });
         setTimeout(refreshCdpLiveFrame, 350);
@@ -21245,8 +21298,11 @@ function presentNextAssistantNotice() {
 }
 
 function showWorkbenchAssistantBubble(message, options = {}) {
-  const { bubble } = assistantElements();
-  if (!bubble || !message) return;
+  if (!message) return;
+  // 过滤“已选多少”等鸡肋无意义通知（对应用户诉求：完全用不到还占位置）
+  if (typeof message === 'string' && /已选\s*\d+\s*个/i.test(message)) {
+    return;
+  }
   const activeView = document.querySelector(".view.active")?.id || "global";
   const sourceView = String(options.sourceView || activeView);
   const entry = {
@@ -21263,6 +21319,16 @@ function showWorkbenchAssistantBubble(message, options = {}) {
   if (assistantEventLog.length > 300) assistantEventLog.splice(0, assistantEventLog.length - 300);
   renderWorkbenchAssistantLog();
   lastAssistantBubbleMessage = entry.message;
+
+  // 关键告警或错误，通知上层容器显示轻量 Toast（不霸屏，交由系统通知）
+  if (options.tone === 'warning' || options.tone === 'error') {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'SHOW_TOAST', message: String(message), level: options.tone }, '*');
+    }
+  }
+
+  const { bubble } = assistantElements();
+  if (!bubble) return;
   if (options.persistent === true) {
     assistantPersistentMessage = entry.message;
     localStorage.setItem(ASSISTANT_PERSISTENT_MESSAGE_KEY, assistantPersistentMessage);
@@ -21466,7 +21532,7 @@ function renderGptProductionHistory() {
       ${item.sourceMaterialPath ? `<p>原素材：${escapeHtml(item.sourceMaterialPath)}</p>` : ""}
       <p>${escapeHtml(new Date(item.finishedAt || item.updatedAt || Date.now()).toLocaleString("zh-CN", { hour12: false }))}</p>
     </article>`;
-  }).join("") : '<div class="empty-state"><strong>暂无生产记录</strong><p>自动闭环完成、暂停或失败后会保留在这里。</p></div>';
+  }).join("") : '<div class="empty-state"><strong>暂无产线日志</strong><p>生产闭环、通知、暂停或异常记录会沉淀保留在此。</p></div>';
   host.querySelectorAll("[data-open-production-path]").forEach((button) => button.addEventListener("click", async () => {
     const target = button.dataset.openProductionPath || "";
     if (!target) return;
@@ -32936,6 +33002,15 @@ window.setTimeout(() => {
   }
 
   window.switchProdLine = switchProdLine;
+  if (typeof applyTheme === 'function') {
+    window.applyTheme = applyTheme;
+  }
+
+  // Detect embedded mode and hide duplicate subapp headers
+  if (window.location.search.includes('embedded=1') || window.top !== window) {
+    document.documentElement.dataset.embedded = '1';
+    document.body.classList.add('is-embedded');
+  }
 
   // Bind clicks
   document.addEventListener('click', (e) => {
@@ -32973,15 +33048,22 @@ window.setTimeout(() => {
     const logNode = document.getElementById('codexLiveOutputLog');
     if (logNode) {
       const now = new Date().toLocaleTimeString();
-      logNode.innerHTML += '\n[' + now + '] 🚀 正在调用本地直出排产流水线...\n[' + now + '] 正在装配母版骨架与素材包...\n[' + now + '] 生产任务已分发至后台流水线，成品将自动推入【第4站 成品库】！';
+      logNode.innerHTML += '\n[' + now + '] 🚀 正在调用 Codex API 排产流水线...\n[' + now + '] 正在装配母版骨架与素材包...\n[' + now + '] 生产任务已分发至后台流水线，成品将自动推入【第4站 成品库】！';
       logNode.scrollTop = logNode.scrollHeight;
     }
   });
 
-  // Cross-App PostMessage receiver (from Station 1 Materials & Station 2 Templates)
+  // Cross-App PostMessage receiver (from Station 1 Materials & Station 2 Templates & Container)
   window.addEventListener('message', (event) => {
     const msg = event.data;
     if (!msg || typeof msg !== 'object') return;
+
+    // Theme synchronization from master container
+    if (msg.type === 'THEME_CHANGE' && msg.theme) {
+      if (typeof applyTheme === 'function') {
+        applyTheme(msg.theme);
+      }
+    }
 
     // From Station 2: Template Selection
     if (msg.type === 'APPLY_TEMPLATE' || msg.action === 'APPLY_TEMPLATE') {
@@ -33026,6 +33108,23 @@ window.setTimeout(() => {
     // Command from master container topbar
     if (msg.type === 'SWITCH_PROD_LINE') {
       switchProdLine(msg.line);
+    }
+    if (msg.type === 'OPEN_LOGS') {
+      if (typeof openGptProductionHistory === 'function') {
+        openGptProductionHistory(true);
+      }
+    }
+    if (msg.type === 'OPEN_SETTINGS') {
+      if (typeof openPageSettings === 'function') {
+        openPageSettings('gptAuto');
+      }
+    }
+    if (msg.type === 'TOGGLE_WIDE_VIEW') {
+      const grid = document.querySelector(".gpt-production-test-grid");
+      if (grid) {
+        grid.classList.toggle("library-collapsed");
+        if (typeof refreshCdpLiveFrame === 'function') setTimeout(refreshCdpLiveFrame, 300);
+      }
     }
   });
 })();
