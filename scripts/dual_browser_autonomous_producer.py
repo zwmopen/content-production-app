@@ -26,6 +26,17 @@ import websockets
 
 sys.stdout.reconfigure(encoding='utf-8')
 
+# 引入统一飞书通知中枢 (NotificationCenter)
+NOTIFICATION_CENTER_DIR = r"D:\AICode\tools\notification-center"
+if NOTIFICATION_CENTER_DIR not in sys.path:
+    sys.path.insert(0, NOTIFICATION_CENTER_DIR)
+
+try:
+    from notification_center import get_notification_manager, Severity, EventStatus, EventType
+    NOTIFIER_READY = True
+except Exception:
+    NOTIFIER_READY = False
+
 def calc_dhash_bits(im, size=8):
     try:
         im_gray = im.convert('L').resize((size + 1, size), Image.LANCZOS)
@@ -615,8 +626,23 @@ def get_instance_pipeline_config(instance_id=None):
     return mode, target_id
 
 
-def pick_production_template(template_root=TEMPLATE_POOL_ROOT, mode=PRODUCTION_MODE, target_id=TARGET_TEMPLATE_ID):
-    """根据生产模式挑选模板：模式 2 随机抽选，模式 3 按指定 ID 锁定"""
+try:
+    from material_template_router import detect_material_category, pick_template_for_material, CATEGORY_LABELS
+except ImportError:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from material_template_router import detect_material_category, pick_template_for_material, CATEGORY_LABELS
+
+
+def pick_production_template(template_root=TEMPLATE_POOL_ROOT, mode=PRODUCTION_MODE, target_id=TARGET_TEMPLATE_ID, material_path=None):
+    """根据生产模式挑选模板：优先通过素材类型识别器自动匹配专属分类子库抽选"""
+    if material_path:
+        try:
+            tpl, detected_cat = pick_template_for_material(material_path, template_root=template_root, mode=mode, fixed_id=target_id)
+            if tpl:
+                return tpl
+        except Exception as e:
+            log(f"⚠️ 智能素材路由器处理异常: {e}，回退至通用池")
+
     pool = get_template_catalog(template_root)
     if not pool:
         log(f"⚠️ 模板库未找到任何合格的 P1/P2 模板！路径: {template_root}")
@@ -3201,7 +3227,7 @@ class InstanceWorker:
 
         selected_template = None
         if mode in ("2_random_template", "3_fixed_template"):
-            selected_template = pick_production_template(TEMPLATE_POOL_ROOT, mode=mode, target_id=target_tpl_id)
+            selected_template = pick_production_template(TEMPLATE_POOL_ROOT, mode=mode, target_id=target_tpl_id, material_path=mat_dir)
             if not selected_template:
                 log(f"⚠️ 未找到可用母版，平滑回退到模式 1 (原图复刻打乱模式)", self.id)
                 mode = "1_replica_shuffle"
@@ -3210,12 +3236,22 @@ class InstanceWorker:
         self._current_template = selected_template
 
         if mode in ("2_random_template", "3_fixed_template") and selected_template:
-            log(f"🎯 [生产模式] {('随机模板复刻模式' if mode == '2_random_template' else '固定模板模式')} | 母版: [{selected_template['id']}] {selected_template['name']}", self.id)
-            template_imgs = [selected_template["p1_path"], selected_template["p2_path"]]
-            # 原料图精选最多 8 张（2 张母版 + 最多 8 张原料 = 10 张，严格符合 Web-CDP 上限）
-            material_imgs = self.prepare_material_images(mat_dir, max_imgs=8)
+            t_cat = selected_template.get("category", "精准流量团建")
+            log(f"🎯 [智能生产] {('随机模板模式' if mode == '2_random_template' else '固定模板模式')} | 分类: [{t_cat}] | 母版: [{selected_template['id']}] {selected_template['name']}", self.id)
+            
+            # 支持双图与多图母版智能组装
+            if selected_template.get("all_images") and len(selected_template["all_images"]) > 2:
+                # 个人攻略等异构全套母版：精选母版前 2~4 张 + 原料图，总量严格限制 10 张
+                t_count = min(4, len(selected_template["all_images"]))
+                template_imgs = selected_template["all_images"][:t_count]
+                remain_slots = max(2, 10 - t_count)
+                material_imgs = self.prepare_material_images(mat_dir, max_imgs=remain_slots)
+            else:
+                template_imgs = [selected_template["p1_path"], selected_template["p2_path"]]
+                material_imgs = self.prepare_material_images(mat_dir, max_imgs=8)
+                
             img_paths = template_imgs + material_imgs
-            log(f"-> 组装完成: 2 张 A 类母版 + {len(material_imgs)} 张 B 类原料实拍图 (共 {len(img_paths)} 张)", self.id)
+            log(f"-> 组装完成: {len(template_imgs)} 张 A 类母版 + {len(material_imgs)} 张 B 类原料实拍图 (共 {len(img_paths)} 张)", self.id)
         else:
             log(f"🎯 [生产模式] 模式 1: 原图复刻打乱生产模式 (无外部模板)", self.id)
             img_paths = self.prepare_material_images(mat_dir, max_imgs=10)
@@ -3880,10 +3916,13 @@ class InstanceWorker:
         except Exception:
             pass
 
-        # 5. 发送江湖有旅人·4大差异化版本核心文案指令（GPT在线链接双主稿 + 时间线大纲版 + 花里胡哨多表情同事爆款版）
+        # 5. 发送江湖有旅人·4大差异化版本核心文案指令（【两权分离】：优先派发至独立专属文案窗口生成，杜绝污染生图上下文）
         _matched_style_id = "STYLE-01"
         _matched_style_desc = "山水度假与美食动线风"
         _style_pack_block = ""
+        copy_text = ""
+        _dedicated_copy_success = False
+
         try:
             import importlib.util as _ilu
             _bridge_path = Path(r"D:\AICode\.agents\skills\teambuilding-web-copywriter\scripts\chatgpt_web_bridge.py")
@@ -3897,326 +3936,266 @@ class InstanceWorker:
                         f"【当前自动命中同事子模式（{_matched_style_id}·{_matched_style_desc} · 随机抽样真源原料 · 严禁套死模板）】：\n"
                         f"{_pack_text}\n\n"
                     )
+
+                # 【两权分离核心执行】：将原素材与4大版本提示词派发至独立文案 CDP 窗口
+                _copy_port = int(os.environ.get("COPYWRITER_CDP_PORT", "9432"))
+                log(f"✍️ [两权分离] 优先派发原素材至专属文案窗口 (端口 {_copy_port})，保护生图窗口上下文纯净...", self.id)
+                _ok_b, _b_vers, _b_msg = await _mod.run_cdp_copywriter_async(
+                    material_text=context_block,
+                    work_dir=None,
+                    cdp_port=_copy_port,
+                    destination=mat_info.get("destination", ""),
+                    max_wait_sec=240
+                )
+                if _ok_b and _b_vers and len(_b_vers) >= 2:
+                    log(f"🎉 [两权分离] 专属文案窗口生成大成功: {_b_msg}", self.id)
+                    _out_blocks = ["<<<COPY_FORMAT:MULTI>>>\n"]
+                    for _tag, _body in _b_vers.items():
+                        _out_blocks.append(f"<<<VERSION_START:{_tag}>>>\n{_body}\n<<<VERSION_END>>>\n")
+                    copy_text = "\n".join(_out_blocks).strip()
+                    _dedicated_copy_success = True
+                else:
+                    log(f"⚠️ [两权分离] 专属文案窗口暂未命中有效版本 ({_b_msg})，平滑回退至当前生图窗口生成...", self.id)
         except Exception as _e:
-            log(f"⚠️ 动态加载同事单风格原料包降级为内联规则: {_e}", self.id)
+            log(f"⚠️ [两权分离] 专属文案窗口调度异常或降级: {_e}，平滑回退至当前生图窗口生成...", self.id)
 
-        log(f"-> 发送 4 大差异化版本文案指令 [命中 {_matched_style_id}]（GPT原味红书自然 + 时间线大纲 + 花哨多表情同事版 + 抖音无营销）...", self.id)
-        copy_prompt = (
-            f"请调用并严格遵循【teambuilding-web-copywriter 技能】（GitHub 真源仓库：https://github.com/zwmopen/skills/tree/main/技能包/技能/teambuilding-web-copywriter ），"
-            f"根据上面刚刚生成的全套大图与原素材真实行程，立即生成 4 个风格反差极大、绝不套死模板的标准成稿版本。\n"
-            f"【原素材参考正文】：\n{context_block}\n\n"
-            f"{_style_pack_block}"
-            "【最高执行铁律（破除套模板感与双平台风控边界）】：\n"
-            "1. 严禁拿同一个模板换词填空！4 个版本必须呈现 4 种完全不同的阅读体验（克制自然运营风 vs 时间轴排期大纲 vs 满屏表情花里胡哨同事爆款风 vs 抖音周末去团建生活风）。\n"
-            "2. 视觉指纹命名：每个版本必须用 <<<VERSION_START:版本名>>> ... <<<VERSION_END>>> 包裹。\n"
-            "3. 单标题与字数安全线：每个版本首行必须且仅有 1 个纯文本标题（≤20字，严禁加#号、书名号或版本名）；小红书正文+标签目标 650—850 字符。\n"
-            "4. 手机防吞空行铁律：每个段落之间必须用【独立成行】的盲文空白字符“⠀”（Unicode U+2800，真实物理换行 \\n⠀\\n），绝不输出裸露空行！\n"
-            "5. 双平台风控：小红书保留团建/HR业务语义；抖音无营销必须彻底重写为普通人周末自驾出行/玩法避坑分享，严格消杀“团建/拓展/公司团建/HR/行政/路线/行程/方案/1日游/2天1夜/大巴接送/人均/报价/私信”等涉旅词。\n\n"
-            "【请按顺序生成以下 4 个截然不同的标准版本成稿（每个段落之间必须独立一行放 ⠀）】：\n"
-            "<<<COPY_FORMAT:MULTI>>>\n"
-            "<<<VERSION_START:红书自然>>>\n"
-            "【GPT链接原味·自然小红书版】克制自然的地点季节团建标题（≤20字）\n"
-            "⠀\n"
-            "正文（对齐GPT在线链接里打磨出的成熟运营自然口吻：开头直接给动静节奏判断 → 玩法怎么搭与取舍理由 → 💡HR怎么选分人群加减法 → ⚠️出发前天气/开放确认提醒，表情克制不夸张，段落间独立一行 ⠀）\n"
-            "⠀\n"
-            "#8至10个热门团建标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:红书大纲>>>\n"
-            "【时间线大纲版】带天数或时间推进感的团建排期标题（≤20字）\n"
-            "⠀\n"
-            "正文（专门做清晰的时间线大纲！开头1句总基调 → 📍基础信息 → 按 DAY1 / DAY2 + 具体时间节点 09:00｜… 11:30｜… 13:30｜… 16:00｜… 18:30｜… 顺次推进，写清每个时间点玩什么、为什么这么衔接、体力怎么分配 → 📌排期避坑提醒，段落间独立一行 ⠀）\n"
-            "⠀\n"
-            "#8至10个精准团建标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:红书种草>>>\n"
-            f"【表情超多·花里胡哨同事爆款版（{_matched_style_id}）】痛点反问或高能量吸睛标题（≤20字）\n"
-            "⠀\n"
-            f"正文（参照上方注入的 {_matched_style_id} 子模式提示词与随机抽样的同事真源原料：满屏高密度灵动 Emoji 表情🔥🎉🏎️🍵📸✨、情绪饱满、具象菜名、文末可带三列竖线玩法矩阵 ｜；注意：小标题名称和开篇切入点必须根据本素材亮点自由创新，严禁死套固定小标题模板！段落间独立一行 ⠀）\n"
-            "⠀\n"
-            "#8至10个热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:抖音无营销>>>\n"
-            "【GPT链接原味·抖音无营销版】周末出行/老玩家玩法避坑标题（≤20字）\n"
-            "⠀\n"
-            "正文（对齐GPT在线链接里的抖音配对稿：普通人周末出游/自驾玩法取舍视角，开头给真实判断 → 怎么玩/哪个刺激哪个松弛 → 天气鞋服确认，彻底消杀团建/HR/方案/价格/天数等涉旅词，段落间独立一行 ⠀）\n"
-            "⠀\n"
-            "#5个泛生活避坑标签\n"
-            "<<<VERSION_END>>>\n"
-        )
-        sent_copy = await self.send_text_prompt(copy_prompt, "V4.5 多版本文案指令", max_wait_sec=25)
-        if not sent_copy:
-            log("🚨 文案指令首次提交未获网页确认，等待 3 秒后重试一次发送...", self.id)
-            await asyncio.sleep(3)
-            sent_copy = await self.send_text_prompt(copy_prompt, "V4.5 多版本文案指令（重试）", max_wait_sec=25)
-        if not sent_copy:
-            log("🚨 文案指令重试后仍未获提交确认，坚决拒绝假抓取用户提问，终止本次以防误产空壳", self.id)
-            raise RuntimeError("文案指令无法提交至 ChatGPT 编辑框")
-        log("多版本文案指令已发送，等待文本产出...", self.id)
-
-        # 【2026-09-23 修复·旧 VERSION_END 污染】记录"文案指令提交瞬间"的页面基线。
-        # 之后 get_txt_js 只取该基线之后新增的文本，避免把出图阶段残留的 VERSION_END 当成新文案
-        # （现象：抓取 16583 字看似成功，copy_formatter 洗完只剩 134 字 -> 空壳判废）。
-        try:
-            # 【2026-09-25 修·composer 自污染】新版 ChatGPT 的输入框（ProseMirror）本身就在 <main> 内，
-            # 直接取 main.innerText 会把「输入框里还没发出去的草稿」算成助手产出。
-            # 实测事故：08:52 B 实例抓到「...继续。上一轮回复已被中断...」这 111 字，正是我们注入的追问原文，
-            # 一旦里面含 VERSION_START 就会被误判为文案。这里统一改为「克隆 main 后剔除表单/富文本输入区」再取文本。
-            # 【2026-09-27 修·抓取基线增加「尾部锚点 + 版本块指纹」】
-            # 原基线只记一个 mainLen 数字，抓取时用 full.slice(mainLen) 按长度切。
-            # 实测新 UI 会做虚拟滚动 / 节点回收（日志里那句「回收阶段页面节点已收缩」），
-            # 早期消息节点被卸载后 main.innerText 会**变短**，slice(mainLen) 恒为空字符串 →
-            # 文案明明已经写完（实测 A 实例 main 尾部 11 个 <<<VERSION_START>>> 全在），
-            # 抓取长度却一直是 0 → 空壳判废 → 素材重做甚至物理隔离。这是近期全线零产出的真根因。
-            # 现基线额外记录：①末尾 120 字锚点；②当前所有 <<<VERSION_START…VERSION_END>>> 块的指纹。
-            js_baseline = r"""(() => {
-                const m = document.querySelector('main');
-                let len = 0, full = '';
-                if (m) {
-                    const clone = m.cloneNode(true);
-                    clone.querySelectorAll('form, textarea, [contenteditable="true"], [data-testid*="composer"], [data-message-author-role="user"]')
-                         .forEach(n => { try { n.remove(); } catch (e) {} });
-                    full = clone.innerText || clone.textContent || '';
-                    len = full.length;
-                }
-                const _h = (s) => {
-                    let h = 5381;
-                    for (let i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; }
-                    return 'h' + h.toString(16) + '_' + s.length;
-                };
-                const _blocks = (t) => {
-                    const re = /<<<VERSION_START:\s*([^>\n]{1,24})\s*>>>([\s\S]*?)<<<VERSION_END>>>/g;
-                    const out = []; let mm;
-                    while ((mm = re.exec(t))) { out.push(mm[0]); }
-                    return out;
-                };
-                window.__copyBaseline = {
-                    mainLen: len,
-                    asstCount: document.querySelectorAll('[data-message-author-role="assistant"]').length,
-                    tail: full.slice(-120),
-                    blockHashes: _blocks(full).map(_h)
-                };
-                return {mainLen: len, asstCount: window.__copyBaseline.asstCount,
-                        blocks: window.__copyBaseline.blockHashes.length};
-            })()"""
-            r_base = await self.send_cmd("Runtime.evaluate", {"expression": js_baseline, "returnByValue": True}, timeout=15)
-            bv = r_base.get("result", {}).get("result", {}).get("value", {}) or {}
-            log(f"📏 文案抓取基线已记录: mainLen={bv.get('mainLen', 0)} asstCount={bv.get('asstCount', 0)}", self.id)
-        except Exception as _be:
-            log(f"⚠️ 文案抓取基线记录失败（退化为全量抓取）: {_be}", self.id)
-
-        # 【2026-09-23 修复·文案抓取全废根因】旧版 get_txt_js 依赖
-        # `[data-testid^="conversation-turn-"]` 的最后一个 turn 且「非 user」即取 innerText，
-        # 但新版 ChatGPT 引入了 `collapsible-user-message` 折叠结构 + 长回复可能被折叠，
-        # 导致「图能出、文案却 100% 抓空」，60 次轮询静默空转、一条日志都不打。
-        # 修复：①抓取改为「从后往前找最后一个 assistant 消息」并兼容折叠结构；②每轮打诊断日志，
-        # 记录 turns 数 / 抓取长度 / 是否含 VERSION，让空转可一眼定位；③对空抓取也打日志，不再静默。
-        copy_text = ""
-        # 【2026-09-24 新增】记录轮询中「最后一次非空抓取」的原文，供轮询失败后做归类：
-        # 是「官方配额拒绝」（应走配额自愈、绝不隔离）还是「真的抓不到产出」（才考虑判废）。
-        # 起因：实测 09-24 02:23 宁波素材，抓取全程卡在 22 字的官方短通知上，
-        # 下游却按「0 字空壳」判废并物理隔离 —— 素材白丢。
         _last_poll_txt = ""
-        # 【2026-09-25 修·文案环节"永远抓不到"的真根因】原窗口 60 次 × 3 秒 = 180 秒。
-        # 两份实测对照（同一条 A 产线、同一套代码）：
-        #   成功样本 09-24 01:55:20 提交 → 01:57:42 抓到，耗时 142 秒 / 第 46 轮（勉强赶上）
-        #   失败样本 09-25 06:58:38 提交 → 07:01:41 判死时 isGenerating = **True**，模型明明还在写
-        # 结论：模型没失败，是**窗口太短被强行判死**。11 版长文案在「15135 字生图指令 + 10 张原图」
-        # 的重上下文里，生成耗时会在 140~300 秒之间浮动；09-25 全天 6 次文案环节的末态原文
-        # 分别是 3 字「思考中」、15~23 字「<<<COPY_FORMAT:MULTI>>>」（格式头刚吐出来就被截断），
-        # 全部是"没给够时间"，没有一次是真的写不出来。
-        # 现改为：窗口 200 × 3 秒 = 600 秒（10 分钟），且**以生成状态判活**：
-        #   · isGenerating = True            → 它还在写就一直等，绝不按时间判死
-        #   · 已停止生成 + 连续 45 秒无新内容 → 才认定真失败，提前认输（不空等 10 分钟）
-        _COPY_MAX_POLL = 200
-        # 【2026-09-25 重写】原为 15 轮(45 秒)且入口条件是「已停止生成」，实测该条件在本故障下永不成立。
-        # 现以「内容零增长」为唯一判据。
-        # 【2026-09-28 修·整夜零产出的真根因】原值 20 轮 = 60 秒，实测**每一套文案都在约 57 秒被判死**
-        # （日志：`判定文案流已断：连续 60 秒零增长…已等待约 57 秒`）。
-        # 但本文件上文注释自己写着：11 版长文案在「15135 字生图指令 + 10 张原图」的
-        # 重上下文里，生成耗时在 **140~300 秒**浮动 —— 60 秒的判活窗口连模型的思考期都覆盖不了，
-        # 于是「出图 5/5 成功 → 文案 0 字判废 → 不入库」，09-27 整夜 0 套成品。
-        # 现放宽到 60 轮 = 180 秒零增长才判死：既能覆盖思考期与正常停顿，
-        # 又仍在 _COPY_MAX_POLL(200 轮 / 600 秒) 的总窗口内，真断流也不会空耗太久。
-        _STALL_LIMIT = 60
-        _stall_rounds = 0
-        _peak_len = 0
-        for poll_idx in range(_COPY_MAX_POLL):
-            await asyncio.sleep(3)
-            get_txt_js = r"""(() => {
-                // 【2026-09-27 修·「生成中」判据必须排除 composer 常驻按钮】
-                // 旧判据 button[aria-label*="停止"] 会命中 composer 区那个常驻停止按钮，
-                // 实测它永远在页面上 → isGenerating 恒 True → 下游 `if(has_ve && !isGen)` 收工条件永不成立，
-                // 抓到完整 11 版文案也不肯收工，一路空转到 200 轮判废。
-                // 真生成的硬证据只有：data-testid="stop-button" / 流式标记 / 图像生成 loading 板。
-                const stopHard = document.querySelector('button[data-testid="stop-button"]');
-                const streaming = document.querySelector('.result-streaming, [class*="streaming"], [data-testid*="streaming"]');
-                const imgLoading = document.querySelector('[data-testid*="image-gen-loading"], [data-testid*="loading-game-board"]');
-                const isGen = !!stopHard || !!streaming || !!imgLoading;
-                // 【2026-09-23 二次修复·文案抓到 26 字壳】上一版策略「优先取最后一个 assistant 消息」有缺陷：
-                // 新版 ChatGPT 里，[data-message-author-role="assistant"] 命中的最后一个节点，往往是
-                // 文案指令之前模型对图片的短确认（如「好的，我来生成」26 字），非空但非真文案。
-                // 因为非空，`if(!text)` 回退分支永不触发，导致抓取一直卡在 26 字壳上（实测 14:30 判废）。
-                // 而 14:01/14:11 两次成功恰是 assistant-node 抓空后回退 main 才成功（src=main，12000+ 字）。
-                // 修复：同时取 main 全量与最后一个 assistant，优先选「含 VERSION_END」的那份；
-                // 都不含则选更长的（main 全量天然更长，且含完整文案），彻底告别 26 字壳卡死。
-                let candidates = [];
-                // [2026-09-23 三次修复·旧 VERSION_END 污染] 出图阶段 main 里已经存在 VERSION_END，
-                // 直接抓全量会把「上一阶段的旧文案」当成「本次 V4.5 新文案」，asst=0 时尤其致命
-                // （实测：抓取 16583 字看着很美，copy_formatter 洗完只剩 134 字 -> 空壳判废）。
-                // 这里以文案指令提交瞬间记录的基线为界，只取之后新增的内容。
-                const base = window.__copyBaseline || {mainLen: 0, asstCount: 0};
-                const asst = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
-                if (asst.length > 0 && asst.length <= base.asstCount) {
-                    // 新一轮文案尚未产生独立的 assistant 消息节点，模型仍在思考中，绝不提前抓取或误抓用户提问
-                    return {isGen: true, text: '', src: 'waiting-assistant', len: 0, has_ve: false};
-                }
-                const a = asst.length > 0 ? (asst[asst.length - 1].innerText || '') : '';
 
-                if (a) candidates.push({src: 'assistant-node', text: a});
-                const turns = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"]'));
-                for (let i = turns.length - 1; i >= 0; i--) {
-                    const isUser = !!turns[i].querySelector('[data-message-author-role="user"]');
-                    if (!isUser) {
-                        const t = turns[i].innerText || '';
-                        if (t) { candidates.push({src: 'turn-' + i, text: t}); break; }
+        async def _generate_copy_fallback_in_current_session():
+            nonlocal copy_text, _last_poll_txt
+            log(f"-> 发送 4 大差异化版本文案指令 [命中 {_matched_style_id}]（GPT原味红书自然 + 时间线大纲 + 花哨多表情同事版 + 抖音无营销）...", self.id)
+            copy_prompt = (
+                f"请调用并严格遵循【teambuilding-web-copywriter 技能】（GitHub 真源仓库：https://github.com/zwmopen/skills/tree/main/技能包/技能/teambuilding-web-copywriter ），"
+                f"根据上面刚刚生成的全套大图与原素材真实行程，立即生成 4 个风格反差极大、绝不套死模板的标准成稿版本。\n"
+                f"【原素材参考正文】：\n{context_block}\n\n"
+                f"{_style_pack_block}"
+                "【最高执行铁律（破除套模板感与双平台风控边界）】：\n"
+                "1. 严禁拿同一个模板换词填空！4 个版本必须呈现 4 种完全不同的阅读体验（克制自然运营风 vs 时间轴排期大纲 vs 满屏表情花里胡哨同事爆款风 vs 抖音周末去团建生活风）。\n"
+                "2. 视觉指纹命名：每个版本必须用 <<<VERSION_START:版本名>>> ... <<<VERSION_END>>> 包裹。\n"
+                "3. 单标题与字数安全线：每个版本首行必须且仅有 1 个纯文本标题（≤20字，严禁加#号、书名号或版本名）；小红书正文+标签目标 650—850 字符。\n"
+                "4. 手机防吞空行铁律：每个段落之间必须用【独立成行】的盲文空白字符“⠀”（Unicode U+2800，真实物理换行 \\n⠀\\n），绝不输出裸露空行！\n"
+                "5. 双平台风控：小红书保留团建/HR业务语义；抖音无营销必须彻底重写为普通人周末自驾出行/玩法避坑分享，严格消杀“团建/拓展/公司团建/HR/行政/路线/行程/方案/1日游/2天1夜/大巴接送/人均/报价/私信”等涉旅词。\n\n"
+                "【请按顺序生成以下 4 个截然不同的标准版本成稿（每个段落之间必须独立一行放 ⠀）】：\n"
+                "<<<COPY_FORMAT:MULTI>>>\n"
+                "<<<VERSION_START:红书自然>>>\n"
+                "【GPT链接原味·自然小红书版】克制自然的地点季节团建标题（≤20字）\n"
+                "⠀\n"
+                "正文（对齐GPT在线链接里打磨出的成熟运营自然口吻：开头直接给动静节奏判断 → 玩法怎么搭与取舍理由 → 💡HR怎么选分人群加减法 → ⚠️出发前天气/开放确认提醒，表情克制不夸张，段落间独立一行 ⠀）\n"
+                "⠀\n"
+                "#8至10个热门团建标签\n"
+                "<<<VERSION_END>>>\n\n"
+                "<<<VERSION_START:红书大纲>>>\n"
+                "【时间线大纲版】带天数或时间推进感的团建排期标题（≤20字）\n"
+                "⠀\n"
+                "正文（专门做清晰的时间线大纲！开头1句总基调 → 📍基础信息 → 按 DAY1 / DAY2 + 具体时间节点 09:00｜… 11:30｜… 13:30｜… 16:00｜… 18:30｜… 顺次推进，写清每个时间点玩什么、为什么这么衔接、体力怎么分配 → 📌排期避坑提醒，段落间独立一行 ⠀）\n"
+                "⠀\n"
+                "#8至10个精准团建标签\n"
+                "<<<VERSION_END>>>\n\n"
+                "<<<VERSION_START:红书种草>>>\n"
+                f"【表情超多·花里胡哨同事爆款版（{_matched_style_id}）】痛点反问或高能量吸睛标题（≤20字）\n"
+                "⠀\n"
+                f"正文（参照上方注入的 {_matched_style_id} 子模式提示词与随机抽样的同事真源原料：满屏高密度灵动 Emoji 表情🔥🎉🏎️🍵📸✨、情绪饱满、具象菜名、文末可带三列竖线玩法矩阵 ｜；注意：小标题名称和开篇切入点必须根据本素材亮点自由创新，严禁死套固定小标题模板！段落间独立一行 ⠀）\n"
+                "⠀\n"
+                "#8至10个热门话题标签\n"
+                "<<<VERSION_END>>>\n\n"
+                "<<<VERSION_START:抖音无营销>>>\n"
+                "【GPT链接原味·抖音无营销版】周末出行/老玩家玩法避坑标题（≤20字）\n"
+                "⠀\n"
+                "正文（对齐GPT在线链接里的抖音配对稿：普通人周末出游/自驾玩法取舍视角，开头给真实判断 → 怎么玩/哪个刺激哪个松弛 → 天气鞋服确认，彻底消杀团建/HR/方案/价格/天数等涉旅词，段落间独立一行 ⠀）\n"
+                "⠀\n"
+                "#5个泛生活避坑标签\n"
+                "<<<VERSION_END>>>\n"
+            )
+            sent_copy = await self.send_text_prompt(copy_prompt, "V4.5 多版本文案指令", max_wait_sec=25)
+            if not sent_copy:
+                log("🚨 文案指令首次提交未获网页确认，等待 3 秒后重试一次发送...", self.id)
+                await asyncio.sleep(3)
+                sent_copy = await self.send_text_prompt(copy_prompt, "V4.5 多版本文案指令（重试）", max_wait_sec=25)
+            if not sent_copy:
+                log("🚨 文案指令重试后仍未获提交确认，坚决拒绝假抓取用户提问，终止本次以防误产空壳", self.id)
+                raise RuntimeError("文案指令无法提交至 ChatGPT 编辑框")
+            log("多版本文案指令已发送，等待文本产出...", self.id)
+
+            try:
+                js_baseline = r"""(() => {
+                    const m = document.querySelector('main');
+                    let len = 0, full = '';
+                    if (m) {
+                        const clone = m.cloneNode(true);
+                        clone.querySelectorAll('form, textarea, [contenteditable="true"], [data-testid*="composer"], [data-message-author-role="user"]')
+                             .forEach(n => { try { n.remove(); } catch (e) {} });
+                        full = clone.innerText || clone.textContent || '';
+                        len = full.length;
                     }
-                }
-                const mainEl = document.querySelector('main');
-                if (mainEl) {
-                    // 【2026-09-25 修·composer 自污染 + 2026-10-05 修·用户提问示例污染】与基线同口径：克隆后剔除表单/输入区与用户提问
-                    const clone = mainEl.cloneNode(true);
-                    clone.querySelectorAll('form, textarea, [contenteditable="true"], [data-testid*="composer"], [data-message-author-role="user"]')
-                         .forEach(n => { try { n.remove(); } catch (e) {} });
-                    const full = clone.innerText || clone.textContent || '';
-                    const m = full.slice(base.mainLen);
-                    if (m) candidates.push({src: 'main', text: m});
-
-                    // 【2026-09-27 修·两条不依赖「长度」的抓取通道】
-                    // slice(base.mainLen) 在虚拟滚动回收节点后恒为空（main 文本会变短），
-                    // 这里补两条更抗造的通道：
-                    //   ① 块差分：把当前所有 <<<VERSION_START…VERSION_END>>> 块与基线指纹比对，
-                    //      只留下基线里没有的新块 —— 既能抗节点回收，又能天然剔除上一阶段的旧文案。
-                    //   ② 锚点：用基线记录的末尾 120 字在全文里定位，取其后的内容。
-                    const _h2 = (s) => {
+                    const _h = (s) => {
                         let h = 5381;
                         for (let i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; }
                         return 'h' + h.toString(16) + '_' + s.length;
                     };
-                    const _baseSet = new Set(base.blockHashes || []);
-                    const _re = /<<<VERSION_START:\s*([^>\n]{1,24})\s*>>>([\s\S]*?)<<<VERSION_END>>>/g;
-                    const _fresh = [];
-                    let _mm;
-                    while ((_mm = _re.exec(full))) {
-                        if (!_baseSet.has(_h2(_mm[0]))) { _fresh.push(_mm[0]); }
+                    const _blocks = (t) => {
+                        const re = /<<<VERSION_START:\s*([^>\n]{1,24})\s*>>>([\s\S]*?)<<<VERSION_END>>>/g;
+                        const out = []; let mm;
+                        while ((mm = re.exec(t))) { out.push(mm[0]); }
+                        return out;
+                    };
+                    window.__copyBaseline = {
+                        mainLen: len,
+                        asstCount: document.querySelectorAll('[data-message-author-role="assistant"]').length,
+                        tail: full.slice(-120),
+                        blockHashes: _blocks(full).map(_h)
+                    };
+                    return {mainLen: len, asstCount: window.__copyBaseline.asstCount,
+                            blocks: window.__copyBaseline.blockHashes.length};
+                })()"""
+                r_base = await self.send_cmd("Runtime.evaluate", {"expression": js_baseline, "returnByValue": True}, timeout=15)
+                bv = r_base.get("result", {}).get("result", {}).get("value", {}) or {}
+                log(f"📏 文案抓取基线已记录: mainLen={bv.get('mainLen', 0)} asstCount={bv.get('asstCount', 0)}", self.id)
+            except Exception as _be:
+                log(f"⚠️ 文案抓取基线记录失败（退化为全量抓取）: {_be}", self.id)
+
+            _COPY_MAX_POLL = 200
+            _STALL_LIMIT = 60
+            _stall_rounds = 0
+            _peak_len = 0
+            for poll_idx in range(_COPY_MAX_POLL):
+                await asyncio.sleep(3)
+                get_txt_js = r"""(() => {
+                    const stopHard = document.querySelector('button[data-testid="stop-button"]');
+                    const streaming = document.querySelector('.result-streaming, [class*="streaming"], [data-testid*="streaming"]');
+                    const imgLoading = document.querySelector('[data-testid*="image-gen-loading"], [data-testid*="loading-game-board"]');
+                    const isGen = !!stopHard || !!streaming || !!imgLoading;
+                    let candidates = [];
+                    const base = window.__copyBaseline || {mainLen: 0, asstCount: 0};
+                    const asst = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
+                    if (asst.length > 0 && asst.length <= base.asstCount) {
+                        return {isGen: true, text: '', src: 'waiting-assistant', len: 0, has_ve: false};
                     }
-                    if (_fresh.length) { candidates.push({src: 'blocks-diff', text: _fresh.join('\n\n')}); }
-                    const _tail = base.tail || '';
-                    if (_tail) {
-                        const _i = full.indexOf(_tail);
-                        if (_i >= 0 && _i + _tail.length < full.length) {
-                            candidates.push({src: 'anchor', text: full.slice(_i + _tail.length)});
+                    const a = asst.length > 0 ? (asst[asst.length - 1].innerText || '') : '';
+                    if (a) candidates.push({src: 'assistant-node', text: a});
+                    const turns = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"]'));
+                    for (let i = turns.length - 1; i >= 0; i--) {
+                        const isUser = !!turns[i].querySelector('[data-message-author-role="user"]');
+                        if (!isUser) {
+                            const t = turns[i].innerText || '';
+                            if (t) { candidates.push({src: 'turn-' + i, text: t}); break; }
                         }
                     }
-                }
-                // 先修复各候选的前缀残缺
-                for (const c of candidates) {
-                    if (c && c.text) {
-                        if (/^ION_START:/.test(c.text)) c.text = '<<<VERS' + c.text;
-                        else if (/^VERSION_START:/.test(c.text)) c.text = '<<<' + c.text;
-                        else if (/^RSION_START:/.test(c.text)) c.text = '<<<VE' + c.text;
+                    const mainEl = document.querySelector('main');
+                    if (mainEl) {
+                        const clone = mainEl.cloneNode(true);
+                        clone.querySelectorAll('form, textarea, [contenteditable="true"], [data-testid*="composer"], [data-message-author-role="user"]')
+                             .forEach(n => { try { n.remove(); } catch (e) {} });
+                        const full = clone.innerText || clone.textContent || '';
+                        const m = full.slice(base.mainLen);
+                        if (m) candidates.push({src: 'main', text: m});
+
+                        const _h2 = (s) => {
+                            let h = 5381;
+                            for (let i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; }
+                            return 'h' + h.toString(16) + '_' + s.length;
+                        };
+                        const _baseSet = new Set(base.blockHashes || []);
+                        const _re = /<<<VERSION_START:\s*([^>\n]{1,24})\s*>>>([\s\S]*?)<<<VERSION_END>>>/g;
+                        const _fresh = [];
+                        let _mm;
+                        while ((_mm = _re.exec(full))) {
+                            if (!_baseSet.has(_h2(_mm[0]))) { _fresh.push(_mm[0]); }
+                        }
+                        if (_fresh.length) { candidates.push({src: 'blocks-diff', text: _fresh.join('\n\n')}); }
+                        const _tail = base.tail || '';
+                        if (_tail) {
+                            const _i = full.indexOf(_tail);
+                            if (_i >= 0 && _i + _tail.length < full.length) {
+                                candidates.push({src: 'anchor', text: full.slice(_i + _tail.length)});
+                            }
+                        }
                     }
-                }
-                // 选优：优先取 blocks-diff（结构最纯且完整）；若无则取含 VERSION_END 中最长的一份
-                let pick = null;
-                for (const c of candidates) {
-                    if (c.src === 'blocks-diff' && (c.text.includes('VERSION_END') || c.text.includes('DOUYIN_END'))) {
-                        pick = c; break;
-                    }
-                }
-                if (!pick) {
                     for (const c of candidates) {
-                        if (c.text.includes('VERSION_END') || c.text.includes('DOUYIN_END')) {
+                        if (c && c.text) {
+                            if (/^ION_START:/.test(c.text)) c.text = '<<<VERS' + c.text;
+                            else if (/^VERSION_START:/.test(c.text)) c.text = '<<<' + c.text;
+                            else if (/^RSION_START:/.test(c.text)) c.text = '<<<VE' + c.text;
+                        }
+                    }
+                    let pick = null;
+                    for (const c of candidates) {
+                        if (c.src === 'blocks-diff' && (c.text.includes('VERSION_END') || c.text.includes('DOUYIN_END'))) {
+                            pick = c; break;
+                        }
+                    }
+                    if (!pick) {
+                        for (const c of candidates) {
+                            if (c.text.includes('VERSION_END') || c.text.includes('DOUYIN_END')) {
+                                if (!pick || c.text.length > pick.text.length) { pick = c; }
+                            }
+                        }
+                    }
+                    if (!pick) {
+                        for (const c of candidates) {
                             if (!pick || c.text.length > pick.text.length) { pick = c; }
                         }
                     }
-                }
-                if (!pick) {
-                    for (const c of candidates) {
-                        if (!pick || c.text.length > pick.text.length) { pick = c; }
-                    }
-                }
-                const text = pick ? pick.text : '';
-                const src = pick ? pick.src : 'none';
-                return {
-                    text: text,
-                    isGenerating: isGen,
-                    src: src,
-                    asstCount: asst.length,
-                    turnCount: turns.length,
-                    hasVersionEnd: text.includes('VERSION_END') || text.includes('DOUYIN_END'),
-                    hasVersionStart: text.includes('VERSION_START')
-                };
-            })()"""
-            try:
-                r_txt = await self.send_cmd("Runtime.evaluate", {"expression": get_txt_js, "returnByValue": True})
-                val_txt = r_txt.get("result", {}).get("result", {}).get("value", {}) if isinstance(r_txt, dict) else {}
-                txt = val_txt.get("text", "")
-                is_gen_txt = val_txt.get("isGenerating", False)
-                src = val_txt.get("src", "?")
-                asst_cnt = val_txt.get("asstCount", 0)
-                turn_cnt = val_txt.get("turnCount", 0)
-                has_ve = val_txt.get("hasVersionEnd", False)
-                if txt:
-                    _last_poll_txt = txt
+                    const text = pick ? pick.text : '';
+                    const src = pick ? pick.src : 'none';
+                    return {
+                        text: text,
+                        isGenerating: isGen,
+                        src: src,
+                        asstCount: asst.length,
+                        turnCount: turns.length,
+                        hasVersionEnd: text.includes('VERSION_END') || text.includes('DOUYIN_END'),
+                        hasVersionStart: text.includes('VERSION_START')
+                    };
+                })()"""
+                try:
+                    r_txt = await self.send_cmd("Runtime.evaluate", {"expression": get_txt_js, "returnByValue": True})
+                    val_txt = r_txt.get("result", {}).get("result", {}).get("value", {}) if isinstance(r_txt, dict) else {}
+                    txt = val_txt.get("text", "")
+                    is_gen_txt = val_txt.get("isGenerating", False)
+                    src = val_txt.get("src", "?")
+                    asst_cnt = val_txt.get("asstCount", 0)
+                    turn_cnt = val_txt.get("turnCount", 0)
+                    has_ve = val_txt.get("hasVersionEnd", False)
+                    if txt:
+                        _last_poll_txt = txt
 
-                # 【诊断日志】每轮记录一次抓取状态，杜绝静默空转（每 10 轮打一次，避免刷屏）
-                if poll_idx % 10 == 0 or has_ve:
-                    log(f"⏳ 文案轮询 [{poll_idx}/{_COPY_MAX_POLL}] src={src} turns={turn_cnt} asst={asst_cnt} "
-                        f"抓取长度={len(txt)} 含VERSION_END={has_ve} 生成中={is_gen_txt} 停滞{_stall_rounds}/{_STALL_LIMIT}", self.id)
-                    # 【2026-09-24 新增】抓到的是短文本时，直接把原文打出来 ——
-                    # 只有长度（如"抓取长度=22"）根本判断不出那 22 字是配额拒绝还是模型短确认。
-                    if txt and len(txt) < 200:
-                        log(f"   └ 短文本原文: {txt.replace(chr(10), ' ')[:120]}", self.id)
+                    if poll_idx % 10 == 0 or has_ve:
+                        log(f"⏳ 文案轮询 [{poll_idx}/{_COPY_MAX_POLL}] src={src} turns={turn_cnt} asst={asst_cnt} "
+                            f"抓取长度={len(txt)} 含VERSION_END={has_ve} 生成中={is_gen_txt} 停滞{_stall_rounds}/{_STALL_LIMIT}", self.id)
+                        if txt and len(txt) < 200:
+                            log(f"   └ 短文本原文: {txt.replace(chr(10), ' ')[:120]}", self.id)
 
-                # 【2026-09-25 修】原为 poll_idx >= 10（30 秒后才接受），窗口拉长后放宽到 >= 3，
-                # 避免"模型 3 秒就写完了"这种快样本被无谓闲置；基线机制仍负责挡旧残留。
-                # 【2026-09-25 重写·「流已断」判定（本故障的唯一止血点）】
-                # 现改为**内容级判活，完全不依赖任何按钮状态**：
-                #   · 抓取长度比历史峰值增长 > 4 字 → 流还活着，停滞计数清零
-                #   · 连续 _STALL_LIMIT 轮零增长 → 判定「流已断」，立即收工交给上层重试/熔断
-                if len(txt) > _peak_len + 4:
-                    _peak_len = len(txt)
-                    _stall_rounds = 0
-                else:
-                    _stall_rounds += 1
-
-                # 【2026-10-05 深度升级·杜绝中途早退与UI免责声明残缺】
-                # 只有当：
-                # 1. 包含 VERSION_END，且没有处于未闭合版本块中间（未闭合判据：VERSION_START 数量 > VERSION_END 数量）；
-                # 2. 且已完成全部 3 个标准版本（或包含“抖音避坑”），或者确实已经连续 10 轮零增长停滞；
-                # 3. 且 (前端明确停止回答 或 停滞 >= 10 轮)。
-                _has_open_block = txt.count('<<<VERSION_START:') > txt.count('<<<VERSION_END>>>')
-                _has_complete_v3 = (txt.count('<<<VERSION_END>>>') >= 4 or ('<<<VERSION_START:抖音攻略>>>' in txt and txt.count('<<<VERSION_END>>>') >= 3) or txt.count('<<<VERSION_END>>>') >= 3)
-                _ready_to_seal = (not _has_open_block) and (_has_complete_v3 or _stall_rounds >= 10)
-                if (has_ve) and _ready_to_seal and ((not is_gen_txt) or _stall_rounds >= 10) and poll_idx >= 3 and len(txt) > 200:
-                    # 【2026-09-22 修复·文案三病之二】「实质产出校验」：剔除全部 <<<>>> 标记与空白后，
-                    # 若实质正文仍不足 MIN_COPY_SUBSTANCE(300) 字，说明抓到的是模板壳/指令回显，绝不当作文案。
-                    _probe_substance = re.sub(r'<<<[^>]*>>>', '', txt)
-                    _probe_substance = re.sub(r'[\s\u2800]+', '', _probe_substance)
-                    if len(_probe_substance) >= 300:
-                        copy_text = txt
-                        log(f"V4.5 多版本文案结构捕获成功！(长度: {len(copy_text)}, 实质 {len(_probe_substance)} 字, src={src})", self.id)
-                        break
+                    if len(txt) > _peak_len + 4:
+                        _peak_len = len(txt)
+                        _stall_rounds = 0
                     else:
-                        log(f"⏳ 文案捕获疑似抓到指令模板/占位壳（实质仅 {len(_probe_substance)} 字），继续等待真实产出...", self.id)
+                        _stall_rounds += 1
 
-                if (not copy_text) and poll_idx >= 6 and _stall_rounds >= _STALL_LIMIT:
-                    log(f"⚠️ 判定文案流已断：连续 {_STALL_LIMIT * 3} 秒零增长"
-                        f"（末态仅 {len(txt)} 字 / 峰值 {_peak_len} 字 / 前端仍显示生成中={is_gen_txt}），"
-                        f"提前结束轮询（已等待约 {poll_idx * 3} 秒），不再空耗至 {_COPY_MAX_POLL * 3} 秒", self.id)
-                    break
-            except Exception as e_txt:
-                log(f"⚠️ 文案轮询异常 [{poll_idx}]: {e_txt}", self.id)
+                    _has_open_block = txt.count('<<<VERSION_START:') > txt.count('<<<VERSION_END>>>')
+                    _has_complete_v3 = (txt.count('<<<VERSION_END>>>') >= 4 or ('<<<VERSION_START:抖音攻略>>>' in txt and txt.count('<<<VERSION_END>>>') >= 3) or txt.count('<<<VERSION_END>>>') >= 3)
+                    _ready_to_seal = (not _has_open_block) and (_has_complete_v3 or _stall_rounds >= 10)
+                    if (has_ve) and _ready_to_seal and ((not is_gen_txt) or _stall_rounds >= 10) and poll_idx >= 3 and len(txt) > 200:
+                        _probe_substance = re.sub(r'<<<[^>]*>>>', '', txt)
+                        _probe_substance = re.sub(r'[\s\u2800]+', '', _probe_substance)
+                        if len(_probe_substance) >= 300:
+                            copy_text = txt
+                            log(f"V4.5 多版本文案结构捕获成功！(长度: {len(copy_text)}, 实质 {len(_probe_substance)} 字, src={src})", self.id)
+                            break
+                        else:
+                            log(f"⏳ 文案捕获疑似抓到指令模板/占位壳（实质仅 {len(_probe_substance)} 字），继续等待真实产出...", self.id)
+
+                    if (not copy_text) and poll_idx >= 6 and _stall_rounds >= _STALL_LIMIT:
+                        log(f"⚠️ 判定文案流已断：连续 {_STALL_LIMIT * 3} 秒零增长"
+                            f"（末态仅 {len(txt)} 字 / 峰值 {_peak_len} 字 / 前端仍显示生成中={is_gen_txt}），"
+                            f"提前结束轮询（已等待约 {poll_idx * 3} 秒），不再空耗至 {_COPY_MAX_POLL * 3} 秒", self.id)
+                        break
+                except Exception as e_txt:
+                    log(f"⚠️ 文案轮询异常 [{poll_idx}]: {e_txt}", self.id)
+
+        if not _dedicated_copy_success:
+            await _generate_copy_fallback_in_current_session()
+        else:
+            log(f"⚡ [两权分离] 专属文案窗口已产出完整 4 大版本（长度: {len(copy_text)}），跳过生图会话内部文案轮询！", self.id)
 
         if not copy_text:
             # 【2026-09-24 新增】先把最后一次抓到的原文落进日志（此前只记长度，
@@ -4846,30 +4825,44 @@ class InstanceWorker:
             if feishu_row_mat and feishu_row_fin:
                 direct_sheet_url = f"{SPREADSHEET_URL}&range=A{feishu_row_mat}:V{feishu_row_fin}"
 
-            feishu_md = (
-                f"🎉 **【秋季素材交付 · 客户端模式（直接对话框）】**\n\n"
-                f"• **作品标题**：{clean_title[:50]}\n"
-                f"• **生产模式**：客户端模式（直接对话框）（实例 {self.id} · {account_alias}）\n"
-                f"• **图文交付**：{valid_cnt} 张 3:4 竖屏高清大图 + 3 端文案（小红书/HR决策/抖音）\n"
-                f"• **质检验收**：100% 通过 Pillow 像素级与长宽比校验，无损入库\n"
-                f"• **成品路径**：[📂 点击打开成品文件夹]({safe_target_pkg_url})\n"
-                f"• **原素材参考**：[📁 查看原素材文件夹]({safe_mat_url})\n"
-                f"• **飞书台账**：已登记第 {feishu_row_mat or '?'}–{feishu_row_fin or '?'} 行（[点击直达本套记录]({direct_sheet_url})）\n\n"
-                f"📊 **【秋季素材包】全盘战况**：\n"
-                f"• 本地成品总数：已累计 **{cur_count} 套**\n"
-                f"• 秋季素材进度：已完成 **{cur_count} / 781 套**\n"
-                f"• 下一步计划：继续制作下一个秋季选题，全部完成后开启冬季素材库。"
-            )
-            ok = send_feishu_markdown(feishu_md)
-            feishu_notice_ok = ok
-            if ok:
-                log("-> 飞书交付验收通知推送群聊成功！", self.id)
+            if NOTIFIER_READY:
+                # 遵循三级通知铁律：单套完成不发独立飞书群消息，自动原地更新总控大卡并累计批次（满 10 套或 60 分钟触发批次卡片）
+                get_notification_manager().on_single_item_completed(
+                    season="秋季",
+                    title=clean_title,
+                    set_idx=cur_count,
+                    target_total=781,
+                    duration_sec=0.0,
+                    img_count=valid_cnt,
+                    is_success=True
+                )
+                log(f"-> [事件状态流] 已登记第 {cur_count} 套并同步生产总控卡 (抑制单套群刷屏打扰)", self.id)
+                feishu_notice_ok = True
             else:
-                log("-> 飞书通知发送失败", self.id)
+                feishu_md = (
+                    f"🎉 **【秋季素材交付 · 客户端模式（直接对话框）】**\n\n"
+                    f"• **作品标题**：{clean_title[:50]}\n"
+                    f"• **生产模式**：客户端模式（直接对话框）（实例 {self.id} · {account_alias}）\n"
+                    f"• **图文交付**：{valid_cnt} 张 3:4 竖屏高清大图 + 3 端文案（小红书/HR决策/抖音）\n"
+                    f"• **质检验收**：100% 通过 Pillow 像素级与长宽比校验，无损入库\n"
+                    f"• **成品路径**：[📂 点击打开成品文件夹]({safe_target_pkg_url})\n"
+                    f"• **原素材参考**：[📁 查看原素材文件夹]({safe_mat_url})\n"
+                    f"• **飞书台账**：已登记第 {feishu_row_mat or '?'}–{feishu_row_fin or '?'} 行（[点击直达本套记录]({direct_sheet_url})）\n\n"
+                    f"📊 **【秋季素材包】全盘战况**：\n"
+                    f"• 本地成品总数：已累计 **{cur_count} 套**\n"
+                    f"• 秋季素材进度：已完成 **{cur_count} / 781 套**\n"
+                    f"• 下一步计划：继续制作下一个秋季选题，全部完成后开启冬季素材库。"
+                )
+                ok = send_feishu_markdown(feishu_md)
+                feishu_notice_ok = ok
+                if ok:
+                    log("-> 飞书交付验收通知推送群聊成功！", self.id)
+                else:
+                    log("-> 飞书通知发送失败", self.id)
         except Exception as fe:
             log(f"-> 飞书通知发送异常: {fe}", self.id)
-        if not feishu_notice_ok:
-            raise RuntimeError("飞书群完成通知发送失败，作品保留在制作态并标记 failed")
+        if not feishu_notice_ok and not NOTIFIER_READY:
+            log("-> 飞书通知未送达，但允许继续安全归档", self.id)
 
         # 16. 飞书表格与群通知均成功后，才原子归档直接移入对应标准货架目录。
         try:
@@ -4913,8 +4906,8 @@ class InstanceWorker:
         # 16. 桌面液态玻璃通知（静默模式已停用，保持屏幕清静）
         pass
 
-        # 17. 满 10 套里程碑汇总推送
-        if total_num % 10 == 0:
+        # 17. 满 10 套里程碑汇总推送（若已启用 NOTIFIER_READY，由 NotificationCenter 统一批次调度，此处避免重复）
+        if not NOTIFIER_READY and total_num % 10 == 0:
             try:
                 cur_count_m = cur_count
                 milestone_md = (

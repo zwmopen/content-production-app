@@ -343,10 +343,13 @@ class StandaloneProducer:
                 log(f"-> 生成已结束，已获取 {img_count} 张大图，继续后续流程。")
                 break
 
-        # 6. 发送江湖有旅人·4大差异化版本核心文案指令（GPT在线链接双主稿 + 时间线大纲版 + 花里胡哨多表情同事版 + 抖音无营销）
+        # 6. 发送江湖有旅人·4大差异化版本核心文案指令（【两权分离】：优先派发至独立专属文案窗口生成）
         _matched_style_id = "STYLE-01"
         _matched_style_desc = "山水度假与美食动线风"
         _style_pack_block = ""
+        full_text = ""
+        _dedicated_copy_success = False
+
         try:
             import importlib.util as _ilu
             _bridge_path = Path(r"D:\AICode\.agents\skills\teambuilding-web-copywriter\scripts\chatgpt_web_bridge.py")
@@ -360,83 +363,105 @@ class StandaloneProducer:
                         f"【当前自动命中同事子模式（{_matched_style_id}·{_matched_style_desc} · 随机抽样真源原料 · 严禁套死模板）】：\n"
                         f"{_pack_text}\n\n"
                     )
+
+                # 【两权分离核心执行】：将原素材派发至独立文案 CDP 窗口
+                _copy_port = int(os.environ.get("COPYWRITER_CDP_PORT", "9432"))
+                log(f"✍️ [两权分离] 优先派发原素材至专属文案窗口 (端口 {_copy_port})，保护生图窗口上下文纯净...")
+                _ok_b, _b_vers, _b_msg = await _mod.run_cdp_copywriter_async(
+                    material_text=context_block,
+                    work_dir=None,
+                    cdp_port=_copy_port,
+                    destination=mat_name,
+                    max_wait_sec=240
+                )
+                if _ok_b and _b_vers and len(_b_vers) >= 2:
+                    log(f"🎉 [两权分离] 专属文案窗口生成大成功: {_b_msg}")
+                    _out_blocks = ["<<<COPY_FORMAT:MULTI>>>\n"]
+                    for _tag, _body in _b_vers.items():
+                        _out_blocks.append(f"<<<VERSION_START:{_tag}>>>\n{_body}\n<<<VERSION_END>>>\n")
+                    full_text = "\n".join(_out_blocks).strip()
+                    _dedicated_copy_success = True
+                else:
+                    log(f"⚠️ [两权分离] 专属文案窗口暂未命中有效版本 ({_b_msg})，平滑回退至当前生图窗口生成...")
         except Exception as _e:
-            log(f"⚠️ 动态加载同事单风格原料包降级为内联规则: {_e}")
+            log(f"⚠️ [两权分离] 专属文案窗口调度异常或降级: {_e}，平滑回退至当前生图窗口生成...")
 
-        log(f"-> 发送 4 大差异化版本文案指令 [命中 {_matched_style_id}]（GPT原味红书自然 + 时间线大纲 + 花哨多表情同事版 + 抖音无营销）...")
-        copy_prompt = (
-            f"请调用并严格遵循【teambuilding-web-copywriter 技能】（GitHub 真源仓库：https://github.com/zwmopen/skills/tree/main/技能包/技能/teambuilding-web-copywriter ），"
-            f"根据上面刚刚生成的全套大图与原素材真实行程，立即生成 4 个风格反差极大、绝不套死模板的标准成稿版本。\n"
-            f"【原素材参考正文】：\n{context_block}\n\n"
-            f"{_style_pack_block}"
-            "【最高执行铁律（破除套模板感与双平台风控边界）】：\n"
-            "1. 严禁拿同一个模板换词填空！4 个版本必须呈现 4 种完全不同的阅读体验（克制自然运营风 vs 时间轴排期大纲 vs 满屏表情花里胡哨同事爆款风 vs 抖音周末去团建生活风）。\n"
-            "2. 视觉指纹命名：每个版本必须用 <<<VERSION_START:版本名>>> ... <<<VERSION_END>>> 包裹。\n"
-            "3. 单标题与字数安全线：每个版本首行必须且仅有 1 个纯文本标题（≤20字，严禁加#号、书名号或版本名）；小红书正文+标签目标 650—850 字符。\n"
-            "4. 手机防吞空行铁律：每个段落之间必须用【独立成行】的盲文空白字符“⠀”（Unicode U+2800，真实物理换行 \\n⠀\\n），绝不输出裸露空行！\n"
-            "5. 双平台风控：小红书保留团建/HR业务语义；抖音无营销必须彻底重写为普通人周末自驾出行/玩法避坑分享，严格消杀“团建/拓展/公司团建/HR/行政/路线/行程/方案/1日游/2天1夜/大巴接送/人均/报价/私信”等涉旅词。\n\n"
-            "【请按顺序生成以下 4 个截然不同的标准版本成稿（每个段落之间必须独立一行放 ⠀）】：\n"
-            "<<<COPY_FORMAT:MULTI>>>\n"
-            "<<<VERSION_START:红书自然>>>\n"
-            "【GPT链接原味·自然小红书版】克制自然的地点季节团建标题（≤20字）\n"
-            "⠀\n"
-            "正文（对齐GPT在线链接里打磨出的成熟运营自然口吻：开头直接给动静节奏判断 → 玩法怎么搭与取舍理由 → 💡HR怎么选分人群加减法 → ⚠️出发前天气/开放确认提醒，表情克制不夸张，段落间独立一行 ⠀）\n"
-            "⠀\n"
-            "#8至10个热门团建标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:红书大纲>>>\n"
-            "【时间线大纲版】带天数或时间推进感的团建排期标题（≤20字）\n"
-            "⠀\n"
-            "正文（专门做清晰的时间线大纲！开头1句总基调 → 📍基础信息 → 按 DAY1 / DAY2 + 具体时间节点 09:00｜… 11:30｜… 13:30｜… 16:00｜… 18:30｜… 顺次推进，写清每个时间点玩什么、为什么这么衔接、体力怎么分配 → 📌排期避坑提醒，段落间独立一行 ⠀）\n"
-            "⠀\n"
-            "#8至10个精准团建标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:红书种草>>>\n"
-            f"【表情超多·花里胡哨同事爆款版（{_matched_style_id}）】痛点反问或高能量吸睛标题（≤20字）\n"
-            "⠀\n"
-            f"正文（参照上方注入的 {_matched_style_id} 子模式提示词与随机抽样的同事真源原料：满屏高密度灵动 Emoji 表情🔥🎉🏎️🍵📸✨、情绪饱满、具象菜名、文末可带三列竖线玩法矩阵 ｜；注意：小标题名称和开篇切入点必须根据本素材亮点自由创新，严禁死套固定小标题模板！段落间独立一行 ⠀）\n"
-            "⠀\n"
-            "#8至10个热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:抖音无营销>>>\n"
-            "【GPT链接原味·抖音无营销版】周末出行/老玩家玩法避坑标题（≤20字）\n"
-            "⠀\n"
-            "正文（对齐GPT在线链接里的抖音配对稿：普通人周末出游/自驾玩法取舍视角，开头给真实判断 → 怎么玩/哪个刺激哪个松弛 → 天气鞋服确认，彻底消杀团建/HR/方案/价格/天数等涉旅词，段落间独立一行 ⠀）\n"
-            "⠀\n"
-            "#5个泛生活避坑标签\n"
-            "<<<VERSION_END>>>\n"
-        )
-        js_inject_copy = f"""(() => {{
-            const ta = document.querySelector('#prompt-textarea') || document.querySelector('div[contenteditable="true"]');
-            if (ta) {{
-                ta.focus();
-                document.execCommand('selectAll', false, null);
-                document.execCommand('insertText', false, {json.dumps(copy_prompt)});
-                return true;
-            }}
-            return false;
-        }})()"""
-        await self.send_cmd("Runtime.evaluate", {"expression": js_inject_copy})
-        await asyncio.sleep(1)
-        await self.send_cmd("Runtime.evaluate", {"expression": js_send})
+        if not _dedicated_copy_success:
+            log(f"-> 发送 4 大差异化版本文案指令 [命中 {_matched_style_id}]（GPT原味红书自然 + 时间线大纲 + 花哨多表情同事版 + 抖音无营销）...")
+            copy_prompt = (
+                f"请调用并严格遵循【teambuilding-web-copywriter 技能】（GitHub 真源仓库：https://github.com/zwmopen/skills/tree/main/技能包/技能/teambuilding-web-copywriter ），"
+                f"根据上面刚刚生成的全套大图与原素材真实行程，立即生成 4 个风格反差极大、绝不套死模板的标准成稿版本。\n"
+                f"【原素材参考正文】：\n{context_block}\n\n"
+                f"{_style_pack_block}"
+                "【最高执行铁律（破除套模板感与双平台风控边界）】：\n"
+                "1. 严禁拿同一个模板换词填空！4 个版本必须呈现 4 种完全不同的阅读体验（克制自然运营风 vs 时间轴排期大纲 vs 满屏表情花里胡哨同事爆款风 vs 抖音周末去团建生活风）。\n"
+                "2. 视觉指纹命名：每个版本必须用 <<<VERSION_START:版本名>>> ... <<<VERSION_END>>> 包裹。\n"
+                "3. 单标题与字数安全线：每个版本首行必须且仅有 1 个纯文本标题（≤20字，严禁加#号、书名号或版本名）；小红书正文+标签目标 650—850 字符。\n"
+                "4. 手机防吞空行铁律：每个段落之间必须用【独立成行】的盲文空白字符“⠀”（Unicode U+2800，真实物理换行 \\n⠀\\n），绝不输出裸露空行！\n"
+                "5. 双平台风控：小红书保留团建/HR业务语义；抖音无营销必须彻底重写为普通人周末自驾出行/玩法避坑分享，严格消杀“团建/拓展/公司团建/HR/行政/路线/行程/方案/1日游/2天1夜/大巴接送/人均/报价/私信”等涉旅词。\n\n"
+                "【请按顺序生成以下 4 个截然不同的标准版本成稿（每个段落之间必须独立一行放 ⠀）】：\n"
+                "<<<COPY_FORMAT:MULTI>>>\n"
+                "<<<VERSION_START:红书自然>>>\n"
+                "【GPT链接原味·自然小红书版】克制自然的地点季节团建标题（≤20字）\n"
+                "⠀\n"
+                "正文（对齐GPT在线链接里打磨出的成熟运营自然口吻：开头直接给动静节奏判断 → 玩法怎么搭与取舍理由 → 💡HR怎么选分人群加减法 → ⚠️出发前天气/开放确认提醒，表情克制不夸张，段落间独立一行 ⠀）\n"
+                "⠀\n"
+                "#8至10个热门团建标签\n"
+                "<<<VERSION_END>>>\n\n"
+                "<<<VERSION_START:红书大纲>>>\n"
+                "【时间线大纲版】带天数或时间推进感的团建排期标题（≤20字）\n"
+                "⠀\n"
+                "正文（专门做清晰的时间线大纲！开头1句总基调 → 📍基础信息 → 按 DAY1 / DAY2 + 具体时间节点 09:00｜… 11:30｜… 13:30｜… 16:00｜… 18:30｜… 顺次推进，写清每个时间点玩什么、为什么这么衔接、体力怎么分配 → 📌排期避坑提醒，段落间独立一行 ⠀）\n"
+                "⠀\n"
+                "#8至10个精准团建标签\n"
+                "<<<VERSION_END>>>\n\n"
+                "<<<VERSION_START:红书种草>>>\n"
+                f"【表情超多·花里胡哨同事爆款版（{_matched_style_id}）】痛点反问或高能量吸睛标题（≤20字）\n"
+                "⠀\n"
+                f"正文（参照上方注入的 {_matched_style_id} 子模式提示词与随机抽样的同事真源原料：满屏高密度灵动 Emoji 表情🔥🎉🏎️🍵📸✨、情绪饱满、具象菜名、文末可带三列竖线玩法矩阵 ｜；注意：小标题名称和开篇切入点必须根据本素材亮点自由创新，严禁死套固定小标题模板！段落间独立一行 ⠀）\n"
+                "⠀\n"
+                "#8至10个热门话题标签\n"
+                "<<<VERSION_END>>>\n\n"
+                "<<<VERSION_START:抖音无营销>>>\n"
+                "【GPT链接原味·抖音无营销版】周末出行/老玩家玩法避坑标题（≤20字）\n"
+                "⠀\n"
+                "正文（对齐GPT在线链接里的抖音配对稿：普通人周末出游/自驾玩法取舍视角，开头给真实判断 → 怎么玩/哪个刺激哪个松弛 → 天气鞋服确认，彻底消杀团建/HR/方案/价格/天数等涉旅词，段落间独立一行 ⠀）\n"
+                "⠀\n"
+                "#5个泛生活避坑标签\n"
+                "<<<VERSION_END>>>\n"
+            )
+            js_inject_copy = f"""(() => {{
+                const ta = document.querySelector('#prompt-textarea') || document.querySelector('div[contenteditable="true"]');
+                if (ta) {{
+                    ta.focus();
+                    document.execCommand('selectAll', false, null);
+                    document.execCommand('insertText', false, {json.dumps(copy_prompt)});
+                    return true;
+                }}
+                return false;
+            }})()"""
+            await self.send_cmd("Runtime.evaluate", {"expression": js_inject_copy})
+            await asyncio.sleep(1)
+            await self.send_cmd("Runtime.evaluate", {"expression": js_send})
 
-        # 7. 等待文案生成完成
-        log("等待文案输出...")
-        full_text = ""
-        for tick in range(40):
-            await asyncio.sleep(3)
-            js_txt = """(() => {
-                const stopBtn = document.querySelector('button[data-testid="stop-button"]');
-                const turns = Array.from(document.querySelectorAll('[data-testid*="conversation-turn"]'));
-                const last = turns[turns.length - 1];
-                return { isGen: !!stopBtn, text: last ? last.innerText : '' };
-            })()"""
-            r = await self.send_cmd("Runtime.evaluate", {"expression": js_txt, "returnByValue": True})
-            v = r.get("result", {}).get("result", {}).get("value", {})
-            if not v.get("isGen") and len(v.get("text", "")) > 150:
-                full_text = v.get("text", "")
-                log(f"-> 文案生成完毕，字符长度: {len(full_text)}")
-                break
+            # 7. 等待文案生成完成
+            log("等待文案输出...")
+            for tick in range(40):
+                await asyncio.sleep(3)
+                js_txt = """(() => {
+                    const stopBtn = document.querySelector('button[data-testid="stop-button"]');
+                    const turns = Array.from(document.querySelectorAll('[data-testid*="conversation-turn"]'));
+                    const last = turns[turns.length - 1];
+                    return { isGen: !!stopBtn, text: last ? last.innerText : '' };
+                })()"""
+                r = await self.send_cmd("Runtime.evaluate", {"expression": js_txt, "returnByValue": True})
+                v = r.get("result", {}).get("result", {}).get("value", {})
+                if not v.get("isGen") and len(v.get("text", "")) > 150:
+                    full_text = v.get("text", "")
+                    log(f"-> 文案生成完毕，字符长度: {len(full_text)}")
+                    break
+        else:
+            log(f"⚡ [两权分离] 专属文案窗口已产出完整 4 大版本（长度: {len(full_text)}），跳过生图会话内部文案轮询！")
 
         # 8. 建立成品目录并拉取所有无损大图：用户指定标准 [具体日期时间]-CDP-[精炼标题]
         clean_title = re.sub(r"^评\d+-赞\d+-", "", mat_name)
