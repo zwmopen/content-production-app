@@ -1,5 +1,11 @@
 # AI 图文批量生产控制台
 
+## 本地开发 2.6.2：容器素材接收握手（未发布）
+
+容器通过 `webview.executeJavaScript` 调用 `window.receiveContainerHandoff({ type: "LOAD_MATERIAL_FOLDER", requestId, folderPath, folderName, images })`。接收端仅按当前已加载素材索引中的规范化绝对路径选择帖子或分类内全部帖子，成功回执为 `{ ok: true, requestId, stage: "SELECTED_NOT_STARTED" }`。未知、歧义、未加载或运行中的素材请求返回 `{ ok: false, requestId, error }`。名称和图片列表不用于创建素材或证明成功。
+
+握手只选择素材，不上传、不启动生产。Codex 面板按钮仅记录“制作指令已登记，尚未开始生产”，当前未接入执行器。离线验证：`node --test tests/container-handoff.test.js`；本轮未重启或加载运行实例，未构建或发布新版本。
+
 <p align="center">
   <strong>专为新媒体工业级矩阵打造的四核多实例、无人值守 AI 图文自动化生产中枢</strong><br>
   四核物理进程隔离 · CDP 物理按键穿透自愈 · 20MB 超大缓冲区防溢出 · 4K 级图文质量门禁

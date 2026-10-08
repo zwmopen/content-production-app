@@ -90,7 +90,7 @@ def substance_of(text: str) -> int:
 
 def _is_sep(line: str) -> bool:
     s = line.strip()
-    return s == "" or s == BRAILLE_BLANK
+    return s == "" or s.replace(BRAILLE_BLANK, "").strip() == ""
 
 
 def _is_mark(line: str) -> bool:
@@ -98,7 +98,7 @@ def _is_mark(line: str) -> bool:
 
 
 def clean_copy_text(text: str) -> tuple[str, int]:
-    """纯净化：剥标签 + 分隔收敛成单个 `U+2800`。返回 (结果, 被剥离字符数)。"""
+    """纯净化：内联盲文空格拆行 + 剥标签 + 分隔收敛成单个 `U+2800`。返回 (结果, 被剥离字符数)。"""
     # 修复前缀截断
     if text.startswith("ION_START:"):
         text = "<<<VERS" + text
@@ -112,7 +112,19 @@ def clean_copy_text(text: str) -> tuple[str, int]:
 
     # ⚠️ 产出方会写出 `\t\r\r\n`：只剥一个 \r 会让 `\t\r` 逃过判据，
     #    整份文件一行都修不上却报 0。必须 rstrip("\r") 全剥。
-    raw_lines = [ln.rstrip("\r") for ln in text.split("\n")]
+    # 【2026-10-07 修复·单行粘连】当单行内包含内联盲文空格 `⠀`（\u2800）而两侧无换行时，
+    # 自动拆分为真正的物理换行 `\n⠀\n`。
+    raw_lines_0 = [ln.rstrip("\r") for ln in text.split("\n")]
+    raw_lines = []
+    for ln in raw_lines_0:
+        if BRAILLE_BLANK in ln and not _is_mark(ln) and not _is_sep(ln):
+            parts = [p.strip(" \t") for p in re.split(r"[ \t]*\u2800+[ \t]*", ln) if p.strip(" \t")]
+            for idx_p, part in enumerate(parts):
+                if idx_p > 0:
+                    raw_lines.append(BRAILLE_BLANK)
+                raw_lines.append(part)
+        else:
+            raw_lines.append(ln)
 
     removed = footer_removed
     stage = []
@@ -178,7 +190,7 @@ def guard_copy_output(text: str, tag: str = "") -> tuple[bool, str, dict]:
     rep["removed_chars"] = removed
     # 记账：按「行」去重 —— `正文：` 同时命中 _LABEL_RE 与 _DROP_RE，不能重复计数
     rep["labels_removed"] = sum(
-        1 for ln in text.split("\n")
+        1 for ln in re.split(r"\n|[ \t]*\u2800+[ \t]*", text)
         if _LABEL_RE.match(ln.rstrip("\r")) or _DROP_RE.match(ln.rstrip("\r"))
     )
     rep["sep_runs"] = sum(

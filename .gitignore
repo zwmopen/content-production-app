@@ -52,7 +52,7 @@ fix_bat_files.py
 clone_bat.py
 *.jpg
 
-
-# 技能工作目录（含本地端口与令牌）
-/.superpowers/
+tests/aliyun_sample/
+tests/migration_output/
+scripts/chatgpt_output_raw.txt
 

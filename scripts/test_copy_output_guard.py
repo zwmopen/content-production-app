@@ -146,11 +146,22 @@ def t_marker_survives_normal_path():
           ok and rep["marks_ok"] and out.count("<<<") == txt.count("<<<"), repr(out))
 
 
+def t_inline_braille_split():
+    """内联盲文空格（两侧无换行符）自动拆分为物理换行 \\n⠀\\n。"""
+    txt = f"标题：莫干山团建{B}第一段内容。{B}{B}第二段内容。{B}话题：#莫干山\n"
+    ok, out, rep = g.guard_copy_output(txt, "inline_braille")
+    expected = f"莫干山团建\n{B}\n第一段内容。\n{B}\n第二段内容。\n{B}\n#莫干山\n"
+    check("T12 内联盲文空格自动拆分为物理换行",
+          ok and out == expected and rep["labels_removed"] == 2,
+          f"out={repr(out)} rep={rep}")
+
+
 def main():
     for fn in (t_clean_is_noop, t_strip_labels, t_fake_blank_to_braille, t_collapse_multi_sep,
                t_keep_marker_adjacent_sep, t_idempotent, t_crlf_and_tab,
                t_gate_fires_on_content_loss, t_gate_fires_on_marker_loss,
-               t_gate_fires_on_nonidempotent, t_marker_survives_normal_path):
+               t_gate_fires_on_nonidempotent, t_marker_survives_normal_path,
+               t_inline_braille_split):
         fn()
     print()
     if FAILS:

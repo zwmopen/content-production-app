@@ -8749,6 +8749,104 @@ function selectedGptTestEntries() {
   return [...gptTestSelectedMaterials].map((materialPath) => gptTestMaterialEntries.get(materialPath)).filter(Boolean);
 }
 
+// Container executeJavaScript handoff: select indexed material only; never run
+// an uploader, scanner, queue executor or model request from this entry point.
+function receiveContainerHandoff(message) {
+  const requestId = typeof message?.requestId === "string" ? message.requestId : "";
+  const fail = (error) => ({ ok: false, requestId, error });
+  if (!message || message.type !== "LOAD_MATERIAL_FOLDER") return fail("UNSUPPORTED_HANDOFF");
+  if (!requestId.trim()) return fail("INVALID_REQUEST_ID");
+  const normalize = (value) => {
+    if (typeof value !== "string" || /[\x00-\x1f]/.test(value)) return "";
+    const path = normalizeGptAttachmentPath(value);
+    if (!/^(?:[a-z]:\\|\\\\[^\\]+\\[^\\]+\\)/.test(path)
+      || path.split("\\").some((part) => part === "." || part === "..")) return "";
+    return path;
+  };
+  const folderPath = normalize(message.folderPath);
+  if (!folderPath) return fail("INVALID_FOLDER_PATH");
+  const worker = activeGptWindowWorkerState();
+  if (gptAutoRunning || worker.autoRunning
+    || gptWindowWorkerPromises.has(String(activeGptAccountId))
+    || gptCurrentManualTask || gptSemiAutoPendingTask) return fail("PRODUCTION_RUNNING");
+  if (!$("#gptTestMaterialFolders")) return fail("MATERIAL_UI_NOT_READY");
+
+  const categories = dashboard?.materials?.categories;
+  if (!Array.isArray(categories)) return fail("MATERIALS_NOT_READY");
+  if (categories.some((category) => !category || (category.items != null && !Array.isArray(category.items)))) {
+    return fail("MATERIALS_NOT_READY");
+  }
+  const matches = [];
+  for (const category of categories) {
+    if (normalize(category?.path) === folderPath) {
+      matches.push({ category, entries: (category.items || []).map((item) => ({ item, category })) });
+    }
+    for (const item of category?.items || []) {
+      if (normalize(item?.path) === folderPath) matches.push({ category, entries: [{ item, category }] });
+    }
+  }
+  if (!matches.length) return fail("UNKNOWN_MATERIAL_FOLDER");
+  if (matches.length !== 1) return fail("AMBIGUOUS_MATERIAL_FOLDER");
+  const { category, entries } = matches[0];
+  if (category.loaded === false || !entries.length) return fail("MATERIALS_NOT_READY");
+  const paths = entries.map(({ item }) => normalize(item?.path));
+  if (paths.some((path) => !path)) return fail("INVALID_MATERIAL_ENTRY");
+  // A selection Set cannot represent duplicate catalog paths unambiguously.
+  const catalog = categories.flatMap((cat) => cat?.items || []);
+  if (new Set(paths).size !== paths.length
+    || paths.some((path) => catalog.filter((item) => normalize(item?.path) === path).length !== 1)) {
+    return fail("AMBIGUOUS_MATERIAL_FOLDER");
+  }
+
+  const previous = {
+    selected: new Set(gptTestSelectedMaterials), entries: new Map(gptTestMaterialEntries),
+    categories: new Set(gptTestExpandedCategories), materials: new Set(gptTestExpandedMaterials),
+    queue: gptTestQueue, queueIndex: gptTestQueueIndex,
+    worker: {
+      selectedMaterials: worker.selectedMaterials, selectedTemplates: worker.selectedTemplates,
+      extraPrompt: worker.extraPrompt, queue: worker.queue, queueIndex: worker.queueIndex
+    }
+  };
+  try {
+    gptTestSelectedMaterials.clear();
+    gptTestMaterialEntries.clear();
+    for (const entry of entries) {
+      gptTestSelectedMaterials.add(entry.item.path);
+      gptTestMaterialEntries.set(entry.item.path, entry);
+      gptTestExpandedMaterials.add(entry.item.path);
+    }
+    gptTestExpandedCategories.add(category.path);
+    gptTestQueue = [];
+    gptTestQueueIndex = 0;
+    renderGptTestMaterials();
+    const selected = selectedGptTestEntries();
+    if (gptTestSelectedMaterials.size !== entries.length || selected.length !== entries.length
+      || entries.some((entry) => !gptTestSelectedMaterials.has(entry.item.path)
+        || gptTestMaterialEntries.get(entry.item.path)?.item !== entry.item)) {
+      throw new Error("Selection readback failed");
+    }
+    persistActiveGptWindowSelections();
+  } catch {
+    for (const [target, values] of [
+      [gptTestSelectedMaterials, previous.selected], [gptTestMaterialEntries, previous.entries],
+      [gptTestExpandedCategories, previous.categories], [gptTestExpandedMaterials, previous.materials]
+    ]) {
+      target.clear();
+      values.forEach((value, key) => target instanceof Map ? target.set(key, value) : target.add(value));
+    }
+    gptTestQueue = previous.queue;
+    gptTestQueueIndex = previous.queueIndex;
+    Object.assign(worker, previous.worker);
+    try { renderGptTestMaterials(); } catch { /* retain the original selection */ }
+    return fail("MATERIAL_SELECTION_FAILED");
+  }
+  const label = $("#codexSelectedMaterial");
+  if (label) label.textContent = entries.length === 1 ? entries[0].item.name : category.name;
+  return { ok: true, requestId, stage: "SELECTED_NOT_STARTED" };
+}
+
+window.receiveContainerHandoff = receiveContainerHandoff;
+
 // Keep queue construction on the same category-aware catalog as the renderer.
 function availableGptTestTemplates() {
   return gptTemplateCatalog().filter((template) =>
@@ -12173,7 +12271,7 @@ let cdpIsFetchingFrame = false;
 let cdpCurrentBlobUrl = null;
 
 function getCdpGatewayBase() {
-  return "http://127.0.0.1:9433";
+  return "http://127.0.0.1:9440";
 }
 
 function getCurrentInstanceCdpPort() {
@@ -12192,10 +12290,22 @@ async function refreshCdpLiveFrame() {
     const base = getCdpGatewayBase();
     const cdpPort = getCurrentInstanceCdpPort();
     const res = await fetch(`${base}/frame?port=${cdpPort}&t=${Date.now()}`, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok || !res.headers.get("content-type")?.startsWith("image/")) {
+      let message = "实例画面没有加载成功";
+      try { message = (await res.json()).error || message; } catch (_) {}
+      throw new Error(message);
+    }
     if (res.ok) {
       const blob = await res.blob();
+      img.dataset.viewportWidth = res.headers.get('X-Viewport-Width') || '';
+      img.dataset.viewportHeight = res.headers.get('X-Viewport-Height') || '';
       const newUrl = URL.createObjectURL(blob);
       img.src = newUrl;
+      img.hidden = false;
+      const browserState = $("#gptEmbeddedState");
+      if (browserState) { browserState.textContent = `${contentInstanceDisplayLabel()} · 画面已连接`; browserState.dataset.tone = "success"; }
+      const errorBox = $("#cdpFrameError");
+      if (errorBox) errorBox.style.display = "none";
       if (cdpCurrentBlobUrl) {
         try { URL.revokeObjectURL(cdpCurrentBlobUrl); } catch (_) {}
       }
@@ -12204,8 +12314,12 @@ async function refreshCdpLiveFrame() {
       if (dot) dot.style.background = "#10b981";
     }
   } catch (err) {
-    const dot = $("#cdpStatusDot");
-    if (dot) dot.style.background = "#f59e0b";
+    img.hidden = true;
+    const errorBox = $("#cdpFrameError");
+    if (errorBox) {
+      errorBox.textContent = `实操画面暂不可用：${err.message}。可以用上方“独立窗口”查看当前实例；画面会自动重试。`;
+      errorBox.style.display = "block";
+    }
   } finally {
     cdpIsFetchingFrame = false;
   }
@@ -12223,7 +12337,7 @@ async function initCdpLiveViewport() {
     const res = await fetch(`${getCdpGatewayBase()}/status?port=${cdpPort}`, { signal: AbortSignal.timeout(1500) });
     const data = await res.json();
     if (data.ok && data.target) {
-      if ($("#cdpStatusTitle")) $("#cdpStatusTitle").textContent = "ChatGPT Plus 实操中";
+      if ($("#cdpStatusTitle")) $("#cdpStatusTitle").textContent = "ChatGPT 页面已连接";
       if ($("#cdpStatusAccount")) $("#cdpStatusAccount").textContent = `实例 ${data.instance || "B"} · ${data.target.title || "ChatGPT"}`;
       if ($("#cdpCurrentUrl")) $("#cdpCurrentUrl").textContent = data.target.url || "https://chatgpt.com/";
     }
@@ -12265,33 +12379,6 @@ function bindCdpViewportEvents() {
     }
   });
 
-  const doQuickSend = async () => {
-    if (!quickInput || !quickInput.value.trim()) return;
-    const text = quickInput.value.trim();
-    quickInput.value = "";
-    if (quickSendBtn) quickSendBtn.textContent = "发送中...";
-    try {
-      const cdpPort = getCurrentInstanceCdpPort();
-      await fetch(`${getCdpGatewayBase()}/input`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "prompt", text, port: cdpPort })
-      });
-      setTimeout(refreshCdpLiveFrame, 600);
-      setTimeout(refreshCdpLiveFrame, 1800);
-    } catch (_) {}
-    finally {
-      if (quickSendBtn) quickSendBtn.textContent = "🚀 发送";
-    }
-  };
-  quickSendBtn?.addEventListener("click", doQuickSend);
-  quickInput?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      doQuickSend();
-    }
-  });
-
   const handlePopout = () => {
     try {
       fetch(`${getCdpGatewayBase()}/activate?port=${getCurrentInstanceCdpPort()}`, { method: "POST" }).catch(() => {});
@@ -12305,7 +12392,7 @@ function bindCdpViewportEvents() {
     }
   };
 
-  popoutBtn1?.addEventListener("click", handlePopout);
+  // 原有 gptPopoutBtn 保留其原生窗口处理器，不重复绑定。
   popoutBtn2?.addEventListener("click", handlePopout);
 
   refreshBtn?.addEventListener("click", () => {
@@ -12320,8 +12407,48 @@ function bindCdpViewportEvents() {
   });
 
   if (wrapper && img) {
+    const screenPoint = event => {
+      if (img.hidden || !img.naturalWidth || !img.naturalHeight) return null;
+      const rect = img.getBoundingClientRect();
+      const fit = Math.min(rect.width / img.naturalWidth, rect.height / img.naturalHeight);
+      if (!fit) return null;
+      const width = img.naturalWidth * fit, height = img.naturalHeight * fit;
+      const x = event.clientX - rect.left - (rect.width - width) / 2;
+      const y = event.clientY - rect.top - (rect.height - height) / 2;
+      if (x < 0 || y < 0 || x > width || y > height) return null;
+      return { x: Math.round(x * (Number(img.dataset.viewportWidth) || img.naturalWidth) / width),
+        y: Math.round(y * (Number(img.dataset.viewportHeight) || img.naturalHeight) / height) };
+    };
+    wrapper.tabIndex = 0;
+    wrapper.setAttribute("aria-label", "ChatGPT 画面；点击定位，可键入或粘贴，Enter 由网页处理");
+    let inputTail = Promise.resolve();
+    const sendNativeInput = body => {
+      inputTail = inputTail.catch(() => {}).then(async () => {
+        const response = await fetch(`${getCdpGatewayBase()}/input`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, port: getCurrentInstanceCdpPort() })
+        });
+        if (!response.ok) throw new Error("网页输入没有接收成功");
+      });
+      inputTail.catch(error => showWorkbenchAssistantBubble(error.message, { tone: "warning" }));
+    };
+    wrapper.addEventListener("keydown", event => {
+      if (!cdpInteractiveEnabled || img.hidden || !img.naturalWidth || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+      const navigationKeys = ["Enter", "Backspace", "Delete", "Tab", "Escape", "ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown", "Home", "End"];
+      if (event.key.length === 1) { event.preventDefault(); sendNativeInput({ type: "text", text: event.key }); }
+      else if (navigationKeys.includes(event.key)) { event.preventDefault(); sendNativeInput({ type: "key", key: event.key, shift: event.shiftKey }); }
+    });
+    wrapper.addEventListener("compositionend", event => { if (cdpInteractiveEnabled && !img.hidden && event.data) sendNativeInput({ type: "text", text: event.data }); });
+    wrapper.addEventListener("paste", event => {
+      if (!cdpInteractiveEnabled || img.hidden) return;
+      const text = event.clipboardData?.getData("text/plain");
+      if (text && text.length <= 4000) { event.preventDefault(); sendNativeInput({ type: "text", text }); }
+    });
     wrapper.addEventListener("click", async (e) => {
+      wrapper.focus({ preventScroll: true });
       if (!cdpInteractiveEnabled) return;
+      const point = screenPoint(e);
+      if (!point) return;
       const rect = img.getBoundingClientRect();
       if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
 
@@ -12330,8 +12457,8 @@ function bindCdpViewportEvents() {
 
       const scaleX = (img.naturalWidth || 1280) / rect.width;
       const scaleY = (img.naturalHeight || 800) / rect.height;
-      const targetX = Math.round(clickX * scaleX);
-      const targetY = Math.round(clickY * scaleY);
+      const targetX = point.x;
+      const targetY = point.y;
 
       if (feedback) {
         feedback.style.left = `${clickX}px`;
@@ -12354,6 +12481,8 @@ function bindCdpViewportEvents() {
 
     wrapper.addEventListener("wheel", async (e) => {
       if (!cdpInteractiveEnabled) return;
+      const point = screenPoint(e);
+      if (!point) return;
       e.preventDefault();
       const rect = img.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
@@ -12367,8 +12496,8 @@ function bindCdpViewportEvents() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             type: "wheel",
-            x: Math.round(clickX * scaleX),
-            y: Math.round(clickY * scaleY),
+            x: point.x,
+            y: point.y,
             deltaY: e.deltaY > 0 ? 120 : -120,
             port: getCurrentInstanceCdpPort()
           })
@@ -12384,8 +12513,8 @@ async function navigateEmbeddedGpt(action, targetUrl = "", accountId = activeGpt
     fetch(`${getCdpGatewayBase()}/action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, targetUrl })
-    }).then(() => setTimeout(refreshCdpLiveFrame, 400)).catch(() => {});
+      body: JSON.stringify({ action, port: getCurrentInstanceCdpPort() })
+    }).then(response => { if (!response.ok) throw new Error('网页导航失败'); setTimeout(refreshCdpLiveFrame, 400); }).catch(error => showWorkbenchAssistantBubble(error.message, { tone: 'warning' }));
     return;
   }
   const state = $("#gptEmbeddedState");
@@ -12433,9 +12562,9 @@ async function showEmbeddedGptView() {
   const host = $("#gptEmbeddedHost");
   if (!window.gptWorkbench?.available) {
     if (state) {
-      state.textContent = `${contentInstanceDisplayLabel()} CDP 网页实操产线在线 · 实时交互中`;
-      state.dataset.tone = "success";
-      state.title = "已接入实时 CDP 视口，可在视口内直接点击、滚动与操作 ChatGPT";
+      state.textContent = `${contentInstanceDisplayLabel()} · 正在检查实操画面`;
+      state.dataset.tone = "busy";
+      state.title = "网页画面连接与生产运行状态分别检查";
     }
     updateGptTestQueueStatus();
     initCdpLiveViewport();
@@ -33048,7 +33177,7 @@ window.setTimeout(() => {
     const logNode = document.getElementById('codexLiveOutputLog');
     if (logNode) {
       const now = new Date().toLocaleTimeString();
-      logNode.innerHTML += '\n[' + now + '] 🚀 正在调用 Codex API 排产流水线...\n[' + now + '] 正在装配母版骨架与素材包...\n[' + now + '] 生产任务已分发至后台流水线，成品将自动推入【第4站 成品库】！';
+      logNode.textContent += '\n[' + now + '] 制作指令已登记，尚未开始生产；此面板未接入执行器。请复制 Prompt，在已配置的生产入口确认后执行。';
       logNode.scrollTop = logNode.scrollHeight;
     }
   });
@@ -33095,15 +33224,9 @@ window.setTimeout(() => {
       }
     }
 
-    // From Station 1: Material Selection
-    if (msg.type === 'SELECT_MATERIAL' || msg.action === 'SELECT_MATERIAL') {
-      const matName = msg.materialName || msg.folderName || '已选素材';
-      const matNode = document.getElementById('codexSelectedMaterial');
-      if (matNode) matNode.textContent = matName;
-
-      const gptMatCount = document.getElementById('gptTestMaterialCount');
-      if (gptMatCount) gptMatCount.textContent = '已选: ' + matName;
-    }
+    // Legacy name-only SELECT_MATERIAL is unsupported. The container uses
+    // executeJavaScript and reads the return value from the same receiver.
+    if (msg.type === 'LOAD_MATERIAL_FOLDER') receiveContainerHandoff(msg);
 
     // Command from master container topbar
     if (msg.type === 'SWITCH_PROD_LINE') {

@@ -1,3 +1,14 @@
+# 2026-10-07 / 容器素材接收握手（本地开发 2.6.2，未发布）
+
+- 范围：仅 `src/public/app.js`、新增 `tests/container-handoff.test.js` 和项目规则要求的 VERSION/README/CHANGELOG/设计/架构/回归/交接文档。容器与其他模块由主执行者拥有，未修改。
+- 基准：本轮开工 `main` / `8556c29`，项目 `git status --short` 无输出；现有生产相关实现保留。未提交、拉取、发布、启动或重启进程。
+- 接口：主容器用 `webview.executeJavaScript` 调用 `window.receiveContainerHandoff({type:'LOAD_MATERIAL_FOLDER', requestId, folderPath, folderName, images})`；读取返回对象，成功阶段仅 `SELECTED_NOT_STARTED`。规范化路径必须唯一命中已加载分类/帖子，名称与图片不能制造素材或成功回执。
+- 真实选择：写入 `gptTestSelectedMaterials` 和 `gptTestMaterialEntries`，展开并重绘，回读后保存当前窗口选择；未知、歧义、未加载、当前窗口运行/手动处理中拒绝，失败恢复原选择和队列。
+- Codex 按钮只登记“制作指令已登记，尚未开始生产；未接入执行器”，无后台分发或模型调用。旧只改标签的 SELECT_MATERIAL 不再生效。
+- 离线验证：`node --check src/public/app.js` 通过；`node --test tests/container-handoff.test.js src/public/material-workspace.test.js src/public/gpt-production-status.test.js src/public/gpt-window-worker-state.test.js` 为 67/67 通过（新增握手 15 项），涵盖真实集合、现有渲染函数的勾选 HTML、返回值、运行锁、全局及 worker 失败回滚和诚实按钮日志。
+- 扩展工作台回归：`src/public/workbench-ui.test.js` 为 505 项、474 通过、30 失败、1 跳过。只读 `git show HEAD:src/public/app.js` 与 `HEAD:VERSION`，经内存预加载替换并恢复工作区相同 CRLF 格式后，基准结果及全部失败名称相同；本轮未修复范围外既有失败。桌面/容器真实 executeJavaScript 验收未执行。
+- 下一步由主执行者集成容器发送和失败回执呈现；本轮禁止真实生产、模型/付费/API/网络调用及启动/重启。2.6.2 仅为本地源码版本记录，不代表运行实例、安装包或远端 Release 升级。
+
 # 2026-09-28 / 模板迁移套板迁移生产面板（首版，待真实路径验收）
 
 - 新增共享技能：`D:\AICode\AI\skills\技能包\技能\template-migration-production`，运行时通过 Codex/Agents junction 接入；显示名为“模板迁移套板迁移生产”。

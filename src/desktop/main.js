@@ -6,6 +6,11 @@ if (process.env.TB_REMOTE_DEBUGGING_PORT) {
 
 const IS_DESKTOP_HIDDEN = process.env.TB_DESKTOP_HIDDEN === "1" || process.argv.includes("--hidden") || process.argv.includes("--background");
 
+const { createPreviewServer, PREVIEW_PORT } = require("../lib/cdp-live-preview");
+const previewServer = createPreviewServer();
+previewServer.on("error", error => { if (error.code !== "EADDRINUSE") console.warn("CDP preview:", error.message); });
+previewServer.listen(PREVIEW_PORT, "127.0.0.1");
+
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");

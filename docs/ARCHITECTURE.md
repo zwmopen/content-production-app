@@ -1,5 +1,13 @@
 # 架构
 
+## 2026-10-07 容器接收握手（本地开发 2.6.2，未发布）
+
+- 容器调用链：`webview.executeJavaScript` → `window.receiveContainerHandoff(message)` → 返回可序列化回执。此项目只实现接收端，容器由主执行者集成。
+- 输入：`type=LOAD_MATERIAL_FOLDER`、非空字符串 `requestId`、绝对 `folderPath`，附带 `folderName/images` 不作为索引依据。路径按斜杠、大小写、尾斜杠规范化精确匹配 `dashboard.materials.categories[].path/items[].path`；不允许相对路径、URL、点段或控制字符。
+- 成功：替换 `gptTestSelectedMaterials/gptTestMaterialEntries`，展开分类/帖子，按已有手动选择逻辑清空待构建队列，重绘并回读，再本地保存当前窗口选择，返回 `{ok:true, requestId, stage:'SELECTED_NOT_STARTED'}`。
+- 失败：`{ok:false, requestId, error}`；unsupported、invalid、unknown、ambiguous、not-ready、running 等门禁不改变选择；渲染或回读失败恢复原集合、队列与展开状态。
+- 运行保护包含 `gptAutoRunning`、当前独立 worker/Promise 和待处理手动/半自动任务；不调用生产执行器、上传器、扫描接口、模型或网络。旧名称式 `SELECT_MATERIAL` 不再更改选材标签。
+
 ## 2026-08-25 三源阶段证据与工作流 variant（0.19.200）
 
 ```text

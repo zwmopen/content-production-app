@@ -604,25 +604,9 @@
               </header>
               <div id="gptEmbeddedHost" class="gpt-embedded-host" aria-label="当前账号窗口网页">
                 <div id="cdpLiveViewport" class="cdp-live-viewport">
-                  <div class="cdp-viewport-head">
-                    <div class="cdp-status-pill">
-                      <span class="cdp-status-dot pulsing" id="cdpStatusDot"></span>
-                      <strong id="cdpStatusTitle">ChatGPT 产线连通</strong>
-                      <span id="cdpStatusAccount" class="cdp-account-badge">实例 B · orlando</span>
-                    </div>
-                    <div class="cdp-quick-input-bar">
-                      <input id="cdpQuickInput" type="text" placeholder="向 ChatGPT 键入 Prompt 或文字指令，回车即发..." />
-                      <button id="cdpQuickSendBtn" type="button" title="直接发送指令到 ChatGPT">🚀 发送</button>
-                    </div>
-                    <div class="cdp-actions-row">
-                      <button id="btnToggleSideLibrary" type="button" title="展开/收起左侧素材与模板区，拓宽视口">↔ 宽屏视口</button>
-                      <button id="cdpRefreshFrameBtn" type="button" title="重新获取最新实时画面">↻ 刷新画面</button>
-                      <button id="cdpInteractiveToggleBtn" class="active" type="button" title="开启/关闭视口鼠标点击">🖱️ 交互直连</button>
-                      <button id="cdpPopoutActionBtn" class="cdp-popout-btn" type="button" title="弹出独立桌面窗口">◳ 独立浮窗</button>
-                    </div>
-                  </div>
                   <div class="cdp-canvas-wrapper" id="cdpCanvasWrapper">
-                    <img id="cdpLiveImg" class="cdp-live-screen" alt="ChatGPT 实时操作画面" src="http://127.0.0.1:9433/frame" />
+                    <img id="cdpLiveImg" class="cdp-live-screen" alt="ChatGPT 实时操作画面"  />
+                    <div id="cdpFrameError" role="status" style="padding:24px;display:none"></div>
                     <div id="cdpClickFeedback" class="cdp-click-indicator"></div>
                   </div>
                 </div>
