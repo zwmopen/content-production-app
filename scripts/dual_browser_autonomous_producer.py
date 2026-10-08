@@ -13,6 +13,8 @@ import urllib.request
 import base64
 import csv
 import tempfile
+import hashlib
+import io
 from PIL import Image
 try:
     import pillow_heif
@@ -22,6 +24,24 @@ except Exception:
 import websockets
 
 sys.stdout.reconfigure(encoding='utf-8')
+
+def calc_dhash_bits(im, size=8):
+    try:
+        im_gray = im.convert('L').resize((size + 1, size), Image.LANCZOS)
+        px = list(im_gray.get_flattened_data() if hasattr(im_gray, 'get_flattened_data') else im_gray.getdata())
+        bits = []
+        for r in range(size):
+            row = px[r * (size + 1):(r + 1) * (size + 1)]
+            bits.extend(1 if row[c] > row[c + 1] else 0 for c in range(size))
+        return bits
+    except Exception:
+        return []
+
+def calc_dhash_sim(bits1, bits2):
+    if not bits1 or not bits2 or len(bits1) != len(bits2):
+        return 0.0
+    return sum(1 for a, b in zip(bits1, bits2) if a == b) / len(bits1)
+
 
 # 基础目录配置
 PROJECT_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目"
@@ -175,6 +195,31 @@ class ModelDegradedException(QuotaLimitException):
 DEGRADE_MIN_RATIO = 0.6      # 出图数 / 计划数 低于此比例 → 判定模型产出能力降级
 DEGRADE_COOLDOWN_SEC = 1800  # 判定降级后实例休息时长（默认 30 分钟）
 TALKATIVE_TEXT_LIMIT = 2500  # 出图阶段模型"话痨"字数上限：超过即判定错乱
+
+# =========================================================================
+# 铁门 1：标题黑名单过滤器 (Title Sanitizer)
+# =========================================================================
+TITLE_BLACKLIST_KEYWORDS = [
+    "我这边", "当前会话", "没有看到", "请重新", "抱歉", "AI", "好的",
+    "收到", "正在生成", "无法识别", "未能", "对不起", "上一套", "重新传",
+    "重新发送", "ChatGPT", "未检测到", "未找到", "没看到", "助手", "作为一个语言模型"
+]
+
+def is_title_polluted(text: str) -> bool:
+    """铁门1：标题黑名单过滤器，拦截口语、报错和AI提示语污染"""
+    if not text:
+        return True
+    s = str(text).strip()
+    return any(kw in s for kw in TITLE_BLACKLIST_KEYWORDS)
+
+def sanitize_title(candidate_title: str, fallback_title: str = "") -> str:
+    """清洗标题：若首句/候选词命中黑名单直接丢弃，回退使用 fallback_title"""
+    if is_title_polluted(candidate_title):
+        clean_fallback = str(fallback_title).strip()
+        if is_title_polluted(clean_fallback):
+            return "精选团建方案"
+        return clean_fallback
+    return str(candidate_title).strip()
 
 def extract_quota_signals(asst_text):
     """
@@ -1029,13 +1074,20 @@ def reconcile_success_output_integrity():
                         break
                 if not os.path.isfile(os.path.join(actual_path, "manifest.json")):
                     problems.append("manifest_missing")
-                copy_path = os.path.join(actual_path, "三平台文案.txt")
+                copy_path = os.path.join(actual_path, "文案.txt")
+                if not os.path.isfile(copy_path):
+                    copy_path = os.path.join(actual_path, "三平台文案.txt")
                 if not os.path.isfile(copy_path):
                     problems.append("copy_missing")
                 else:
                     try:
                         with open(copy_path, 'r', encoding='utf-8', errors='ignore') as cf:
-                            if "<<<COPY_FORMAT:3>>>" not in cf.read():
+                            _cf_raw = cf.read()
+                            if (
+                                "<<<COPY_FORMAT:MULTI>>>" not in _cf_raw
+                                and "<<<COPY_FORMAT:3>>>" not in _cf_raw
+                                and "<<<VERSION_START:" not in _cf_raw
+                            ):
                                 problems.append("copy_marker_missing")
                     except Exception:
                         problems.append("copy_unreadable")
@@ -1151,6 +1203,152 @@ def release_stale_production_locks(max_age_min=STALE_LOCK_MINUTES):
         log(f"🧹 已复位 {freed} 条超时孤儿锁（>{max_age_min} 分钟未释放）→ 回到待生产队列")
     return freed
 
+# ==============================================================================
+# 节日时效性动态过滤规则（已过期节日自动剔除）
+# ==============================================================================
+# 业务逻辑：
+# 宏观季节（如秋季9-11月）具备长期长效搜索与转化价值，按季常态排产；
+# 但微观特定节日（如中秋节、国庆节、端午节等）只有 2~3 天强时效窗口，
+# 一旦该节日结束（例如 10 月 8 日，当年的中秋与国庆黄金周均已收尾），
+# 节日团建相关内容便彻底失去客资价值，属于纯耗算力的废料，必须自动忽略并从队列剔除。
+# ==============================================================================
+
+def get_expired_holiday_keywords(ref_date=None):
+    """根据当前日期动态返回已过期的节日关键词列表。"""
+    if ref_date is None:
+        ref_date = datetime.date.today()
+    
+    month = ref_date.month
+    day = ref_date.day
+    
+    expired = []
+    
+    # 1. 春夏季节日（过往节点）
+    if (month > 3) or (month == 3 and day > 9):
+        expired.extend(["妇女节", "女神节", "三八", "38女神", "3.8"])
+    if (month > 4) or (month == 4 and day > 6):
+        expired.extend(["清明", "清明节"])
+    if (month > 5) or (month == 5 and day > 6):
+        expired.extend(["五一", "劳动节", "五一假期", "五一出游"])
+    if (month > 6) or (month == 6 and day > 15):
+        expired.extend(["端午", "端午节", "粽子", "龙舟"])
+    if (month > 8) or (month == 8 and day > 25):
+        expired.extend(["七夕", "七夕节"])
+        
+    # 2. 秋季节日节点
+    if (month > 9) or (month == 9 and day > 12):
+        expired.extend(["教师节"])
+        
+    # 中秋节（通常在 9 月中下旬至 10 月初，2026 年中秋在 9 月下旬）
+    # 进入 10 月 6 日以后，当年的中秋节必定已完全结束，严禁再做中秋主题
+    if month > 10 or (month == 10 and day >= 6):
+        expired.extend([
+            "中秋", "中秋节", "中秋游园", "月饼", "赏月中秋", "中秋沙龙",
+            "中秋团建", "中秋国庆", "中秋主题", "中秋手工", "中秋活动"
+        ])
+        
+    # 国庆节（10 月 1 日 ~ 7 日黄金周）
+    # 10 月 8 日及以后，国庆黄金周已完全结束，国庆出游/国庆团建彻底失效
+    if month > 10 or (month == 10 and day >= 8):
+        expired.extend([
+            "国庆", "国庆节", "十一假期", "国庆出游", "国庆旅游",
+            "国庆活动", "国庆团建", "国庆避开人潮", "国庆太湖湾"
+        ])
+        
+    return expired
+
+def is_expired_holiday(name: str = "", path: str = "") -> tuple[bool, str]:
+    """判断素材名称或路径是否属于已过期的节日主题。返回 (是否过期, 命中的节日关键词)。"""
+    corpus = f"{name or ''} {path or ''}".lower()
+    expired_keywords = get_expired_holiday_keywords()
+    
+    for kw in expired_keywords:
+        if kw.lower() in corpus:
+            return True, kw
+            
+    return False, ""
+
+def reconcile_expired_holiday_tasks():
+    """扫描 AUTUMN-C 任务清单与进度账本，将已过期的节日（如中秋节、国庆节等）自动置为 skipped，并同步标记原料 .tags.json。"""
+    try:
+        with open(AUTUMN_C_TASKS_FILE, 'r', encoding='utf-8') as tf:
+            task_payload = json.load(tf)
+        task_list = task_payload.get("tasks", []) if isinstance(task_payload, dict) else task_payload
+        with open(AUTUMN_C_PROGRESS_FILE, 'r', encoding='utf-8') as pf:
+            progress_payload = json.load(pf)
+        items = progress_payload.setdefault("items", [])
+        by_path = {}
+        for item in items:
+            candidate = item.get("sourcePath", "")
+            if candidate:
+                by_path[os.path.normcase(os.path.normpath(candidate)).rstrip("\\/")] = item
+                
+        now = datetime.datetime.now().astimezone().isoformat()
+        changed = False
+        skipped_count = 0
+        
+        for pos, task in enumerate(task_list, 1):
+            source_path = task.get("path") or task.get("sourcePath")
+            task_name = task.get("name") or (os.path.basename(source_path) if source_path else "")
+            is_exp, kw = is_expired_holiday(task_name, source_path)
+            if not is_exp:
+                continue
+                
+            norm_source = os.path.normcase(os.path.normpath(source_path)).rstrip("\\/") if source_path else ""
+            target = by_path.get(norm_source) if norm_source else None
+            
+            # 若已成功交付，保留成果不乱改
+            if target and target.get("status") == "success":
+                continue
+                
+            if target is None and norm_source:
+                target = {
+                    "index": task.get("index", pos),
+                    "taskIndex": task.get("index", pos),
+                    "name": task_name,
+                    "sourcePath": source_path
+                }
+                items.append(target)
+                by_path[norm_source] = target
+                
+            if target and target.get("status") != "skipped":
+                target.update({
+                    "status": "skipped",
+                    "completedAt": now,
+                    "error": f"expired_holiday: 节日[{kw}]已过期，排产计划自动忽略"
+                })
+                changed = True
+                skipped_count += 1
+                
+            # 回写源素材 .tags.json 标记已过期忽略
+            if source_path and os.path.isdir(source_path):
+                tags_file = os.path.join(source_path, ".tags.json")
+                if os.path.exists(tags_file):
+                    try:
+                        with open(tags_file, 'r', encoding='utf-8') as sf:
+                            sdata = json.load(sf)
+                        prod = sdata.setdefault("production", {})
+                        if prod.get("lifecycleState") != "已生产":
+                            prod["lifecycleState"] = "已过期忽略"
+                            prod["lastError"] = f"节日[{kw}]已过期，排产计划自动忽略"
+                            tags = sdata.setdefault("tagging", {}).setdefault("tags", [])
+                            if "已过期忽略" not in tags:
+                                tags.append("已过期忽略")
+                            with open(tags_file, 'w', encoding='utf-8') as sf:
+                                json.dump(sdata, sf, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                        
+        if changed:
+            progress_payload["updatedAt"] = now
+            tmp_path = AUTUMN_C_PROGRESS_FILE + ".tmp"
+            with open(tmp_path, 'w', encoding='utf-8') as pf:
+                json.dump(progress_payload, pf, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, AUTUMN_C_PROGRESS_FILE)
+            log(f"🗓️ [节日时效性对账] 已自动将 {skipped_count} 条过期节日任务（中秋/国庆等）标记为 skipped 并从待产队列剔除")
+    except Exception as e:
+        log(f"节日时效性对账异常: {e}")
+
 def scan_pending_queue():
     import random
     from collections import defaultdict
@@ -1162,6 +1360,7 @@ def scan_pending_queue():
     if not allowed_paths:
         return []
     reconcile_missing_autumn_c_tasks()
+    reconcile_expired_holiday_tasks()
 
     # 1. 优先挂载紧急插队任务池（AUTUMN_EMERGENCY_TASKS.json），实现插队置顶
     # [2026-09-28 修] 该目录已被成品库重整归档进 _内部台账与历史数据，新家优先、老路径兜底
@@ -1197,9 +1396,13 @@ def scan_pending_queue():
                         state = "待生产"
 
                 if state not in ["已生产", "生产中", "生产异常", "需人工复核"]:
+                    em_name = em.get("name", os.path.basename(em_path))
+                    is_exp, kw = is_expired_holiday(em_name, em_path)
+                    if is_exp:
+                        continue
                     seen_paths.add(norm_p)
                     emergency_queue.append({
-                        "name": em.get("name", os.path.basename(em_path)),
+                        "name": em_name,
                         "path": em_path,
                         "category": em.get("traffic_type", "泛流量"),
                         "subcategory": em.get("destination", "紧急插队"),
@@ -1286,6 +1489,9 @@ def scan_pending_queue():
                         state = "待生产"
 
                 if state not in ["已生产", "生产中", "生产异常", "需人工复核"]:
+                    is_exp, kw = is_expired_holiday(item, item_path)
+                    if is_exp:
+                        continue
                     queue.append({
                         "name": item,
                         "path": item_path,
@@ -2059,6 +2265,18 @@ class InstanceWorker:
                 valid_paths.append(fp)
             except Exception as ie:
                 log(f"   [图片校验警告] 剔除异常文件 {f}: {ie}", self.id)
+
+        self._raw_hashes = set()
+        self._raw_dhashes = []
+        for fp in valid_paths:
+            try:
+                with open(fp, "rb") as rf:
+                    self._raw_hashes.add(hashlib.sha256(rf.read()).hexdigest())
+                with Image.open(fp) as im:
+                    self._raw_dhashes.append(calc_dhash_bits(im))
+            except Exception:
+                pass
+        log(f"   [防照搬基线] 已登记 {len(self._raw_hashes)} 个原始素材字节指纹与哈希", self.id)
         return valid_paths
 
     async def send_text_prompt(self, prompt_text, action_desc="发送指令", max_wait_sec=25, require_attachment=False):
@@ -2990,6 +3208,25 @@ class InstanceWorker:
             v60_prompt = v6_header
 
         # 3. 注入生图提示词并点击发送
+        # 【2026-10-08 修复·严防原图照搬回抓】在发指令前记录页面上已有图片的 URL 指纹（即刚上传的素材缩略图）
+        try:
+            res_pre = await self.send_cmd("Runtime.evaluate", {
+                "expression": """(() => {
+                    const s = new Set();
+                    document.querySelectorAll('img').forEach(i => {
+                        if (i.src) s.add(i.src);
+                        if (i.currentSrc) s.add(i.currentSrc);
+                    });
+                    return Array.from(s);
+                })()""",
+                "returnByValue": True
+            })
+            self._pre_existing_img_srcs = set(res_pre.get("result", {}).get("result", {}).get("value", []) or [])
+            log(f"-> 【防原图误抓】已冻结 {len(self._pre_existing_img_srcs)} 个发指令前页面已有图片指纹", self.id)
+        except Exception as e_pre:
+            log(f"⚠️ 预冻结图片指纹异常: {e_pre}", self.id)
+            self._pre_existing_img_srcs = set()
+
         # 【空发送铁律】这一次必须有素材挂在执行框上才许点发送（require_attachment=True）
         sent_init = await self.send_text_prompt(v60_prompt, f"V6.0 超级真源生图指令 (完整篇幅: {len(v60_prompt)} 字)",
                                                 require_attachment=True)
@@ -3003,25 +3240,33 @@ class InstanceWorker:
         last_prompted_for = 0
         idle_after_prompt_ticks = 0
         stuck_retry_count = 0
-        # 在发送文案中枢前保留一份生成图 URL 快照；客户端提交下一条文字后，
-        # 页面可能只保留最后一张图片节点，不能让回收阶段把整套误判成单图。
         pre_copy_img_urls = []
+
+        pre_urls_json = json.dumps(list(getattr(self, "_pre_existing_img_srcs", set())))
 
         for tick in range(1, 180):
             await asyncio.sleep(10)
-            js_status = """(() => {
+            js_status = f"""(() => {{
                 const stopBtn = document.querySelector('button[data-testid*="stop"]') ||
                                 document.querySelector('button[aria-label*="停止"]') ||
                                 document.querySelector('button[aria-label*="Stop"]');
-                // 【2026-09-26 换真源】旧代码先把图片限定在
-                // [data-testid^="conversation-turn-"] / [data-message-author-role="assistant"] 容器里找，
-                // 而这两个容器选择器在新版 UI 上已全部失效（实测数出 0 个），
-                // 于是"图明明出来了却一张都数不到" -> 判「停止生成但未返回大图」-> 熔断作废。
-                // 现在直接全页扫描 img，用渲染尺寸>=300 排除头像与图标，不再依赖任何容器选择器。
+                const preUrls = new Set({pre_urls_json});
                 const map = new Map();
-                document.querySelectorAll('img').forEach(img => {
-                    const src = img.src || '';
+                document.querySelectorAll('img').forEach(img => {{
+                    const src = img.src || img.currentSrc || '';
                     const alt = img.alt || '';
+                    if (!src) return;
+                    // 【2026-10-08 修复·原图排他铁律】
+                    // 1. 绝不认发指令前已有的任何图片（素材上传缩略图）
+                    if (preUrls.has(src)) return;
+                    // 2. 绝不认表单/输入框/附件预览区域内的任何图片
+                    if (img.closest('form')) return;
+                    // 3. 绝不认用户提问消息气泡内的任何图片
+                    if (img.closest('[data-message-author-role="user"]')) return;
+                    // 4. 绝不认附件卡片容器内的任何图片
+                    if (img.closest('[role="group"]') || img.closest('[aria-label*="文件"]') || img.closest('[aria-label*="file"]')) return;
+                    // 5. 绝不认带有原素材文件扩展名或文件名特征的图片
+                    if (alt.includes('.jpg') || alt.includes('.jpeg') || alt.includes('.png') || alt.includes('.webp')) return;
                     if (alt.includes('个人资料') || alt.includes('profile') || alt.includes('avatar')) return;
                     const w = img.naturalWidth || img.clientWidth || 0;
                     const h = img.naturalHeight || img.clientHeight || 0;
@@ -3029,23 +3274,23 @@ class InstanceWorker:
                     const isGenSrc = src.includes('estuary') || src.includes('oaiusercontent') ||
                                      src.includes('fileservice') || src.startsWith('blob:');
                     if (!isGenSrc) return;
-                    const idMatch = src.match(/id=([^&]+)/) || src.match(/enc\/([^?&#]+)/);
+                    const idMatch = src.match(/id=([^&]+)/) || src.match(/enc\\/([^?&#]+)/);
                     const fileId = idMatch ? idMatch[1] : src;
-                    if (!map.has(fileId)) {
+                    if (!map.has(fileId)) {{
                         map.set(fileId, src);
-                    }
-                });
+                    }}
+                }});
                 const bodyText = document.body ? document.body.innerText : '';
                 const isThinking = bodyText.includes('正在思考') || bodyText.includes('正在生成更详细的图片') || bodyText.includes('Designing the carousel') || bodyText.includes('正在分析') || bodyText.includes('Analyzing') || bodyText.includes('Thinking') || bodyText.includes('Thought for') || bodyText.includes('已深度思考') || bodyText.includes('Refined');
                 const is99 = bodyText.includes('99%');
-                return {
+                return {{
                     isGenerating: !!stopBtn || isThinking,
                     imgCount: map.size,
                     imgUrls: Array.from(map.values()),
                     is99: is99,
                     isThinking: isThinking
-                };
-            })()"""
+                }};
+            }})()"""
             try:
                 res_stat = await self.send_cmd("Runtime.evaluate", {"expression": js_status, "returnByValue": True})
             except Exception as e_poll:
@@ -3329,75 +3574,46 @@ class InstanceWorker:
         except Exception:
             pass
 
-        # 5. 发送多版本文案中枢 V4.5 指令（11 大排版视觉指纹标准）
-        log("-> 发送多版本文案中枢 V4.5 指令（11 大排版视觉指纹标准）...", self.id)
+        # 5. 发送牟磊核心文案指令（3个小红书版本：无营销版+大纲方案版+牟磊爆款版，加1个抖音攻略避坑版）
+        log("-> 发送牟磊核心文案指令（无营销自然版 + 大纲方案版 + 牟磊爆款版 + 抖音攻略版）...", self.id)
         copy_prompt = (
-            f"请根据上面刚刚生成的全套大图与原素材真实行程，立即生成【多版本文案中枢 V4.5】全套标准成稿。\n"
+            f"请根据上面刚刚生成的全套大图与原素材真实行程，立即生成【牟磊核心文案引擎（无营销/大纲方案/牟磊爆款/抖音避坑）】标准成稿。\n"
             f"【原素材参考正文】：\n{context_block}\n\n"
-            "【最高执行铁律】：\n"
-            "1. 坚决杜绝干瘪公文垃圾：严禁出现“方案名称：/适用对象：/预算参考：”等体制内申报公文腔，必须是小红书野生高赞爆款感！\n"
-            "2. 视觉指纹命名（严格最多 4 个纯汉字按钮名）：\n"
-            "   每个版本必须用 <<<VERSION_START:最多4字版本名>>> ... <<<VERSION_END>>> 包裹。\n"
-            "3. 单标题铁律：每个版本首行必须且仅有 1 个纯文本标题，严禁加 # 号、严禁包裹大中文括号【】、严禁任何序号！\n"
-            "4. 防吞空行铁律：段落之间空行必须填入不可见盲文空格“⠀”（Unicode U+2800，格式为 \\n⠀\\n），绝不输出裸露 \\n\\n！\n"
-            "5. 抖音避坑版绝对去商业化：定位纯个人自驾/生活探索经验，绝无“团建/组织/方案/路线/报价”等涉旅敏感词！\n"
-            "6. 严防末尾截断：每一版必须完整展开并以单行话题标签结尾，紧跟 <<<VERSION_END>>>，严禁半句断尾！\n\n"
-            "【请生成以下 11 个排版视觉指纹版本成稿】：\n"
+            "【最高执行铁律（牟磊文案风格真源与风控边界）】：\n"
+            "1. 拒绝 AI 方案腔与虚假套话：严禁出现“方案名称/价值赋能/打造凝聚力/无敌盛宴/天花板”等自嗨与公文词；全换成人话（“这套怎么玩/大家愿不愿意动/体能差异有多大/别把体力提前耗光/快慢要能商量”）。\n"
+            "2. 视觉指纹命名：每个版本必须用 <<<VERSION_START:版本名>>> ... <<<VERSION_END>>> 包裹。\n"
+            "3. 单标题与字数安全线：每个版本首行必须且仅有 1 个纯文本标题（≤20字，严禁加#号或书名号）；正文+标签目标 600—850 字符。\n"
+            "4. 手机防吞空行铁律：每个段落之间必须用【独立成行】的盲文空白字符“⠀”（Unicode U+2800，真实物理换行 \\n⠀\\n），绝不输出裸露空行！\n"
+            "5. 双平台风控：小红书保留团建/HR业务语义；抖音攻略必须彻底重写为普通人周末自驾出行/玩法避坑分享，严格消杀“团建/拓展/公司团建/HR/行政/路线/行程/方案/1日游/2天1夜/大巴接送/人均/报价/私信”等涉旅词。\n\n"
+            "【请按顺序生成以下 4 个标准版本成稿（每个段落之间必须独立一行放 ⠀）】：\n"
             "<<<COPY_FORMAT:MULTI>>>\n"
-            "<<<VERSION_START:数字爆款>>>\n"
-            "真实大厂回购爆款主标题（带吸引力与emoji）\n"
-            "正文（1️⃣2️⃣3️⃣ 大数字键帽 + ‼️ + 💯 轰炸，痛点切入，节奏极快）\n"
-            "#热门话题标签\n"
+            "<<<VERSION_START:红书自然>>>\n"
+            "【无营销版本】生活化出游/团队慢游标题（≤20字）\n"
+            "⠀\n"
+            "正文（纯真人体感视角，完全不卖方案、无推销感，分享打工人去班味、真实团队周末出游体验与松弛节奏，段落间独立一行 ⠀）\n"
+            "⠀\n"
+            "#8至10个热门团建标签\n"
             "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:分天动线>>>\n"
-            "海岛度假慢调漫步主标题\n"
-            "正文（𝗗𝗔𝗬❶ 𝗗𝗔𝗬❷ 加粗西文 + 🔅 🔹 🔸 几何圆圈动线，松弛不赶路）\n"
-            "#热门话题标签\n"
+            "<<<VERSION_START:红书大纲>>>\n"
+            "【大纲方案版本】目的地季节团建决策大纲标题（≤20字）\n"
+            "⠀\n"
+            "正文（HR保姆级完整决策大纲：开头结论与节奏定调 → 📍基础信息 → 🌿DAY/玩法拆解与取舍理由 → 💡HR怎么选加减法决策矩阵 → ⚠️落地提醒，段落间独立一行 ⠀）\n"
+            "⠀\n"
+            "#8至10个精准团建标签\n"
             "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:三箭头体>>>\n"
-            "大自然森系吸氧主标题\n"
-            "正文（- 》》》 招牌三箭头 + ✅ 双勾 + 治愈自然Emoji符号清单）\n"
-            "#热门话题标签\n"
+            "<<<VERSION_START:红书种草>>>\n"
+            "【牟磊爆款版本】直击职场痛点标题（≤20字）\n"
+            "⠀\n"
+            "正文（同事牟磊招牌爆款手感：痛点逆反Hook开头如“团建最尴尬的不是没项目是大家根本不熟” → 细腻玩法原子动作与互动画面 → 情绪共鸣与落地建议，段落间独立一行 ⠀）\n"
+            "⠀\n"
+            "#8至10个热门话题标签\n"
             "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:杂志长条>>>\n"
-            "杂志级画册选型指南主标题\n"
-            "正文（—— 🌿【企划】—— 长横线装饰条 + 01 ｜ 空间美学配置）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:时间轴体>>>\n"
-            "秋日轻奢慢节奏日程主标题\n"
-            "正文（08:30 | 竖线精准时间颗粒度行程，优雅松弛）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:原生种草>>>\n"
-            "真实博主亲历自用劝退主标题\n"
-            "正文（第一人称口语化，真实体验避坑，零广告套路感）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:决策矩阵>>>\n"
-            "HR向上汇报横向比选主标题\n"
-            "正文（📊 横向维度比对、适合/不适合团队分析、选型建议）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:货架明细>>>\n"
-            "预算清晰拆解防超标主标题\n"
-            "正文（📦 模块化费用清单：大巴/门票/餐饮/住宿人均透明列式）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:包院私享>>>\n"
-            "独栋私密小院沉浸研讨主标题\n"
-            "正文（山野院落、高管复盘、星空夜话，私密高端体验）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:案例背书>>>\n"
-            "名企实操落地全记录主标题\n"
-            "正文（真实团队案例复盘，高满意度与无加班焦虑背书）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:抖音避坑>>>\n"
-            "纯个人自驾生活避坑短卡主标题\n"
-            "正文（去商业去涉旅敏感词，口语化纯经验避坑与装备建议）\n"
-            "#5个生活类标签\n"
+            "<<<VERSION_START:抖音攻略>>>\n"
+            "【抖音避坑版本】周末出行/老驴友玩法避坑标题（≤20字）\n"
+            "⠀\n"
+            "正文（周末老玩家真实出游避坑视角，开头讲判断或坑点 → 怎么玩/哪个刺激哪个轻松/怎么取舍 → 天气鞋服确认，彻底消杀涉旅敏感词，段落间独立一行 ⠀）\n"
+            "⠀\n"
+            "#5个泛生活避坑标签\n"
             "<<<VERSION_END>>>\n"
         )
         sent_copy = await self.send_text_prompt(copy_prompt, "V4.5 多版本文案指令", max_wait_sec=25)
@@ -3653,7 +3869,7 @@ class InstanceWorker:
                 # 2. 且已完成全部 3 个标准版本（或包含“抖音避坑”），或者确实已经连续 10 轮零增长停滞；
                 # 3. 且 (前端明确停止回答 或 停滞 >= 10 轮)。
                 _has_open_block = txt.count('<<<VERSION_START:') > txt.count('<<<VERSION_END>>>')
-                _has_complete_v3 = (txt.count('<<<VERSION_END>>>') >= 3 or '<<<VERSION_START:抖音避坑>>>' in txt)
+                _has_complete_v3 = (txt.count('<<<VERSION_END>>>') >= 4 or ('<<<VERSION_START:抖音攻略>>>' in txt and txt.count('<<<VERSION_END>>>') >= 3) or txt.count('<<<VERSION_END>>>') >= 3)
                 _ready_to_seal = (not _has_open_block) and (_has_complete_v3 or _stall_rounds >= 10)
                 if (has_ve) and _ready_to_seal and ((not is_gen_txt) or _stall_rounds >= 10) and poll_idx >= 3 and len(txt) > 200:
                     # 【2026-09-22 修复·文案三病之二】「实质产出校验」：剔除全部 <<<>>> 标记与空白后，
@@ -3721,20 +3937,27 @@ class InstanceWorker:
                     f"文案阶段官方配额上限: {_qt[:35]}", wait_seconds=_wait, resume_dt=_rdt)
 
         # 6. 提取全部无损图片 URL
-        js_get_urls = """(() => {
+        pre_urls_json = json.dumps(list(getattr(self, "_pre_existing_img_srcs", set())))
+        js_get_urls = f"""(() => {{
             // 回收阶段必须和出图轮询使用同一套“全页面生成图”探测。
-            // 文案回复后，conversation-turn 可能同时包含 user/assistant 子节点，
-            // 旧的助手子树筛选会把已经生成好的图片全部过滤掉，造成 0 图误判。
+            const preUrls = new Set({pre_urls_json});
             const userMsgs = Array.from(document.querySelectorAll('[data-message-author-role="user"]'));
             const userImgSrcs = new Set();
             userMsgs.forEach(m => m.querySelectorAll('img').forEach(i => userImgSrcs.add(i.currentSrc || i.src || '')));
             const allImgs = Array.from(document.querySelectorAll('img'));
             const map = new Map();
-            allImgs.forEach(img => {
+            allImgs.forEach(img => {{
                 const src = img.currentSrc || img.src || '';
                 const alt = img.alt || '';
+                if (!src) return;
+                // 【2026-10-08 修复·原图排他铁律】
+                if (preUrls.has(src)) return;
+                if (img.closest('form')) return;
+                if (img.closest('[data-message-author-role="user"]')) return;
+                if (img.closest('[role="group"]') || img.closest('[aria-label*="文件"]') || img.closest('[aria-label*="file"]')) return;
+                if (alt.includes('.jpg') || alt.includes('.jpeg') || alt.includes('.png') || alt.includes('.webp')) return;
                 const isAvatar = alt.includes('个人资料') || alt.includes('profile') || alt.includes('avatar');
-                const isRawUpload = alt.includes('.jpg') || alt.includes('.jpeg') || alt.includes('.png') || userImgSrcs.has(src);
+                const isRawUpload = userImgSrcs.has(src);
                 const w = img.naturalWidth || img.width || 0;
                 const h = img.naturalHeight || img.height || 0;
                 const isTiny = w > 0 && h > 0 && w < 300 && h < 300;
@@ -3743,14 +3966,14 @@ class InstanceWorker:
                 const isGeneratedResource = src.includes('/backend-api/estuary/') &&
                     !isAvatar && !isRawUpload && !isTiny &&
                     (w >= 500 || h >= 500 || src.includes('/public_content/enc/'));
-                if (isGeneratedResource) {
+                if (isGeneratedResource) {{
                     const idMatch = src.match(/id=([^&]+)/) || src.match(/enc\\/([^?&#]+)/);
                     const fileId = idMatch ? idMatch[1] : src;
                     if (!map.has(fileId)) map.set(fileId, src);
-                }
-            });
+                }}
+            }});
             return Array.from(map.values());
-        })()"""
+        }})()"""
         r_urls = await self.send_cmd("Runtime.evaluate", {"expression": js_get_urls, "returnByValue": True})
         img_urls = r_urls.get("result", {}).get("result", {}).get("value", [])
         if len(img_urls) < min(4, expected_count):
@@ -3770,6 +3993,9 @@ class InstanceWorker:
         clean_title = re.sub(r"^评\d+-赞\d+-", "", mat_name)
         clean_title = re.sub(r"[\s\-_]*\d{8}$", "", clean_title)
         clean_title = re.sub(r'[\\/:*?"<>|]', '_', clean_title).strip()[:50]
+        # 铁门1防御：若 clean_title 被 AI 对话/报错污染，强力清洗回退
+        if is_title_polluted(clean_title):
+            clean_title = sanitize_title(clean_title, fallback_title="精选团建方案")
         pipe_info = get_pipeline_info(self.id)
         pkg_folder = f"{ts}-{pipe_info['pipeline']}-{clean_title}"
         # 用户确认的客户端模式第一落点：待制作待补全；未闭环作品留在此处可断点续接。
@@ -3801,6 +4027,25 @@ class InstanceWorker:
             b64_str = res_b64.get("result", {}).get("result", {}).get("value")
             if b64_str:
                 raw_bytes = base64.b64decode(b64_str)
+
+                # 【2026-10-08 修复·硬防照搬双重质检】
+                byte_hash = hashlib.sha256(raw_bytes).hexdigest()
+                if byte_hash in getattr(self, "_raw_hashes", set()):
+                    log(f"🚨【致命拦截】下载到的 {fname} 与原始上传素材 100% 字节相同！严禁照搬入库！", self.id)
+                    raise RuntimeError(f"CDP 下载到原素材底图而非 AI 生成图 ({fname})，触发防照搬硬熔断！")
+                try:
+                    with Image.open(io.BytesIO(raw_bytes)) as dl_im:
+                        dl_bits = calc_dhash_bits(dl_im)
+                        for s_bits in getattr(self, "_raw_dhashes", []):
+                            sim = calc_dhash_sim(dl_bits, s_bits)
+                            if sim >= 0.85:
+                                log(f"🚨【致命拦截】下载到的 {fname} 与原始上传素材高度相似 (sim={sim:.2%}) >= 85%！严禁照搬入库！", self.id)
+                                raise RuntimeError(f"CDP 下载到与原素材相似度过高图片 ({fname}, sim={sim:.2%})，触发防搬运硬熔断！")
+                except RuntimeError:
+                    raise
+                except Exception as e_im_check:
+                    log(f"⚠️ 图片哈希质检容错: {e_im_check}", self.id)
+
                 with open(dest, "wb") as f:
                     f.write(raw_bytes)
                 saved_images.append(dest)
@@ -3853,39 +4098,30 @@ class InstanceWorker:
         except Exception as fe:
             log(f"🚨 【文案清洗未生效】copy_formatter 异常（{fe}），改由落盘出口守卫兜底，绝不落盘原文", self.id)
 
-        # V4.5 客户端可能返回 11 个视觉版本（COPY_FORMAT:MULTI），但 AUTUMN-C
-        # 对外交付固定只允许三平台 Format 3；先抽取三段标准版本，再落盘和验收。
-        if "<<<COPY_FORMAT:3>>>" not in full_copy:
-            def _extract_copy_version(text, tag):
-                m = re.search(
-                    r"<<<VERSION_START:\s*" + re.escape(tag) +
-                    r"\s*>>>(.*?)<<<VERSION_END>>>", text, re.DOTALL
-                )
-                return m.group(1).strip() if m else ""
-
-            _xhs_v3 = _extract_copy_version(full_copy, "原生种草") or _extract_copy_version(full_copy, "数字爆款")
-            _hr_v3 = _extract_copy_version(full_copy, "决策矩阵") or _extract_copy_version(full_copy, "货架明细")
-            _dy_v3 = _extract_copy_version(full_copy, "抖音避坑")
-            if _xhs_v3 and _hr_v3 and _dy_v3:
-                full_copy = (
-                    "<<<COPY_FORMAT:3>>>\n\n"
-                    f"<<<VERSION_START:原生种草>>>\n{_xhs_v3}\n<<<VERSION_END>>>\n\n"
-                    f"<<<VERSION_START:决策矩阵>>>\n{_hr_v3}\n<<<VERSION_END>>>\n\n"
-                    f"<<<VERSION_START:抖音避坑>>>\n{_dy_v3}\n<<<VERSION_END>>>"
-                )
-                log("✅ 已将客户端 MULTI 文案收敛为 AUTUMN-C Format 3 三平台交付", self.id)
-            else:
-                full_copy = full_copy.replace("<<<COPY_FORMAT:MULTI>>>", "<<<COPY_FORMAT:3>>>", 1)
-                log("⚠️ MULTI 文案缺少标准版本，已保留主体并补齐 Format 3 标记", self.id)
+        # 【2026-10-07 修复·严禁阉割成 3 个按钮】
+        # 当 full_copy 包含 <<<VERSION_START:...>>> 块时，完整保留全部有效版本块（绝不阉割成 3 个！），
+        # 头部统一确保带有 <<<COPY_FORMAT:MULTI>>>。
+        if "<<<VERSION_START:" in full_copy:
+            if "<<<COPY_FORMAT:3>>>" in full_copy:
+                full_copy = full_copy.replace("<<<COPY_FORMAT:3>>>", "<<<COPY_FORMAT:MULTI>>>")
+            elif "<<<COPY_FORMAT:MULTI>>>" not in full_copy:
+                full_copy = "<<<COPY_FORMAT:MULTI>>>\n\n" + full_copy.lstrip()
+            _ver_cnt = full_copy.count("<<<VERSION_START:")
+            log(f"✅ 已完整保留客户端 MULTI 多版本文案（共 {_ver_cnt} 个版本块，绝不阉割为 3 个）", self.id)
+        elif "<<<COPY_FORMAT:MULTI>>>" not in full_copy and "<<<COPY_FORMAT:3>>>" not in full_copy:
+            full_copy = "<<<COPY_FORMAT:MULTI>>>\n\n" + full_copy.lstrip()
 
         # 辅助提取向后兼容的单版本文本
         def extract_v(tag):
             m = re.search(r'<<<VERSION_START:\s*' + re.escape(tag) + r'\s*>>>(.*?)<<<VERSION_END>>>', full_copy, re.DOTALL)
             return m.group(1).strip() if m else ""
 
-        xhs_copy = extract_v("数字爆款") or extract_v("原生种草")
-        hr_copy = extract_v("决策矩阵") or extract_v("货架明细")
-        douyin_copy = extract_v("抖音避坑")
+        xhs_copy = (extract_v("红书自然") or extract_v("红书种草")
+                    or extract_v("数字爆款") or extract_v("原生种草"))
+        hr_copy = (extract_v("红书大纲") or extract_v("决策矩阵")
+                   or extract_v("货架明细") or extract_v("分天动线"))
+        douyin_copy = (extract_v("抖音攻略") or extract_v("抖音避坑")
+                       or extract_v("抖音无营销"))
 
         if not xhs_copy:
             m_xhs = re.search(r'<<<XHS_START>>>(.*?)<<<XHS_END>>>', full_copy, re.DOTALL)
@@ -3944,22 +4180,24 @@ class InstanceWorker:
         hr_copy = _g_single.get("hr_copy", hr_copy)
         douyin_copy = _g_single.get("douyin_copy", douyin_copy)
 
+        evidence_dir = os.path.join(OUTPUT_BASE, "_内部台账与历史数据", "生产证据", os.path.basename(target_pkg_dir))
+        os.makedirs(evidence_dir, exist_ok=True)
         if xhs_copy:
-            with open(os.path.join(target_pkg_dir, "小红书文案.txt"), "w", encoding="utf-8") as f:
+            with open(os.path.join(evidence_dir, "小红书文案.txt"), "w", encoding="utf-8") as f:
                 f.write(xhs_copy)
         if hr_copy:
-            with open(os.path.join(target_pkg_dir, "HR方案决策版.txt"), "w", encoding="utf-8") as f:
+            with open(os.path.join(evidence_dir, "HR方案决策版.txt"), "w", encoding="utf-8") as f:
                 f.write(hr_copy)
         if douyin_copy:
-            with open(os.path.join(target_pkg_dir, "抖音口播脚本.txt"), "w", encoding="utf-8") as f:
+            with open(os.path.join(evidence_dir, "抖音口播脚本.txt"), "w", encoding="utf-8") as f:
                 f.write(douyin_copy)
 
         with open(os.path.join(target_pkg_dir, "文案.txt"), "w", encoding="utf-8") as f:
             f.write(full_copy)
-        with open(os.path.join(target_pkg_dir, "三平台文案.txt"), "w", encoding="utf-8") as f:
+        with open(os.path.join(evidence_dir, "三平台文案.txt"), "w", encoding="utf-8") as f:
             f.write(full_copy)
         if copy_text:
-            with open(os.path.join(target_pkg_dir, "全量生成记录.txt"), "w", encoding="utf-8") as f:
+            with open(os.path.join(evidence_dir, "全量生成记录.txt"), "w", encoding="utf-8") as f:
                 f.write(copy_text)
 
         # 10. Pillow 质检验收
@@ -3986,28 +4224,64 @@ class InstanceWorker:
                 shutil.rmtree(target_pkg_dir, ignore_errors=True)
             raise RuntimeError(f"有效大图不足（仅 {valid_cnt}/{min_required} 张），废弃残缺产出并重做")
 
-        # 11. 终稿直接归档至成品库根目录（彻底取消已发送0次子目录）
-        final_pkg_dir = os.path.join(OUTPUT_BASE, pkg_folder)
+        # 11. 终稿根据作品标题与原素材路径自动归入对应标准货架（不再散落在 OUTPUT_BASE 根目录）
+        shelf_name = resolve_output_shelf(mat_name, mat_dir, full_copy)
+        shelf_dir = os.path.join(OUTPUT_BASE, shelf_name)
+        os.makedirs(shelf_dir, exist_ok=True)
+        final_pkg_dir = os.path.join(shelf_dir, pkg_folder)
 
         # 12. 登记生图配额账本（3小时滑动窗口40张 + 全天180张）
         record_generation_success(self.id, valid_cnt, len(img_paths), mat_name)
 
-        # 12. 固化 manifest.json
+        # 12. 固化 manifest.json 与 作品标签.json（写入用户要求的齐全作品硬标签）
+        verified_at_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        copy_ver_cnt = full_copy.count("<<<VERSION_START:")
+        completion_meta = {
+            "verified": True,
+            "imageCount": valid_cnt,
+            "copyReady": True,
+            "copyVersionCount": copy_ver_cnt,
+            "verifiedAt": verified_at_str,
+        }
+        work_tags_list = ["✅图文齐全", "待发送", "小红书可发", "抖音可发", shelf_name]
         manifest_data = {
+            "deliveryLayout": "flat-images-manifest-copy-v1",
+            "copyPath": os.path.join(target_pkg_dir, "文案.txt"),
+            "evidencePath": evidence_dir,
             "title": mat_name,
-            "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "created_at": verified_at_str,
             "pipeline": pipe_info["pipeline"],
             "worker": pipe_info["worker"],
             "account": pipe_info["account"],
-            "tags": ["待发送", "小红书可发", "抖音可发"],
+            "isComplete": True,
+            "lifecycleStatus": "COMPLETED",
+            "shelf": shelf_name,
+            "completionMeta": completion_meta,
+            "tags": work_tags_list,
             "rawMaterialPath": mat_dir,
+            "sourceMaterialPath": mat_dir,
+            "sourceImageFiles": [os.path.basename(image) for image in img_paths],
             "finishedProductPath": target_pkg_dir,
             "imageCount": valid_cnt,
-            "status": "PASS",
-            "lifecycleStatus": "IN_PROGRESS"
+            "status": "PASS"
         }
         with open(os.path.join(target_pkg_dir, "manifest.json"), "w", encoding="utf-8") as f:
             json.dump(manifest_data, f, ensure_ascii=False, indent=2)
+
+        work_labels_data = {
+            "title": mat_name,
+            "packageFolder": pkg_folder,
+            "isComplete": True,
+            "lifecycleStatus": "COMPLETED",
+            "shelf": shelf_name,
+            "completionMeta": completion_meta,
+            "tags": work_tags_list,
+            "rawMaterialPath": mat_dir,
+            "finishedProductPath": target_pkg_dir,
+            "updatedAt": verified_at_str
+        }
+        with open(os.path.join(evidence_dir, "作品标签.json"), "w", encoding="utf-8") as f:
+            json.dump(work_labels_data, f, ensure_ascii=False, indent=2)
 
         # 12. 回写原料 .tags.json 为已生产
         tags_path = os.path.join(mat_dir, ".tags.json")
@@ -4140,7 +4414,12 @@ class InstanceWorker:
                         rt = rf.read().strip()
                         lines = [l.strip() for l in rt.split("\n") if l.strip()]
                         if lines:
-                            xhs_title = lines[0]
+                            cand_title = ""
+                            for cand in lines:
+                                if not is_title_polluted(cand):
+                                    cand_title = cand
+                                    break
+                            xhs_title = cand_title if cand_title else mat_name
                             xhs_body_snippet = lines[1][:150] if len(lines) > 1 else ""
                 except:
                     pass
@@ -4190,17 +4469,31 @@ class InstanceWorker:
         if not feishu_notice_ok:
             raise RuntimeError("飞书群完成通知发送失败，作品保留在制作态并标记 failed")
 
-        # 16. 飞书表格与群通知均成功后，才原子归档直接移入成品库根目录。
+        # 16. 飞书表格与群通知均成功后，才原子归档直接移入对应标准货架目录。
         try:
             import shutil
+            os.makedirs(os.path.dirname(final_pkg_dir), exist_ok=True)
             if os.path.exists(final_pkg_dir):
                 shutil.rmtree(final_pkg_dir, ignore_errors=True)
             shutil.move(target_pkg_dir, final_pkg_dir)
             target_pkg_dir = final_pkg_dir
             manifest_data["finishedProductPath"] = target_pkg_dir
+            manifest_data["copyPath"] = os.path.join(target_pkg_dir, "文案.txt")
+            manifest_data["isComplete"] = True
             manifest_data["lifecycleStatus"] = "COMPLETED"
+            manifest_data["shelf"] = shelf_name
+            manifest_data["completionMeta"] = completion_meta
+            manifest_data["tags"] = work_tags_list
             with open(os.path.join(target_pkg_dir, "manifest.json"), "w", encoding="utf-8") as f:
                 json.dump(manifest_data, f, ensure_ascii=False, indent=2)
+            work_labels_data["finishedProductPath"] = target_pkg_dir
+            work_labels_data["isComplete"] = True
+            work_labels_data["lifecycleStatus"] = "COMPLETED"
+            work_labels_data["shelf"] = shelf_name
+            work_labels_data["completionMeta"] = completion_meta
+            work_labels_data["tags"] = work_tags_list
+            with open(os.path.join(evidence_dir, "作品标签.json"), "w", encoding="utf-8") as f:
+                json.dump(work_labels_data, f, ensure_ascii=False, indent=2)
             if feishu_row_fin:
                 cmd_path = [
                     "node", LARK_RUN_JS, "sheets", "+cells-set",
@@ -4211,7 +4504,7 @@ class InstanceWorker:
                     "--cells", json.dumps([[{"value": target_pkg_dir}]], ensure_ascii=False)
                 ]
                 subprocess.run(cmd_path, capture_output=True, text=True, encoding="utf-8", timeout=30)
-            log(f"-> 飞书闭环完成，已原子归档至成品库根目录: {target_pkg_dir}", self.id)
+            log(f"-> 飞书闭环完成，已原子归档至对应标准货架 [{shelf_name}]: {target_pkg_dir}", self.id)
         except Exception as e_mv:
             raise RuntimeError(f"飞书闭环后归档移动失败: {e_mv}")
 
@@ -4246,10 +4539,58 @@ class InstanceWorker:
                 await self.ws.close()
             except Exception: pass
 
+def resolve_output_shelf(title: str, mat_dir: str = "", copy_text: str = "") -> str:
+    """根据作品标题、原素材路径与文案摘要智能判断所属标准货架目录。"""
+    corpus = f"{title or ''} {os.path.basename(mat_dir or '')} {mat_dir or ''}".lower()
+
+    # 1. 目的地/城市专有货架优先
+    dest_shelves = [
+        ("莫干山成品", ("莫干山", "德清", "庾村", "裸心")),
+        ("安吉成品", ("安吉", "云上草原", "江南天池", "小杭坑", "深蓝计划", "余村", "浙北大峡谷")),
+        ("桐庐成品", ("桐庐", "大奇山", "垂云通天河", "瑶琳", "富春江", "石舍", "芦茨", "严子陵", "纪龙山")),
+        ("千岛湖成品", ("千岛湖", "淳安", "啤酒小镇", "天屿山", "芹川")),
+        ("宜兴溧阳成品", ("宜兴", "溧阳", "天目湖", "南山竹海", "阳羡", "窑湖小镇")),
+        ("舟山海岛成品", ("舟山", "枸杞岛", "东极岛", "嵊泗", "花鸟岛", "岱山", "普陀", "朱家尖", "桃花岛", "衢山岛", "秀山岛", "海岛")),
+        ("苏州成品", ("苏州", "太湖", "西山岛", "东山", "阳澄湖", "周庄", "同里", "昆山", "常熟", "张家港", "树山", "旺山", "澄湖")),
+        ("宁波成品", ("宁波", "象山", "东钱湖", "四明山", "慈城", "宁海", "奉化", "溪口", "雪窦山", "松兰山", "石浦", "余姚", "慈溪")),
+        ("上海成品", ("上海", "崇明", "长兴岛", "横沙岛", "滴水湖", "青浦", "松江", "佘山", "朱家角", "奉贤", "浦东", "淀山湖")),
+        ("南京成品", ("南京", "汤山", "牛首山", "栖霞山", "钟山", "高淳", "溧水", "珍珠泉", "老门东", "紫金山", "园博园")),
+        ("绍兴成品", ("绍兴", "安昌", "柯桥", "新昌", "十九峰", "嵊州", "诸暨", "东白山", "鲁迅故里", "会稽山", "覆卮山")),
+        ("杭州成品", ("杭州", "西湖", "湘湖", "良渚", "径山", "临安", "大明山", "青山湖", "西溪", "龙井", "九溪", "富阳", "龙门古镇", "指南村", "满觉陇", "法喜寺")),
+    ]
+    for shelf_name, kws in dest_shelves:
+        if any(kw.lower() in corpus for kw in kws):
+            return shelf_name
+
+    # 2. 节日与专题货架
+    if any(k in corpus for k in ("中秋", "国庆", "游园会", "月饼")):
+        return "中秋国庆成品"
+    if any(k in corpus for k in (
+        "团建游戏", "破冰", "室内活动", "室内团建", "小游戏", "趣味运动会",
+        "运动会", "旱地冰壶", "飞盘", "攻防箭", "剧本杀", "年会", "团建没思路"
+    )):
+        return "团建游戏成品"
+
+    # 3. 若标题/路径未命中，用文案前部文本兜底判定
+    if copy_text:
+        copy_head = copy_text[:600].lower()
+        for shelf_name, kws in dest_shelves:
+            if any(kw.lower() in copy_head for kw in kws):
+                return shelf_name
+        if any(k in copy_head for k in ("中秋", "国庆", "游园会", "月饼")):
+            return "中秋国庆成品"
+        if any(k in copy_head for k in ("团建游戏", "破冰", "室内活动", "室内团建", "趣味运动会", "旱地冰壶", "飞盘")):
+            return "团建游戏成品"
+
+    return "综合与其它城市"
+
 # 领取任务前的本地计划门禁：先读取素材并落盘计划，再允许客户端上传与生图。
 def ensure_autumn_c_production_plan(item):
     mat_path = item["path"]
     mat_name = item.get("name") or os.path.basename(mat_path)
+    is_exp, kw = is_expired_holiday(mat_name, mat_path)
+    if is_exp:
+        raise RuntimeError(f"节日时效性拦截：该素材属于已过期节日 [{kw}]，坚决停止制作！")
     safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', mat_name).strip()[:110]
     plan_root = os.path.join(OUTPUT_BASE, "待制作待补全")
     plan_dir = os.path.join(
@@ -4293,7 +4634,7 @@ def ensure_autumn_c_production_plan(item):
         "- 彻底换人、换脸、发型、服装、动作、视线、机位与道具，保持自然手机纪实抓拍，拒绝统一看镜头与 HDR 网红脸。\n"
         "- 相邻照片边界必须自然贴合，严禁白线、白缝、白边、透明条、漏缝、发光接缝、空隙或背景露白；发现必须重做该页。\n"
         "- 团队规模统一写“10人起”；删除“私信、加微信、扫码、联系我们”等强导流词。\n"
-        "- 文案必须包含 `<<<COPY_FORMAT:3>>>`，涵盖小红书自然攻略版、小红书 HR 决策版、抖音玩法/避坑版。\n\n"
+        "- 文案必须包含 `<<<COPY_FORMAT:MULTI>>>`，涵盖红书自然、抖音攻略、红书种草、红书大纲等全套标准成稿。\n\n"
         "## 原素材文案摘要\n" + (copy_preview or "（无文案摘要，按图片与任务标签读取）") + "\n"
     )
     if not os.path.exists(plan_path):
@@ -4317,6 +4658,10 @@ async def claim_next_task(worker_id):
         DAEMON_STATE["queue_remaining"] = len(queue)
         sync_daemon_state()
         for item in queue:
+            is_exp, kw = is_expired_holiday(item.get("name", ""), item.get("path", ""))
+            if is_exp:
+                log(f"🗓️ [节日时效性门禁拦截] 素材已过期 ({kw})，自动放生跳过: {item.get('name')}")
+                continue
             tags_file = os.path.join(item["path"], ".tags.json")
             try:
                 plan_path = ensure_autumn_c_production_plan(item)
