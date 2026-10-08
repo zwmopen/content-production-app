@@ -16,6 +16,7 @@ import tempfile
 import hashlib
 import io
 from PIL import Image
+from pathlib import Path
 try:
     import pillow_heif
     pillow_heif.register_heif_opener()
@@ -142,6 +143,16 @@ try:
     from shared_notify import notify as desktop_notify
 except Exception:
     def desktop_notify(*args, **kwargs): return False
+
+# ==============================================================================
+# 三大生产模式定义与配置（2026-10-08 统一升级）
+# 模式 1: "1_replica_shuffle" (原图复刻打乱生产模式：原图作骨架，内拼元素打乱重制，全书页序锁死)
+# 模式 2: "2_random_template" (随机模板复刻模式：系统默认，正宗模板迁移器，随机抽选 P1+P2 模板)
+# 模式 3: "3_fixed_template"  (固定模板批跑模式：指定 TARGET_TEMPLATE_ID 集中批跑)
+# ==============================================================================
+PRODUCTION_MODE = os.environ.get("PRODUCTION_MODE", "2_random_template").strip()
+TARGET_TEMPLATE_ID = os.environ.get("TARGET_TEMPLATE_ID", "").strip()
+TEMPLATE_POOL_ROOT = os.path.join(PROJECT_ROOT, "02-模板库")
 
 # 接入文案落盘出口守卫（2026-09-21）
 # 背景：copy_formatter.clean_entire_copy 有两条静默降级路径（ok=False / 抛异常），
@@ -488,6 +499,220 @@ def trace(inst, event, **kw):
     # 同时进主日志，保证 tail -f 的时候能直接看到节拍
     extra = " ".join(f"{k}={v}" for k, v in kw.items())
     log(f"⏱ 埋点 {event}" + (f" | {extra}" if extra else ""), inst)
+
+
+# ==============================================================================
+# 模板库解析与大一统生产提示词引擎（2026-10-08 统一升级）
+# ==============================================================================
+_CACHED_TEMPLATE_POOL = None
+
+
+def get_template_catalog(template_root=TEMPLATE_POOL_ROOT):
+    """扫描并获取 02-模板库 中所有具备真实 P1/P2 模板图片的完整母版列表"""
+    global _CACHED_TEMPLATE_POOL
+    if _CACHED_TEMPLATE_POOL is not None:
+        return _CACHED_TEMPLATE_POOL
+
+    root = Path(template_root) if isinstance(template_root, Path) else Path(str(template_root))
+    if not root.exists():
+        return []
+
+    reg_file = root / "templates-registry.json"
+    path_to_reg = {}
+    name_to_reg = {}
+    if reg_file.exists():
+        try:
+            with open(reg_file, "r", encoding="utf-8") as rf:
+                reg_data = json.load(rf)
+            for t in reg_data.get("templates", []):
+                lp = t.get("localPath")
+                nm = t.get("name")
+                if lp:
+                    path_to_reg[Path(lp).name.casefold()] = t
+                if nm:
+                    name_to_reg[nm.casefold()] = t
+        except Exception:
+            pass
+
+    valid_templates = []
+    for folder in root.rglob("*"):
+        if not folder.is_dir():
+            continue
+        if any(ignored in folder.parts for ignored in ("scripts", "_回收站", "_待整理", ".git", "__pycache__")):
+            continue
+        try:
+            files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in ('.jpg', '.png', '.jpeg', '.webp')]
+        except Exception:
+            continue
+
+        p1_files = [f for f in files if 'p1' in f.stem.lower() or '封面' in f.stem]
+        p2_files = [f for f in files if 'p2' in f.stem.lower() or '内页' in f.stem]
+        if not (p1_files and p2_files):
+            continue
+
+        reg = path_to_reg.get(folder.name.casefold()) or name_to_reg.get(folder.name.casefold()) or {}
+        tid = reg.get("templateId") or reg.get("id")
+
+        if not tid:
+            for meta_name in ("template.json", "metadata.json"):
+                meta_p = folder / meta_name
+                if meta_p.exists():
+                    try:
+                        with open(meta_p, "r", encoding="utf-8") as mf:
+                            m_data = json.load(mf)
+                        tid = m_data.get("template", {}).get("id") or m_data.get("templateId") or m_data.get("id")
+                        if tid:
+                            break
+                    except Exception:
+                        pass
+
+        if not tid:
+            m_id = re.search(r'^(T\d+)', folder.name, re.I)
+            if not m_id:
+                m_id = re.search(r'[\(（](T\d+)[\)）]', folder.name, re.I)
+            tid = m_id.group(1).upper() if m_id else folder.name[:8]
+
+        tid = str(tid).strip().upper()
+        t_name = reg.get("name") or folder.name
+        t_cat = reg.get("category", "")
+
+        valid_templates.append({
+            "id": tid,
+            "name": t_name,
+            "category": t_cat,
+            "folder": str(folder),
+            "p1_path": str(p1_files[0].resolve()),
+            "p2_path": str(p2_files[0].resolve())
+        })
+
+    _CACHED_TEMPLATE_POOL = valid_templates
+    return valid_templates
+
+
+def pick_production_template(template_root=TEMPLATE_POOL_ROOT, mode=PRODUCTION_MODE, target_id=TARGET_TEMPLATE_ID):
+    """根据生产模式挑选模板：模式 2 随机抽选，模式 3 按指定 ID 锁定"""
+    pool = get_template_catalog(template_root)
+    if not pool:
+        log(f"⚠️ 模板库未找到任何合格的 P1/P2 模板！路径: {template_root}")
+        return None
+
+    if mode == "3_fixed_template" and target_id:
+        tgt = target_id.strip().upper()
+        for t in pool:
+            if t["id"] == tgt or tgt in t["name"].upper():
+                return t
+        log(f"⚠️ 未找到指定的固定模板 [{target_id}]，平滑回退到随机抽选模式")
+
+    return random.choice(pool)
+
+
+def build_mode2_template_migration_prompt(template, material_img_count, plan_excerpt, context_block):
+    """
+    模式 2 & 模式 3 提示词：正宗轮播母版迁移器 V4.7 统一命名与视觉特征版 + 14大摄影质感与合规增强
+    """
+    t_id = template.get("id", "T02")
+    t_name = template.get("name", "九宫格项目合集顶部白字描边封面 × 无白边四宫格中置白条黑粗字内页")
+    prompt = (
+        "【小红书团建轮播母版迁移器 V4.7｜统一视觉特征锁定与实拍迁移全量直出版】\n"
+        f"（已锁定母版：[{t_id}] {t_name}｜四宫格站位强制置换打乱｜反AI塑料凡士林磨皮｜纯正国产手机实拍质感｜名企大厂背书置换）\n\n"
+        "你现在是专业的【小红书团建轮播母版迁移器】。\n"
+        f"本窗口已上传全部 {2 + material_img_count} 张图片：\n"
+        "- 前 2 张（图 1、图 2）为【A 类永久视觉母版】：\n"
+        f"  * 第 1 张为【封面母版 P1】：统一锁定为 [{t_id}] 封面结构与视觉样式（大字标题层级、描边/底刷色块与版式分区）；\n"
+        f"  * 第 2 张为【内页母版 P2】：统一锁定为 [{t_id}] 内页结构与视觉样式（中置信息条/文字块、多宫格分区比例与留白）；\n"
+        f"- 随后的 {material_img_count} 张图片为【B 类待迁移真实内容素材】：\n"
+        "  * 本期团建的真实场地、山水风景、特色活动项目（射箭/越野/烧烤/露营等）实拍与行程真实记录。\n\n"
+        "以下为本地审核通过的执行计划（本轮唯一执行依据）：\n"
+        f"{plan_excerpt}\n\n"
+        f"【原素材参考正文与真实排期】：\n{context_block}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "【最高迁移铁律：锁定模板视觉 × 站位绝对打乱 × 全量换人重制 × 手机实拍质感】：\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "1. 【逐页母版结构严格锁定（原样继承版式骨架）】：\n"
+        "   - P1 封面：100% 继承图 1（模板 P1）的结构与大标题排版规范，将素材中的核心特色项目/全景填入对应格子，主标题更新为本期团建大字；\n"
+        "   - P2~PN 内页：100% 继承图 2（模板 P2）的内页结构与信息条版式，按文案真实行程先后顺序将素材照片填入对应分区；\n"
+        "   - 严禁脑补新模板，严禁将多页做成一张长图或九宫格缩略图！\n"
+        "2. 【四宫格/多图拼接·站位绝对置换打乱律（彻底拒绝原地照描）】：\n"
+        "   - 凡涉及 4 宫格拼图或多图画中画（原站位若为：左上A、右上B、左下C、右下D），生成时【必须强制打乱重排】（如对调为：左上B、右上D、左下A、右下C，或任意非原位站位）！\n"
+        "   - 绝对不允许任何一个小格子的画面留在原位置！严禁原地仅换脸换衣！\n"
+        "   - 各个打乱格子的新画面，采用同主题不同镜头角度的真实实拍（例如烤肉特写置换为炭火全景、农庄大门置换为庭院侧拍）。\n"
+        "3. 【出镜人物 100% 全量换新（真实普通职场人，拒绝塑料假人）】：\n"
+        "   - 画面中只要出现人物，必须彻底换脸、换发型、换衣服穿搭、换动作姿态、换视线朝向；\n"
+        "   - 人物定位为 22~35 岁普通年轻职场男女（HR、技术、运营、普通员工），展现清爽阳光、具有自然亚洲面孔与微皮肤纹理；\n"
+        "   - 【严禁整容脸、网红锥子脸、浓厚欧美妆、影楼模特感】；\n"
+        "   - 【严禁所有人对着镜头统一假笑或比剪刀手】！必须视线自然分散（有人专注烤肉、有人转头欢笑、有人远眺风景），捕捉活动正在发生中的偶然抓拍瞬间。\n"
+        "4. 【静物、道具与美食深度去重重新布景】：\n"
+        "   - 烧烤、下午茶、围炉煮茶等场景：烤架上的食材重新洗牌（羊肉串、香菇、玉米重新排布），水果、茶壶、水杯、折叠椅重新调配摆放角度；\n"
+        "   - 桌面保留自然的生活使用痕迹（喝了一半的茶杯、抽纸盒等），杜绝样板间式死板陈列。\n"
+        "5. 【反 AI 塑料凡士林感·14大真实现场摄影增强】：\n"
+        "   - 彻底铲除“十大 AI 假特征”：严禁荧光草地绿、毒性假蓝天、统一金色夕阳、塑料反光脸、凡士林磨皮假面；\n"
+        "   - 模拟主流高素质国产手机日光抓拍摄影质感：通透自然的日光漫反射，自然阴影层次与真实衣褶；\n"
+        "   - 相邻照片边界必须自然贴合，严禁出现任何白线、白缝、白边、透明条、漏缝或背景露白；\n"
+        "   - 手部必须准确为 5 根手指，持物握柄受力符合物理现实，严禁穿模悬空。\n"
+        "6. 【排版文字去重与名企背书动态置换】：\n"
+        "   - 【名企大厂背书动态置换（去重+增信铁律）】：若素材中提及具体公司名，必须强制动态置换为大厂/名企背书代称（如：“某头部互联网大厂”、“某500强外企”、“某知名独角兽”、“某金融名企”等），既彻底规避平台查重，又大幅提升笔记B端大客户信任感！\n"
+        "   - 【起接人数商业门槛统一】：无论素材出现何种门槛，在新图中一律统一为“10人起接”或“10人起订/定制方案”，严禁带入竞品限制；\n"
+        "   - 标题文字避让人脸核心区域，严禁火星文乱码假字，严禁“私信、加微信、扫码”等敏感导流词。\n"
+        "7. 【内页真实行程时间线严格顺承】：\n"
+        "   - 严格按照文案与素材真实行程（P1封面，P2第一天上午，P3第一天下午...），时间流向严密顺承，绝对禁止颠倒行程先后顺序！\n"
+        "8. 【全量直接出图与标准双端文案交付】：\n"
+        "   - 每页均输出 3:4 竖版大图（1086x1448），直接一次性全量出图，不等待确认；\n"
+        "   - 在成图回复最末尾，随附符合手机复制排版的小红书与抖音全套发布文案：\n"
+        "<<<XHS_START>>>\n"
+        "[爆款标题]\n\n"
+        "[真诚第一视角正文：痛点共鸣+环境出片点+2-4个特色项目+餐饮配套+详细行程+Tips]\n\n"
+        "[推荐话题，另起一行，同在一行]\n"
+        "<<<XHS_END>>>\n\n"
+        "<<<DOUYIN_START>>>\n"
+        "[精炼短文案+预算玩法+话题]\n"
+        "<<<DOUYIN_END>>>\n\n"
+        "请立即依据前 2 张母版规则，将后续素材全量迁移直接生成全部 3:4 独立大图及文末双端文案！"
+    )
+    return prompt
+
+
+def build_mode1_replica_shuffle_prompt(material_img_count, plan_excerpt, context_block):
+    """
+    模式 1 提示词：原图轻复刻打乱生产 V6.1（去除 NO.1~NO.9 混淆残留，明确内拼打乱+实拍重生，页序锁死）
+    """
+    prompt = (
+        "【小红书团建轻复刻直接改造与图文直出版 V6.1·打乱重生版】\n"
+        "（原图即骨架｜四宫格站位强制对调打乱｜全量换人换衣换道具｜反AI塑料凡士林磨皮｜纯正国产手机实拍质感｜行程页序绝对锁定）\n\n"
+        f"已上传全部 {material_img_count} 张原图素材。\n"
+        "本套已先完成本地素材读取与 production_plan.md 计划审核；以下计划是本轮唯一执行依据：\n"
+        f"{plan_excerpt}\n\n"
+        "请严格按照 V6.1 规则执行直接出图，绝对禁止自由创作或脑补新景区！\n\n"
+        f"【原素材参考正文与真实排期】：\n{context_block}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "【V6.1 核心增量铁律：单页内拼站位绝对打乱 & 人物实拍重生 & 行程页序严禁颠倒】：\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "1. 【原图即骨架，原图怎么排就怎么改】：\n"
+        "   - 原图封面是多图大字则继承大字排版；原图是通透风景或清新小标签则严格继承其轻量排版；\n"
+        "   - 原图 P1 对应新图 P1，P2 对应新图 P2……整套笔记的游玩行程与时间线先后顺序【绝对锁定，严禁前后颠倒】！\n"
+        "2. 【四宫格/多图拼接·单页内部站位绝对置换打乱律】：\n"
+        "   - 凡单页中涉及 4 宫格拼图或多图画中画（原站位若为：左上A、右上B、左下C、右下D），生成时【必须强制打乱重排】（如对调为：左上B、右上D、左下A、右下C，或任意非原位站位）！\n"
+        "   - 绝对不允许任何一个小格子的画面留在原位置！严禁原地仅换脸换衣！\n"
+        "   - 各个打乱格子的新画面，采用同主题不同镜头角度的真实实拍（例如烤肉特写置换为炭火全景、农庄大门置换为庭院侧拍）。\n"
+        "3. 【出镜人物 100% 全量换新（真实职场人重生，拒绝塑料假人）】：\n"
+        "   - 全员换脸、换发型、换衣服穿搭、换肢体动作、换站位与朝向；\n"
+        "   - 必须表现为真实企业里清爽年轻的职场同事（22~35岁），拒绝整容脸、网红脸、商业模特摆拍感；\n"
+        "   - 视线自然分散（有人低头烤肉、有人欢笑交流、有人远眺风景），捕捉活动正在发生中的真实偶然抓拍瞬间，严禁全员看镜头傻笑。\n"
+        "4. 【静物、道具与美食深度去重】：\n"
+        "   - 烤串食材重新排布，茶点水果重新调配，茶壶水杯角度微调，保留桌面自然使用痕迹。\n"
+        "5. 【反 AI 塑料感与 14 大摄影增强法则】：\n"
+        "   - 彻底铲除荧光绿、假蓝天、统一金色夕阳、凡士林磨皮假面；\n"
+        "   - 国产手机自然实拍质感，自然光影，衣褶自然，手部准确 5 根手指；\n"
+        "   - 多图拼接无缝贴合，严禁白线、白缝、白边、透明漏缝或背景露白。\n"
+        "6. 【名企大厂背书动态置换与起接人数统一】：\n"
+        "   - 原图中提及的具体公司名，强制置换为“某头部互联网大厂”、“某知名独角兽”等大厂背书代称；\n"
+        "   - 团队起接人数统一写“10人起接”或“10人起订/定制方案”，严禁带入竞品限制；\n"
+        "   - 严禁私信/加微信/扫码等违禁导流词。\n"
+        "7. 【全量直接出图与标准双端文案交付】：\n"
+        "   - 严格按页序输出 3:4 竖版大图（1086x1448），不等待确认，文末随附符合手机复制排版的小红书与抖音全套文案（含 <<<XHS_START>>> 与 <<<DOUYIN_START>>>）。\n\n"
+        "请立即开足马力全量输出全部 3:4 独立成品大图及末尾双端文案！"
+    )
+    return prompt
+
 
 # ================= 产线停机信号（2026-09-26 新增） =================
 # 命中任意一条 = 平台侧已经明确表态（配额/风控/登录态/内容违规），
@@ -2241,19 +2466,44 @@ class InstanceWorker:
         return True
 
     def prepare_material_images(self, mat_dir, max_imgs=10):
-        files = [f for f in os.listdir(mat_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
-        def extract_num(f):
-            m = re.search(r'\d+', f)
-            return int(m.group(0)) if m else 9999
-        files.sort(key=extract_num)
+        image_exts = ('.jpg', '.jpeg', '.png', '.webp')
+        files = [f for f in os.listdir(mat_dir) if f.lower().endswith(image_exts)]
+        def natural_sort_key(f):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', f)]
+        files.sort(key=natural_sort_key)
 
         cover = next((f for f in files if 'cover' in f.lower() or '封面' in f), None)
         if not cover and files:
             cover = files[0]
 
-        inners = [f for f in files if f != cover]
-        # Web-CDP 硬上限 10 张：封面 1 张 + 内页最多 9 张，避免客户端超出画册规格
-        selected = ([cover] if cover else []) + inners[:max_imgs-1]
+        # 严格封面去重：若内页列表（如 p1.jpg）内容与 cover 完全相同，剔除重复，杜绝全书错位一位
+        cover_fp = os.path.join(mat_dir, cover) if cover else None
+        cover_sha = None
+        if cover_fp and os.path.exists(cover_fp):
+            try:
+                with open(cover_fp, "rb") as cf:
+                    cover_sha = hashlib.sha256(cf.read()).hexdigest()
+            except Exception:
+                pass
+
+        inners = []
+        for f in files:
+            if f == cover:
+                continue
+            fp = os.path.join(mat_dir, f)
+            if cover_sha:
+                try:
+                    with open(fp, "rb") as rf:
+                        if hashlib.sha256(rf.read()).hexdigest() == cover_sha:
+                            log(f"   [去重清洗] 剔除与封面内容完全相同的重复内页文件: {f}", self.id)
+                            continue
+                except Exception:
+                    pass
+            inners.append(f)
+
+        # 严格控制在 max_imgs 内
+        inner_limit = max(0, max_imgs - (1 if cover else 0))
+        selected = ([cover] if cover else []) + inners[:inner_limit]
         valid_paths = []
         for f in selected:
             fp = os.path.join(mat_dir, f)
@@ -2909,12 +3159,37 @@ class InstanceWorker:
 
         await self.open_fresh_session()
 
-        # 1. 扫描与上传图片（Web-CDP 硬上限 10 张，和本地生产计划一致）
-        img_paths = self.prepare_material_images(mat_dir, max_imgs=10)
-        log(f"精选 {len(img_paths)} 张原料图注入对话...", self.id)
+        # 1. 扫描与上传图片（按生产模式智能调度：模式 2 默认抽选模板，模式 3 固定模板，模式 1 原图打乱）
+        mode = PRODUCTION_MODE
+        if mode not in ("1_replica_shuffle", "2_random_template", "3_fixed_template"):
+            mode = "2_random_template"
+
+        selected_template = None
+        if mode in ("2_random_template", "3_fixed_template"):
+            selected_template = pick_production_template(TEMPLATE_POOL_ROOT, mode=mode, target_id=TARGET_TEMPLATE_ID)
+            if not selected_template:
+                log(f"⚠️ 未找到可用母版，平滑回退到模式 1 (原图复刻打乱模式)", self.id)
+                mode = "1_replica_shuffle"
+
+        self._current_mode = mode
+        self._current_template = selected_template
+
+        if mode in ("2_random_template", "3_fixed_template") and selected_template:
+            log(f"🎯 [生产模式] {('随机模板复刻模式' if mode == '2_random_template' else '固定模板模式')} | 母版: [{selected_template['id']}] {selected_template['name']}", self.id)
+            template_imgs = [selected_template["p1_path"], selected_template["p2_path"]]
+            # 原料图精选最多 8 张（2 张母版 + 最多 8 张原料 = 10 张，严格符合 Web-CDP 上限）
+            material_imgs = self.prepare_material_images(mat_dir, max_imgs=8)
+            img_paths = template_imgs + material_imgs
+            log(f"-> 组装完成: 2 张 A 类母版 + {len(material_imgs)} 张 B 类原料实拍图 (共 {len(img_paths)} 张)", self.id)
+        else:
+            log(f"🎯 [生产模式] 模式 1: 原图复刻打乱生产模式 (无外部模板)", self.id)
+            img_paths = self.prepare_material_images(mat_dir, max_imgs=10)
+            material_imgs = img_paths
+            log(f"-> 精选 {len(img_paths)} 张原料图注入对话...", self.id)
+        self._current_material_imgs = material_imgs
 
         # 开始制作日志记录（群通知仅在配额周期首次点火/解冻时报备 1 次，连续生产时不重复刷屏）
-        log(f"准备注入原图并开始生产: {mat_name}", self.id)
+        log(f"准备注入原料并开始生产: {mat_name}", self.id)
 
         # 【2026-09-25 修·「附件仅挂载 2/N 张」真根因（CDP 实测取证）】
         # 新版前端把 1 个 file input 拆成 5 个：
@@ -3178,37 +3453,30 @@ class InstanceWorker:
             except Exception:
                 plan_excerpt = ""
 
-        v6_header = (
-            "【小红书团建拼图大字营销封面轻复刻去重修图师 V6.0·全量直接出图版】\n"
-            "（四宫格站位强制置换打乱｜反AI塑料凡士林磨皮｜纯正国产手机实拍质感｜名企大厂背书置换与文字深度去重版）\n\n"
-            f"已上传全部 {len(img_paths)} 张原图。\n"
-            "本套已先完成本地素材读取与 production_plan.md 计划审核；以下计划是本轮唯一执行依据：\n"
-            f"{plan_excerpt}\n\n"
-            "请严格按照 V6.0 规则执行直接出图，绝对禁止自由创作或脑补新景区！\n\n"
-            f"【原素材参考正文与真实排期】：\n{context_block}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "【V6.0 核心增量铁律：画面站位绝对打乱 & 文字深度去重名企置换】：\n"
-            "1. 【四宫格/多图拼接·站位绝对置换打乱律】：\n"
-            "   - 凡涉及 4 宫格拼图或多图画中画（原站位若为：左上A、右上B、左下C、右下D），生成时【必须强制打乱重排】（如置换为：左上B、右上D、左下A、右下C，或任意非原位站位）！\n"
-            "   - 绝对不允许任何一个小格子的画面留在原位置！严禁原地仅换脸换衣！\n"
-            "   - 各个打乱格子的新画面，采用同主题不同镜头角度的真实实拍（例如烤肉特写置换为炭火全景、农庄大门置换为庭院侧拍）。\n"
-            "2. 【排版与文字层深度去重（名企大厂置换 + 爆款同义微调）】：\n"
-            "   - 【原图怎么排就怎么改，绝不盲目套大字】：原图封面是多图大字则继承大字排版；若原图是纯净实拍、通透风景或清新小标签，则严格继承其轻量排版，严禁千篇一律强行压大字！\n"
-            "   - 【企业与客户背书动态置换（去重+增信铁律）】：若原图封面或内页中提及任何具体公司名（如某具体中小企业、真实客户名），【必须强制动态置换为大厂/名企背书代称】（如：“某头部互联网大厂”、“某500强外企”、“某知名独角兽”、“某金融名企”等），既彻底规避平台OCR搬运抄袭审核，又大幅提升笔记B端大客户信任感！\n"
-            "   - 【主标题与副标核心去重】：地标与核心攻略事实绝对锁死（如莫干山、安吉、2天1夜不变），但修饰词与爆款动词执行同义去重（例如：“保姆级攻略”微调为“超全避坑指南”、“玩转指南”；“被夸爆”微调为“领导狂赞”、“HR狂喜”），实现平台级降维去重！\n"
-            "   - P2~PN 内页：严格按原图版式复刻，涉及具体客户名称按上述名企规则同步脱敏置换！\n"
-            "3. 严格按本地 production_plan.md 页序执行，输出 3:4 竖版大图（1086x1448）；不在网页端重复输出计划、不等回复 1，计划审核通过后立即开始直接出图！\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "【以下为必须 100% 严格执行的完整轻复刻修图与真实现场摄影增强法则体系】：\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        )
-        if base_rule:
-            v60_prompt = v6_header + base_rule
+        # 3. 按当前生产模式构建结构化高精准生图超级指令
+        mode = getattr(self, "_current_mode", PRODUCTION_MODE)
+        selected_template = getattr(self, "_current_template", None)
+        material_imgs = getattr(self, "_current_material_imgs", img_paths)
+
+        if mode in ("2_random_template", "3_fixed_template") and selected_template:
+            final_prompt = build_mode2_template_migration_prompt(
+                template=selected_template,
+                material_img_count=len(material_imgs),
+                plan_excerpt=plan_excerpt,
+                context_block=context_block
+            )
+            mode_desc = "随机模板复刻模式" if mode == "2_random_template" else "固定模板批跑模式"
+            prompt_label = f"[{mode_desc}] 母版迁移出图指令 [{selected_template['id']}] (篇幅: {len(final_prompt)} 字)"
         else:
-            v60_prompt = v6_header
+            final_prompt = build_mode1_replica_shuffle_prompt(
+                material_img_count=len(img_paths),
+                plan_excerpt=plan_excerpt,
+                context_block=context_block
+            )
+            prompt_label = f"[模式1·原图复刻打乱] 原图重构生图指令 (篇幅: {len(final_prompt)} 字)"
 
         # 3. 注入生图提示词并点击发送
-        # 【2026-10-08 修复·严防原图照搬回抓】在发指令前记录页面上已有图片的 URL 指纹（即刚上传的素材缩略图）
+        # 【2026-10-08 修复·严防原图照搬回抓】在发指令前记录页面上已有图片的 URL 指纹（即刚上传的素材/模板缩略图）
         try:
             res_pre = await self.send_cmd("Runtime.evaluate", {
                 "expression": """(() => {
@@ -3228,14 +3496,13 @@ class InstanceWorker:
             self._pre_existing_img_srcs = set()
 
         # 【空发送铁律】这一次必须有素材挂在执行框上才许点发送（require_attachment=True）
-        sent_init = await self.send_text_prompt(v60_prompt, f"V6.0 超级真源生图指令 (完整篇幅: {len(v60_prompt)} 字)",
-                                                require_attachment=True)
+        sent_init = await self.send_text_prompt(final_prompt, prompt_label, require_attachment=True)
         if not sent_init:
             raise RuntimeError("初始生图指令未获网页提交确认，拒绝进入出图轮询")
         log("指令已发送，正在监控出图进程并开启连环追问驱动...", self.id)
 
         # 4. 动态监控生图进程与多图连环追问驱动
-        expected_count = len(img_paths)
+        expected_count = len(material_imgs) if mode in ("2_random_template", "3_fixed_template") else len(img_paths)
         stuck_99_count = 0
         last_prompted_for = 0
         idle_after_prompt_ticks = 0
@@ -3511,10 +3778,14 @@ class InstanceWorker:
                     if img_count > last_prompted_for:
                         next_page = img_count + 1
                         log(f"⚠️ 模型提早停下（当前仅 {img_count}/{min_album_limit} 张），追发第 {next_page} 张补齐指令...", self.id)
+                        if mode in ("2_random_template", "3_fixed_template") and selected_template:
+                            rule_label = f"已锁定的母版 [{selected_template['id']}] 规则（图 1 封面母版，图 2 内页母版）"
+                        else:
+                            rule_label = "V6.1 原图轻复刻打乱规则（原图排版骨架、四宫格站位绝对打乱置换、全量换人换物）"
                         cont_prompt = (
                             f"很好！前 {img_count} 张大图已生成完毕。\n"
-                            f"请严格按照 V5.0 规则（3:4 竖版、1086x1448、国产普通手机自然实拍去AI塑料感、原图排版骨架、四宫格站位绝对打乱置换），"
-                            f"立即直接生成下一张大图：第 {next_page} 张大图（严格对应原素材图 P{next_page} 内页）！\n"
+                            f"请严格按照 {rule_label}，3:4 竖版大图（1086x1448）、国产主流手机自然实拍质感去AI塑料凡士林假面，"
+                            f"立即直接生成下一张大图：第 {next_page} 张大图（严格对应第 {next_page} 页内容）！\n"
                             f"绝对禁止输出任何文字解释与客套话，直接出图！"
                         )
                         sent = await self.send_text_prompt(cont_prompt, f"第 {next_page} 张补齐出图指令")
@@ -3574,13 +3845,13 @@ class InstanceWorker:
         except Exception:
             pass
 
-        # 5. 发送牟磊核心文案指令（3个小红书版本：无营销版+大纲方案版+牟磊爆款版，加1个抖音攻略避坑版）
-        log("-> 发送牟磊核心文案指令（无营销自然版 + 大纲方案版 + 牟磊爆款版 + 抖音攻略版）...", self.id)
+        # 5. 发送江湖有旅人·同事6大风格核心文案指令（3个小红书版本：无营销版+大纲方案版+同事爆款风格版，加1个抖音攻略避坑版）
+        log("-> 发送同事6大风格核心文案指令（无营销自然版 + 大纲方案版 + 同事爆款风格版 + 抖音攻略版）...", self.id)
         copy_prompt = (
-            f"请根据上面刚刚生成的全套大图与原素材真实行程，立即生成【牟磊核心文案引擎（无营销/大纲方案/牟磊爆款/抖音避坑）】标准成稿。\n"
+            f"请根据上面刚刚生成的全套大图与原素材真实行程，立即生成【江湖有旅人·同事6大风格核心文案引擎（无营销/大纲方案/同事爆款/抖音避坑）】标准成稿。\n"
             f"【原素材参考正文】：\n{context_block}\n\n"
-            "【最高执行铁律（牟磊文案风格真源与风控边界）】：\n"
-            "1. 拒绝 AI 方案腔与虚假套话：严禁出现“方案名称/价值赋能/打造凝聚力/无敌盛宴/天花板”等自嗨与公文词；全换成人话（“这套怎么玩/大家愿不愿意动/体能差异有多大/别把体力提前耗光/快慢要能商量”）。\n"
+            "【最高执行铁律（同事6大风格原料库真源与风控边界）】：\n"
+            "1. 拒绝 AI 方案腔与虚假套话：严禁出现“方案名称/价值赋能/打造凝聚力/无敌盛宴”等公文词；全换成人话（“这套怎么玩/大家愿不愿意动/体能差异有多大/猛人去越野i人去喝茶都不尴尬”）。\n"
             "2. 视觉指纹命名：每个版本必须用 <<<VERSION_START:版本名>>> ... <<<VERSION_END>>> 包裹。\n"
             "3. 单标题与字数安全线：每个版本首行必须且仅有 1 个纯文本标题（≤20字，严禁加#号或书名号）；正文+标签目标 600—850 字符。\n"
             "4. 手机防吞空行铁律：每个段落之间必须用【独立成行】的盲文空白字符“⠀”（Unicode U+2800，真实物理换行 \\n⠀\\n），绝不输出裸露空行！\n"
@@ -3590,28 +3861,28 @@ class InstanceWorker:
             "<<<VERSION_START:红书自然>>>\n"
             "【无营销版本】生活化出游/团队慢游标题（≤20字）\n"
             "⠀\n"
-            "正文（纯真人体感视角，完全不卖方案、无推销感，分享打工人去班味、真实团队周末出游体验与松弛节奏，段落间独立一行 ⠀）\n"
+            "正文（纯真人回访体感视角，完全不卖方案、无推销感，分享打工人去班味、真实团队出游体验与松弛节奏，段落间独立一行 ⠀）\n"
             "⠀\n"
             "#8至10个热门团建标签\n"
             "<<<VERSION_END>>>\n\n"
             "<<<VERSION_START:红书大纲>>>\n"
             "【大纲方案版本】目的地季节团建决策大纲标题（≤20字）\n"
             "⠀\n"
-            "正文（HR保姆级完整决策大纲：开头结论与节奏定调 → 📍基础信息 → 🌿DAY/玩法拆解与取舍理由 → 💡HR怎么选加减法决策矩阵 → ⚠️落地提醒，段落间独立一行 ⠀）\n"
+            "正文（HR保姆级完整决策大纲：开头结论与节奏定调 → 📍基础信息 → 🌿DAY/玩法拆解与取舍理由 → 💡HR怎么选分人群加减法矩阵 → ⚠️落地提醒，段落间独立一行 ⠀）\n"
             "⠀\n"
             "#8至10个精准团建标签\n"
             "<<<VERSION_END>>>\n\n"
             "<<<VERSION_START:红书种草>>>\n"
-            "【牟磊爆款版本】直击职场痛点标题（≤20字）\n"
+            "【同事爆款风格版】直击职场痛点或季节爆点标题（≤20字）\n"
             "⠀\n"
-            "正文（同事牟磊招牌爆款手感：痛点逆反Hook开头如“团建最尴尬的不是没项目是大家根本不熟” → 细腻玩法原子动作与互动画面 → 情绪共鸣与落地建议，段落间独立一行 ⠀）\n"
+            "正文（自动匹配同事6大细分风格母体之一：痛点共情Hook开场 → 🌈【基础信息】 → 💎【团建玩法亮点】含五感画面词 → 📅【行程参考】采用标志性 0900｜ 四位数字时间轴与具象菜名 → ✅【更多玩法】三列竖线矩阵 ｜，段落间独立一行 ⠀）\n"
             "⠀\n"
             "#8至10个热门话题标签\n"
             "<<<VERSION_END>>>\n\n"
             "<<<VERSION_START:抖音攻略>>>\n"
             "【抖音避坑版本】周末出行/老驴友玩法避坑标题（≤20字）\n"
             "⠀\n"
-            "正文（周末老玩家真实出游避坑视角，开头讲判断或坑点 → 怎么玩/哪个刺激哪个轻松/怎么取舍 → 天气鞋服确认，彻底消杀涉旅敏感词，段落间独立一行 ⠀）\n"
+            "正文（周末老玩家真实出游/红黑榜避坑视角，开头讲判断或坑点 → 怎么玩/哪个刺激哪个轻松/怎么取舍 → 天气鞋服确认，彻底消杀涉旅敏感词，段落间独立一行 ⠀）\n"
             "⠀\n"
             "#5个泛生活避坑标签\n"
             "<<<VERSION_END>>>\n"
@@ -3988,18 +4259,14 @@ class InstanceWorker:
             img_urls = pre_copy_img_urls
         log(f"已捕获 {len(img_urls)} 张大图 URL，开始无损拉取...", self.id)
 
-        # 7. 创建规范成品目录：第一时间落盘至 待制作待补全 创作区
+        # 7. 创建规范临时目录：在图文未完整通过质检前，存放在带下划线的对应产线文件夹中（不被手机端相册识别）
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        clean_title = re.sub(r"^评\d+-赞\d+-", "", mat_name)
-        clean_title = re.sub(r"[\s\-_]*\d{8}$", "", clean_title)
+        clean_title = sanitize_title(mat_name, fallback_title="精选团建方案")
         clean_title = re.sub(r'[\\/:*?"<>|]', '_', clean_title).strip()[:50]
-        # 铁门1防御：若 clean_title 被 AI 对话/报错污染，强力清洗回退
-        if is_title_polluted(clean_title):
-            clean_title = sanitize_title(clean_title, fallback_title="精选团建方案")
         pipe_info = get_pipeline_info(self.id)
         pkg_folder = f"{ts}-{pipe_info['pipeline']}-{clean_title}"
-        # 用户确认的客户端模式第一落点：待制作待补全；未闭环作品留在此处可断点续接。
-        producing_base = os.path.join(OUTPUT_BASE, "待制作待补全")
+        staging_folder_name = "_API产线正在制作" if ("API" in pipe_info["pipeline"] or "Codex" in pipe_info["pipeline"]) else "_网页CDP产线正在制作"
+        producing_base = os.path.join(OUTPUT_BASE, staging_folder_name)
         os.makedirs(producing_base, exist_ok=True)
         target_pkg_dir = os.path.join(producing_base, pkg_folder)
         os.makedirs(target_pkg_dir, exist_ok=True)
@@ -4166,6 +4433,15 @@ class InstanceWorker:
         if _g_rep.get("long_lines"):
             log(f"🚨 【出口守卫告警】仍有 {_g_rep['long_lines']} 行 ≥{MAX_COPY_LINE_LEN} 字未呼吸分段"
                 f"（真源 split_long_paragraph 未生效？）", self.id)
+
+        # 9.45 文案业务合规门禁检验（人数门槛下限10人与竞品违禁词）
+        try:
+            import qa_business_gate
+            c_biz_res = qa_business_gate.check_text_business_compliance(full_copy)
+            if not c_biz_res.get("passed", True):
+                log(f"⚠️【文案业务合规告警】检测到文案异常: {c_biz_res.get('violations')}", self.id)
+        except Exception:
+            pass
         # 三平台单版本文本同样过闸（它们会各自单独落盘，供手机端按平台取用）
         _g_single = {}
         for _k, _v in (("xhs_copy", xhs_copy), ("hr_copy", hr_copy), ("douyin_copy", douyin_copy)):
@@ -4200,25 +4476,63 @@ class InstanceWorker:
             with open(os.path.join(evidence_dir, "全量生成记录.txt"), "w", encoding="utf-8") as f:
                 f.write(copy_text)
 
-        # 10. Pillow 质检验收
-        log("执行 Pillow 像素级三层质检...", self.id)
-        valid_cnt = 0
+        # 10. 像素级与业务合规性（OCR 违禁词 + 人数门禁）双层质检验收（非阻断式柔性门禁：确保大图 100% 完整下载落盘）
+        log("执行像素级与业务合规性（OCR 违禁词 + 人数门禁）质检打标...", self.id)
+        pixel_valid_cnt = 0
+        biz_failed_items = []
         for img_p in saved_images:
+            fname = os.path.basename(img_p)
+            pixel_ok = False
             try:
                 with Image.open(img_p) as im:
                     w, h = im.size
                     ratio = h / w
                     if ratio >= 1.25 and im.verify is not None:
-                        valid_cnt += 1
+                        pixel_ok = True
+                    else:
+                        log(f"  [X] 宽高比未达标: {img_p} ({w}x{h})", self.id)
             except Exception as pe:
                 log(f"  [X] 图片校验未通过: {img_p} ({pe})", self.id)
+                continue
 
-        log(f"-> 质检通过率: {valid_cnt}/{len(saved_images)} (要求 >= 3:4 竖屏高清)", self.id)
+            if pixel_ok:
+                pixel_valid_cnt += 1
 
-        # 严格多图画册硬门禁：若原料 >= 2 张，成品必须 >= min(4, len(img_paths)) 张，坚决杜绝单封面半成品！
+            # 针对封面 P1 与重要页面进行 OCR 业务合规性与人数门禁质检（打标模式，绝不阻断下载）
+            if "P1" in fname or fname.startswith("P1_"):
+                try:
+                    import qa_business_gate
+                    biz_res = qa_business_gate.check_image_business_compliance(img_p)
+                    if not biz_res.get("passed", True):
+                        v_reasons = "; ".join(biz_res.get("violations", []))
+                        biz_failed_items.append({"page": fname, "path": img_p, "reason": v_reasons, "ocr_text": biz_res.get("ocr_text", "")})
+                        log(f"  ⚠️【业务标签提示】{fname} 检出待复检项: {v_reasons}（已放行下载并打标）", self.id)
+                except Exception as e_biz:
+                    log(f"  ⚠️ 业务门禁扫描容错: {e_biz}", self.id)
+
+        valid_cnt = pixel_valid_cnt
+        log(f"-> 质检通过率: {valid_cnt}/{len(saved_images)} (大图已完整无损落盘入库)", self.id)
+
+        # 若检出业务待复检单图：落盘诊断清单供后续一键精修，绝不删除图片或阻断下载
+        if biz_failed_items:
+            failed_review_dir = os.path.join(target_pkg_dir, "_failed_review")
+            os.makedirs(failed_review_dir, exist_ok=True)
+            diagnostic_file = os.path.join(failed_review_dir, "失败检查清单与重做凭据.json")
+            with open(diagnostic_file, "w", encoding="utf-8") as df:
+                json.dump({
+                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "material": mat_name,
+                    "target_pkg_dir": target_pkg_dir,
+                    "valid_count": valid_cnt,
+                    "review_needed": biz_failed_items,
+                    "action_suggestion": "可用 redo_failed_page.py 一键无痕覆盖为10人起接贴纸"
+                }, df, ensure_ascii=False, indent=2)
+            log(f"📝 已记录 {len(biz_failed_items)} 处业务待复检项至: {diagnostic_file}（已放行下载入库）", self.id)
+
+        # 仅在物理大图严重缺失时阻断重试
         min_required = min(4, len(img_paths)) if len(img_paths) >= 2 else 1
         if valid_cnt < min_required:
-            log(f"🚨【残缺画册阻断】当前套有效出图仅 {valid_cnt} 张（要求至少 {min_required} 张多图画册），坚决不以单封面半成品交差！立即废弃重做！", self.id)
+            log(f"🚨【物理大图残缺】当前套有效出图仅 {valid_cnt} 张（要求至少 {min_required} 张多图画册），废弃残缺产出并重做！", self.id)
             if os.path.exists(target_pkg_dir):
                 import shutil
                 shutil.rmtree(target_pkg_dir, ignore_errors=True)
@@ -4233,7 +4547,7 @@ class InstanceWorker:
         # 12. 登记生图配额账本（3小时滑动窗口40张 + 全天180张）
         record_generation_success(self.id, valid_cnt, len(img_paths), mat_name)
 
-        # 12. 固化 manifest.json 与 作品标签.json（写入用户要求的齐全作品硬标签）
+        # 12. 固化 manifest.json 与 作品标签.json（写入用户要求的齐全作品硬标签 + 季节标签 + 流量类型标签）
         verified_at_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         copy_ver_cnt = full_copy.count("<<<VERSION_START:")
         completion_meta = {
@@ -4243,19 +4557,49 @@ class InstanceWorker:
             "copyVersionCount": copy_ver_cnt,
             "verifiedAt": verified_at_str,
         }
-        work_tags_list = ["✅图文齐全", "待发送", "小红书可发", "抖音可发", shelf_name]
+        _title_and_base = f"{clean_title} {shelf_name} {os.path.basename(mat_dir or '')}"
+        if any(k in _title_and_base for k in ("中秋", "国庆", "赏秋", "秋游", "秋季", "秋日", "秋天", "红枫", "银杏", "桂花", "蟹", "晒秋", "柿子", "板栗", "秋色", "采个秋", "寻秋", "9-11月", "10-11月")):
+            work_season = "秋季"
+        elif any(k in _title_and_base for k in ("冬季", "冬日", "冬天", "滑雪", "温泉", "私汤", "泡汤", "年会", "跨年", "尾牙", "雪景", "雾凇", "围炉")):
+            work_season = "冬季"
+        elif any(k in _title_and_base for k in ("夏日", "夏季", "夏天", "避暑", "玩水", "漂流", "溯溪", "水枪", "泳池", "冲浪", "桨板", "皮划艇")):
+            work_season = "夏季"
+        elif any(k in _title_and_base for k in ("春季", "春日", "春天", "踏青", "赏花", "樱花", "采茶", "春游", "油菜花", "挖笋")):
+            work_season = "春季"
+        elif "秋季" in (mat_dir or ""):
+            work_season = "秋季"
+        elif "夏季" in (mat_dir or ""):
+            work_season = "夏季"
+        elif "冬季" in (mat_dir or ""):
+            work_season = "冬季"
+        elif "春季" in (mat_dir or ""):
+            work_season = "春季"
+        else:
+            work_season = "四季通用"
+
+        if shelf_name == "团建游戏成品" or "泛流量" in (mat_dir or "") or any(k in _title_and_base for k in ("团建游戏", "破冰游戏", "互动游戏", "小游戏", "年会游戏", "聚会游戏", "桌游", "惩罚", "冷场")):
+            work_flow_type = "泛流量游戏攻略"
+        else:
+            work_flow_type = "精准流量团建"
+
+        work_tags_list = ["✅图文齐全", "待发送", "小红书可发", "抖音可发", shelf_name, work_season, work_flow_type]
         manifest_data = {
             "deliveryLayout": "flat-images-manifest-copy-v1",
             "copyPath": os.path.join(target_pkg_dir, "文案.txt"),
             "evidencePath": evidence_dir,
-            "title": mat_name,
+            "title": clean_title,
             "created_at": verified_at_str,
             "pipeline": pipe_info["pipeline"],
             "worker": pipe_info["worker"],
             "account": pipe_info["account"],
+            "productionMode": getattr(self, "_current_mode", PRODUCTION_MODE),
+            "productionModeName": "随机模板复刻模式" if getattr(self, "_current_mode", PRODUCTION_MODE) == "2_random_template" else ("固定模板模式" if getattr(self, "_current_mode", PRODUCTION_MODE) == "3_fixed_template" else "原图复刻打乱模式"),
+            "template": getattr(self, "_current_template", None),
             "isComplete": True,
             "lifecycleStatus": "COMPLETED",
             "shelf": shelf_name,
+            "season": work_season,
+            "flowType": work_flow_type,
             "completionMeta": completion_meta,
             "tags": work_tags_list,
             "rawMaterialPath": mat_dir,
@@ -4269,11 +4613,13 @@ class InstanceWorker:
             json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 
         work_labels_data = {
-            "title": mat_name,
+            "title": clean_title,
             "packageFolder": pkg_folder,
             "isComplete": True,
             "lifecycleStatus": "COMPLETED",
             "shelf": shelf_name,
+            "season": work_season,
+            "flowType": work_flow_type,
             "completionMeta": completion_meta,
             "tags": work_tags_list,
             "rawMaterialPath": mat_dir,
@@ -4366,7 +4712,7 @@ class InstanceWorker:
                     f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"⚙️ **生产实例**：{self.id}\n"
                     f"⏱ **时刻**：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    f"📦 **作品**：{mat_name}\n"
+                    f"📦 **作品**：{clean_title}\n"
                     f"📁 **成品目录**：{target_pkg_dir}\n"
                     f"❗ **原因**：飞书表格写入失败（**作品本身已完成，未丢弃**）\n"
                     f"📝 **补登队列**：{_pend_path}\n"
@@ -4397,7 +4743,7 @@ class InstanceWorker:
             fin_preview = "\n".join(fin_lines[:10]) if fin_lines else f"• {valid_cnt} 张高清大图全部就绪"
 
             # 提炼文案亮点
-            xhs_title = mat_name
+            xhs_title = clean_title
             xhs_body_snippet = ""
             copy_path = os.path.join(target_pkg_dir, "文案.txt")
             if os.path.exists(copy_path):
@@ -4419,7 +4765,7 @@ class InstanceWorker:
                                 if not is_title_polluted(cand):
                                     cand_title = cand
                                     break
-                            xhs_title = cand_title if cand_title else mat_name
+                            xhs_title = sanitize_title(cand_title, fallback_title=clean_title) if cand_title else clean_title
                             xhs_body_snippet = lines[1][:150] if len(lines) > 1 else ""
                 except:
                     pass
@@ -4446,7 +4792,7 @@ class InstanceWorker:
 
             feishu_md = (
                 f"🎉 **【秋季素材交付 · 客户端模式（直接对话框）】**\n\n"
-                f"• **作品标题**：{mat_name[:50]}\n"
+                f"• **作品标题**：{clean_title[:50]}\n"
                 f"• **生产模式**：客户端模式（直接对话框）（实例 {self.id} · {account_alias}）\n"
                 f"• **图文交付**：{valid_cnt} 张 3:4 竖屏高清大图 + 3 端文案（小红书/HR决策/抖音）\n"
                 f"• **质检验收**：100% 通过 Pillow 像素级与长宽比校验，无损入库\n"
@@ -4592,7 +4938,7 @@ def ensure_autumn_c_production_plan(item):
     if is_exp:
         raise RuntimeError(f"节日时效性拦截：该素材属于已过期节日 [{kw}]，坚决停止制作！")
     safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', mat_name).strip()[:110]
-    plan_root = os.path.join(OUTPUT_BASE, "待制作待补全")
+    plan_root = os.path.join(OUTPUT_BASE, "_网页CDP产线正在制作")
     plan_dir = os.path.join(
         plan_root,
         f"{datetime.datetime.now().strftime('%Y%m%d')}_网页CDP-AUTUMN-C-{safe_name}"
@@ -4617,23 +4963,29 @@ def ensure_autumn_c_production_plan(item):
                 copy_preview = cf.read()[:1200].strip()
         except Exception:
             copy_preview = "（原文案读取失败，生产时按素材画面与标签补齐）"
+    mode = PRODUCTION_MODE
+    mode_name = "模式 2：随机模板复刻模式 (系统默认·正宗模板迁移器)" if mode == "2_random_template" else ("模式 3：固定模板批跑模式" if mode == "3_fixed_template" else "模式 1：原图复刻打乱生产模式")
+
     page_lines = []
     for idx, filename in enumerate(image_files[:planned], start=1):
-        role = "封面" if idx == 1 else f"内页 {idx - 1}"
-        page_lines.append(f"  - P{idx}.png（{role}，参考原图 `{filename}`）")
+        if mode in ("2_random_template", "3_fixed_template"):
+            role = "封面（套用模板 P1）" if idx == 1 else f"内页 {idx - 1}（套用模板 P2，文案行程顺承）"
+        else:
+            role = "封面（原图排版骨架，四宫格打乱）" if idx == 1 else f"内页 {idx - 1}（原图排版骨架，文案行程顺承）"
+        page_lines.append(f"  - P{idx}.png（{role}，参考原料 `{filename}`）")
     plan_text = (
         f"# AUTUMN-C 生产计划｜{mat_name}\n\n"
         f"- 任务 index：{item.get('index', '')}\n"
         f"- 原料路径：`{mat_path}`\n"
-        f"- 生产模式：客户端模式（直接对话框），由 Cockpit 在可用的 A/C 客户端实例中自动路由，不固定账号，不调用图片 API。\n"
-        f"- 原料图数：{len(image_files)}；计划输出：{planned} 页（客户端模式单套最多 10 页）。\n"
+        f"- 生产模式：{mode_name}\n"
+        f"- 原料图数：{len(image_files)}；计划输出：{planned} 页（画册规格单套最多 10 页）。\n"
         f"- 生成规格：每页 1086×1448，P1 为封面，文件名 P1.png…P{planned}.png。\n\n"
         "## 页面计划\n" + ("\n".join(page_lines) if page_lines else "（未发现可用原料图，禁止进入生图）") + "\n\n"
         "## 统一视觉与合规门禁\n"
-        "- 保持原版式结构、文字层气质、色块和标签位置；照片分区执行无固定点置换。\n"
+        "- 保持版式视觉结构（模板大字/中置信息条）；四宫格或多图拼图强制打乱对调换位，严禁原地照抄。\n"
         "- 彻底换人、换脸、发型、服装、动作、视线、机位与道具，保持自然手机纪实抓拍，拒绝统一看镜头与 HDR 网红脸。\n"
         "- 相邻照片边界必须自然贴合，严禁白线、白缝、白边、透明条、漏缝、发光接缝、空隙或背景露白；发现必须重做该页。\n"
-        "- 团队规模统一写“10人起”；删除“私信、加微信、扫码、联系我们”等强导流词。\n"
+        "- 团队规模统一写“10人起接/10人起订”；删除“私信、加微信、扫码、联系我们”等强导流词；企业客户名动态置换为大厂名企背书。\n"
         "- 文案必须包含 `<<<COPY_FORMAT:MULTI>>>`，涵盖红书自然、抖音攻略、红书种草、红书大纲等全套标准成稿。\n\n"
         "## 原素材文案摘要\n" + (copy_preview or "（无文案摘要，按图片与任务标签读取）") + "\n"
     )
