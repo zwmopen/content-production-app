@@ -44,7 +44,7 @@ function directoryIndex(libraryRoot, options = {}) {
   while (queue.length && inspected < maximumDirectories) {
     const current = queue.shift();
     inspected += 1;
-    if (fs.existsSync(path.join(current.directory, "GPT作品记录.json"))) {
+    if (fs.existsSync(path.join(current.directory, "manifest.json")) || fs.existsSync(path.join(current.directory, "GPT作品记录.json"))) {
       const folder = path.basename(current.directory);
       if (!byFolder.has(folder)) byFolder.set(folder, current.directory);
     }

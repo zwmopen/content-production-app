@@ -37,8 +37,8 @@ function inspectWorkDirectory(directory) {
   const images = entries.filter((entry) => entry.isFile() && IMAGE_EXTENSIONS.has(path.extname(entry.name).toLowerCase()));
   const texts = entries.filter((entry) => entry.isFile() && TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase()));
   if (!images.length || !texts.length) return null;
-  const manifest = readJson(path.join(directory, "GPT作品记录.json"), {});
-  const tagManifest = readJson(path.join(directory, "作品标签.json"), {});
+  const manifest = readJson(path.join(directory, "manifest.json"), readJson(path.join(directory, "GPT作品记录.json"), {}));
+  const tagManifest = readJson(path.join(directory, "manifest.json"), readJson(path.join(directory, "作品标签.json"), {}));
   let textPreview = "";
   try { textPreview = fs.readFileSync(path.join(directory, texts[0].name), "utf8").slice(0, 4000); } catch { /* optional */ }
   let createdAt = "";
@@ -159,7 +159,9 @@ function recordSuccessfulWorkDistribution(file, detail = {}) {
   try {
     const workDir = work.path || (detail.collectionPath ? path.join(detail.collectionPath, work.name || "") : null);
     if (workDir && fs.existsSync(workDir)) {
-      const tagFile = path.join(workDir, "作品标签.json");
+      const tagFile = fs.existsSync(path.join(workDir, "manifest.json"))
+        ? path.join(workDir, "manifest.json")
+        : path.join(workDir, "作品标签.json");
       if (fs.existsSync(tagFile)) {
         const tagData = JSON.parse(fs.readFileSync(tagFile, "utf8"));
         if (!tagData.distribution) tagData.distribution = {};

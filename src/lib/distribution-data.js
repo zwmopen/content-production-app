@@ -345,7 +345,9 @@ function recordDeviceDistribution(options = {}) {
     const candidateDirs = [options.sourcePath].filter(Boolean);
     for (const cand of candidateDirs) {
       if (!fs.existsSync(cand)) continue;
-      const tagFile = path.join(cand, "作品标签.json");
+      const tagFile = fs.existsSync(path.join(cand, "manifest.json"))
+        ? path.join(cand, "manifest.json")
+        : path.join(cand, "作品标签.json");
       if (fs.existsSync(tagFile)) {
         const tagData = JSON.parse(fs.readFileSync(tagFile, "utf8"));
         if (!tagData.distribution) tagData.distribution = {};
@@ -809,17 +811,22 @@ function getDistributionSnapshot(options = {}) {
     const previouslySentToDevice = deviceHistory.length > 0;
     const officialLogState = officialStateFromRow(latestOfficial.get(name));
     
-    // 适配方案 A：若未带 [泛]/[转] 命名后缀，但作品源目录下存在 作品标签.json，读取真实业务分类与标签
+    // 适配方案 A：优先读取 manifest.json，兼容作品标签.json / GPT作品记录.json
     let tagMeta = null;
     if (source?.sourcePath) {
       try {
-        const tagJsonPath = path.join(source.sourcePath, "作品标签.json");
-        if (fs.existsSync(tagJsonPath)) {
-          tagMeta = JSON.parse(fs.readFileSync(tagJsonPath, "utf8"));
+        const manifestPath = path.join(source.sourcePath, "manifest.json");
+        if (fs.existsSync(manifestPath)) {
+          tagMeta = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
         } else {
-          const gptRecPath = path.join(source.sourcePath, "GPT作品记录.json");
-          if (fs.existsSync(gptRecPath)) {
-            tagMeta = JSON.parse(fs.readFileSync(gptRecPath, "utf8"));
+          const tagJsonPath = path.join(source.sourcePath, "作品标签.json");
+          if (fs.existsSync(tagJsonPath)) {
+            tagMeta = JSON.parse(fs.readFileSync(tagJsonPath, "utf8"));
+          } else {
+            const gptRecPath = path.join(source.sourcePath, "GPT作品记录.json");
+            if (fs.existsSync(gptRecPath)) {
+              tagMeta = JSON.parse(fs.readFileSync(gptRecPath, "utf8"));
+            }
           }
         }
       } catch {}

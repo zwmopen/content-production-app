@@ -307,7 +307,9 @@ function recordPlatformUsage(file, input = {}) {
   let manifestUpdated = false;
   const workPath = String(work.path || "").trim();
   if (workPath) {
-    const manifestFile = path.join(workPath, "GPT作品记录.json");
+    const manifestFile = fs.existsSync(path.join(workPath, "manifest.json"))
+      ? path.join(workPath, "manifest.json")
+      : path.join(workPath, "GPT作品记录.json");
     const manifest = readJson(manifestFile, null);
     if (manifest && typeof manifest === "object" && !Array.isArray(manifest)) {
       const tags = Array.isArray(manifest.tags) ? manifest.tags.map(String) : [];

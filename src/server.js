@@ -1780,7 +1780,9 @@ function archiveMaterialAfterProductionUnlocked(body = {}, options = {}) {
     usageCount
   }, { materialRoot, ledgerFile: metadataFile, cacheFile: hashFile, indexFile });
   if (packagePath && libraryRoot && isPathInside(libraryRoot, packagePath) && exists(packagePath)) {
-    const packageRecordFile = path.join(packagePath, "GPT作品记录.json");
+    const packageRecordFile = exists(path.join(packagePath, "manifest.json"))
+      ? path.join(packagePath, "manifest.json")
+      : path.join(packagePath, "GPT作品记录.json");
     if (exists(packageRecordFile) && fs.statSync(packageRecordFile).isFile()) {
       try {
         const packageRecord = readJson(packageRecordFile, {});
@@ -1976,7 +1978,9 @@ function findCompletedWorkPackageByBatchId(productRoot, batchId, options = {}) {
   while (queue.length && inspected < maximumDirectories) {
     const current = queue.shift();
     inspected += 1;
-    const recordPath = path.join(current.directory, "GPT作品记录.json");
+    const recordPath = exists(path.join(current.directory, "manifest.json"))
+      ? path.join(current.directory, "manifest.json")
+      : path.join(current.directory, "GPT作品记录.json");
     if (exists(recordPath)) {
       const record = readJson(recordPath, {});
       if (String(record.batchId || "").trim() === expectedBatchId
@@ -2062,7 +2066,12 @@ function inspectGptWorkPackage(packagePath, expectedImageCount = 0) {
   const imageCount = entries.filter((entry) => entry.isFile() && imageExts.has(path.extname(entry.name).toLowerCase())).length;
   const textCount = entries.filter((entry) => entry.isFile() && textExts.has(path.extname(entry.name).toLowerCase())).length;
   const plannedExpected = Math.max(0, Number(expectedImageCount || 0));
-  const packageRecord = readJson(path.join(target, "GPT作品记录.json"), null);
+  const packageRecord = readJson(
+    exists(path.join(target, "manifest.json"))
+      ? path.join(target, "manifest.json")
+      : path.join(target, "GPT作品记录.json"),
+    null
+  );
   const recordedExpected = Math.max(0, Number(packageRecord?.expectedImageCount || 0));
   const recordedActual = Math.max(0, Number(packageRecord?.actualImages || 0));
   // ChatGPT can explicitly split a plan larger than ten pages into a first
@@ -9840,6 +9849,14 @@ async function route(req, res) {
   if (!file) return send(res, 404, "not found", "text/plain; charset=utf-8");
   res.writeHead(200, { "Content-Type": contentType(file), "Cache-Control": "no-store" });
   fs.createReadStream(file).pipe(res);
+}
+
+// 画面桥接与 A-D 调试端口分离，不创建生产队列。
+if (require.main === module) {
+  const { createPreviewServer, PREVIEW_PORT } = require("./lib/cdp-live-preview");
+  const preview = createPreviewServer();
+  preview.on("error", error => { if (error.code !== "EADDRINUSE") console.warn("CDP preview:", error.message); });
+  preview.listen(PREVIEW_PORT, "127.0.0.1");
 }
 
 const httpServer = http.createServer((req, res) => {
