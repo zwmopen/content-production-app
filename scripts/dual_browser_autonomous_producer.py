@@ -589,6 +589,32 @@ def get_template_catalog(template_root=TEMPLATE_POOL_ROOT):
     return valid_templates
 
 
+PIPELINE_CONFIG_FILE = r"D:\AICode\运行数据\江湖有旅人\内容生产App\pipeline_mode_template_config.json"
+
+
+def get_instance_pipeline_config(instance_id=None):
+    """动态读取团队工作台内容制作左侧面板配置的各产线独立生产模式与固定模板"""
+    mode = PRODUCTION_MODE
+    target_id = TARGET_TEMPLATE_ID
+    if os.path.exists(PIPELINE_CONFIG_FILE):
+        try:
+            with open(PIPELINE_CONFIG_FILE, "r", encoding="utf-8") as cf:
+                cfg = json.load(cf)
+            pipelines = cfg.get("pipelines", {})
+            inst_str = str(instance_id or "B").strip().lower()
+            line_key = inst_str if inst_str in pipelines else f"cdp-{inst_str[-1]}"
+            line_cfg = pipelines.get(line_key) or {}
+            cfg_mode = line_cfg.get("mode", "").strip()
+            cfg_tpl = line_cfg.get("fixedTemplateId", "").strip()
+            if cfg_mode in ("1_replica_shuffle", "2_random_template", "3_fixed_template"):
+                mode = cfg_mode
+            if cfg_tpl:
+                target_id = cfg_tpl
+        except Exception:
+            pass
+    return mode, target_id
+
+
 def pick_production_template(template_root=TEMPLATE_POOL_ROOT, mode=PRODUCTION_MODE, target_id=TARGET_TEMPLATE_ID):
     """根据生产模式挑选模板：模式 2 随机抽选，模式 3 按指定 ID 锁定"""
     pool = get_template_catalog(template_root)
@@ -3159,14 +3185,14 @@ class InstanceWorker:
 
         await self.open_fresh_session()
 
-        # 1. 扫描与上传图片（按生产模式智能调度：模式 2 默认抽选模板，模式 3 固定模板，模式 1 原图打乱）
-        mode = PRODUCTION_MODE
+        # 1. 扫描与上传图片（按生产模式智能调度：动态读取工作台配置的各产线独立模式与固定模板）
+        mode, target_tpl_id = get_instance_pipeline_config(self.id)
         if mode not in ("1_replica_shuffle", "2_random_template", "3_fixed_template"):
             mode = "2_random_template"
 
         selected_template = None
         if mode in ("2_random_template", "3_fixed_template"):
-            selected_template = pick_production_template(TEMPLATE_POOL_ROOT, mode=mode, target_id=TARGET_TEMPLATE_ID)
+            selected_template = pick_production_template(TEMPLATE_POOL_ROOT, mode=mode, target_id=target_tpl_id)
             if not selected_template:
                 log(f"⚠️ 未找到可用母版，平滑回退到模式 1 (原图复刻打乱模式)", self.id)
                 mode = "1_replica_shuffle"
@@ -3845,11 +3871,31 @@ class InstanceWorker:
         except Exception:
             pass
 
-        # 5. 发送江湖有旅人·同事6大风格核心文案指令（3个小红书版本：无营销版+大纲方案版+同事爆款风格版，加1个抖音攻略避坑版）
-        log("-> 发送同事6大风格核心文案指令（无营销自然版 + 大纲方案版 + 同事爆款风格版 + 抖音攻略版）...", self.id)
+        # 5. 发送江湖有旅人·同事6大风格核心文案指令（一源三模·CDP单风格动态抽注：无营销版+大纲方案版+同事爆款风格版+抖音攻略避坑版）
+        _matched_style_id = "STYLE-01"
+        _style_pack_block = ""
+        try:
+            import importlib.util as _ilu
+            _bridge_path = Path(r"D:\AICode\.agents\skills\teambuilding-web-copywriter\scripts\chatgpt_web_bridge.py")
+            if _bridge_path.exists():
+                _spec = _ilu.spec_from_file_location("chatgpt_web_bridge", str(_bridge_path))
+                _mod = _ilu.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)
+                _matched_style_id, _pack_text = _mod.load_style_pack_for_cdp(context_block, max_exemplars=2)
+                if _pack_text:
+                    _style_pack_block = (
+                        f"【当前自动命中同事细分风格包（{_matched_style_id} · 与 GitHub 技能真源 zwmopen/skills/teambuilding-web-copywriter 同源同步）】：\n"
+                        f"{_pack_text}\n\n"
+                    )
+        except Exception as _e:
+            log(f"⚠️ 动态加载同事单风格原料包降级为内联规则: {_e}", self.id)
+
+        log(f"-> 发送同事6大风格核心文案指令 [命中 {_matched_style_id}]（无营销自然版 + 大纲方案版 + 同事爆款风格版 + 抖音攻略版）...", self.id)
         copy_prompt = (
-            f"请根据上面刚刚生成的全套大图与原素材真实行程，立即生成【江湖有旅人·同事6大风格核心文案引擎（无营销/大纲方案/同事爆款/抖音避坑）】标准成稿。\n"
+            f"请调用并严格遵循【teambuilding-web-copywriter 技能】（GitHub 真源仓库：https://github.com/zwmopen/skills/tree/main/技能包/技能/teambuilding-web-copywriter ），"
+            f"根据上面刚刚生成的全套大图与原素材真实行程，立即生成【江湖有旅人·同事6大风格核心文案引擎（无营销/大纲方案/同事爆款/抖音避坑）】标准成稿。\n"
             f"【原素材参考正文】：\n{context_block}\n\n"
+            f"{_style_pack_block}"
             "【最高执行铁律（同事6大风格原料库真源与风控边界）】：\n"
             "1. 拒绝 AI 方案腔与虚假套话：严禁出现“方案名称/价值赋能/打造凝聚力/无敌盛宴”等公文词；全换成人话（“这套怎么玩/大家愿不愿意动/体能差异有多大/猛人去越野i人去喝茶都不尴尬”）。\n"
             "2. 视觉指纹命名：每个版本必须用 <<<VERSION_START:版本名>>> ... <<<VERSION_END>>> 包裹。\n"
@@ -3873,9 +3919,9 @@ class InstanceWorker:
             "#8至10个精准团建标签\n"
             "<<<VERSION_END>>>\n\n"
             "<<<VERSION_START:红书种草>>>\n"
-            "【同事爆款风格版】直击职场痛点或季节爆点标题（≤20字）\n"
+            f"【同事爆款风格版·严格按上面注入的 {_matched_style_id} 结构公式、词库与代表作范例复刻】直击痛点或季节爆点标题（≤20字）\n"
             "⠀\n"
-            "正文（自动匹配同事6大细分风格母体之一：痛点共情Hook开场 → 🌈【基础信息】 → 💎【团建玩法亮点】含五感画面词 → 📅【行程参考】采用标志性 0900｜ 四位数字时间轴与具象菜名 → ✅【更多玩法】三列竖线矩阵 ｜，段落间独立一行 ⠀）\n"
+            "正文（痛点共情Hook开场 → 🌈【基础信息】 → 💎【团建玩法亮点】含五感画面词 → 📅【行程参考】采用标志性 0900｜ 四位数字时间轴与具象菜名 → ✅【更多玩法】三列竖线矩阵 ｜，段落间独立一行 ⠀）\n"
             "⠀\n"
             "#8至10个热门话题标签\n"
             "<<<VERSION_END>>>\n\n"
