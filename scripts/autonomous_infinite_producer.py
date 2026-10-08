@@ -343,75 +343,67 @@ class StandaloneProducer:
                 log(f"-> 生成已结束，已获取 {img_count} 张大图，继续后续流程。")
                 break
 
-        # 6. 发送多版本文案中枢 V4.5 指令（11 大排版视觉指纹标准）
-        log("-> 发送多版本文案中枢 V4.5 指令（11 大排版视觉指纹标准）...")
+        # 6. 发送江湖有旅人·4大差异化版本核心文案指令（GPT在线链接双主稿 + 时间线大纲版 + 花里胡哨多表情同事版 + 抖音无营销）
+        _matched_style_id = "STYLE-01"
+        _matched_style_desc = "山水度假与美食动线风"
+        _style_pack_block = ""
+        try:
+            import importlib.util as _ilu
+            _bridge_path = Path(r"D:\AICode\.agents\skills\teambuilding-web-copywriter\scripts\chatgpt_web_bridge.py")
+            if _bridge_path.exists():
+                _spec = _ilu.spec_from_file_location("chatgpt_web_bridge", str(_bridge_path))
+                _mod = _ilu.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)
+                _matched_style_id, _matched_style_desc, _pack_text = _mod.load_style_pack_for_cdp(context_block, max_exemplars=2)
+                if _pack_text:
+                    _style_pack_block = (
+                        f"【当前自动命中同事子模式（{_matched_style_id}·{_matched_style_desc} · 随机抽样真源原料 · 严禁套死模板）】：\n"
+                        f"{_pack_text}\n\n"
+                    )
+        except Exception as _e:
+            log(f"⚠️ 动态加载同事单风格原料包降级为内联规则: {_e}")
+
+        log(f"-> 发送 4 大差异化版本文案指令 [命中 {_matched_style_id}]（GPT原味红书自然 + 时间线大纲 + 花哨多表情同事版 + 抖音无营销）...")
         copy_prompt = (
-            f"请根据上面刚刚生成的全套大图与原素材真实行程，立即生成【多版本文案中枢 V4.5】全套标准成稿。\n"
+            f"请调用并严格遵循【teambuilding-web-copywriter 技能】（GitHub 真源仓库：https://github.com/zwmopen/skills/tree/main/技能包/技能/teambuilding-web-copywriter ），"
+            f"根据上面刚刚生成的全套大图与原素材真实行程，立即生成 4 个风格反差极大、绝不套死模板的标准成稿版本。\n"
             f"【原素材参考正文】：\n{context_block}\n\n"
-            "【最高执行铁律】：\n"
-            "1. 坚决杜绝干瘪公文垃圾：严禁出现“方案名称：/适用对象：/预算参考：”等体制内申报公文腔，必须是小红书野生高赞爆款感！\n"
-            "2. 视觉指纹命名（严格最多 4 个纯汉字按钮名）：\n"
-            "   每个版本必须用 <<<VERSION_START:最多4字版本名>>> ... <<<VERSION_END>>> 包裹。\n"
-            "3. 单标题铁律：每个版本首行必须且仅有 1 个纯文本标题，严禁加 # 号、严禁包裹大中文括号【】、严禁任何序号！\n"
-            "4. 防吞空行铁律：段落之间空行必须填入不可见盲文空格“⠀”（Unicode U+2800，格式为 \\n⠀\\n），绝不输出裸露 \\n\\n！\n"
-            "5. 抖音避坑版绝对去商业化：定位纯个人自驾/生活探索经验，绝无“团建/组织/方案/路线/报价”等涉旅敏感词！\n"
-            "6. 严防末尾截断：每一版必须完整展开并以单行话题标签结尾，紧跟 <<<VERSION_END>>>，严禁半句断尾！\n\n"
-            "【请生成以下 11 个排版视觉指纹版本成稿】：\n"
+            f"{_style_pack_block}"
+            "【最高执行铁律（破除套模板感与双平台风控边界）】：\n"
+            "1. 严禁拿同一个模板换词填空！4 个版本必须呈现 4 种完全不同的阅读体验（克制自然运营风 vs 时间轴排期大纲 vs 满屏表情花里胡哨同事爆款风 vs 抖音周末去团建生活风）。\n"
+            "2. 视觉指纹命名：每个版本必须用 <<<VERSION_START:版本名>>> ... <<<VERSION_END>>> 包裹。\n"
+            "3. 单标题与字数安全线：每个版本首行必须且仅有 1 个纯文本标题（≤20字，严禁加#号、书名号或版本名）；小红书正文+标签目标 650—850 字符。\n"
+            "4. 手机防吞空行铁律：每个段落之间必须用【独立成行】的盲文空白字符“⠀”（Unicode U+2800，真实物理换行 \\n⠀\\n），绝不输出裸露空行！\n"
+            "5. 双平台风控：小红书保留团建/HR业务语义；抖音无营销必须彻底重写为普通人周末自驾出行/玩法避坑分享，严格消杀“团建/拓展/公司团建/HR/行政/路线/行程/方案/1日游/2天1夜/大巴接送/人均/报价/私信”等涉旅词。\n\n"
+            "【请按顺序生成以下 4 个截然不同的标准版本成稿（每个段落之间必须独立一行放 ⠀）】：\n"
             "<<<COPY_FORMAT:MULTI>>>\n"
-            "<<<VERSION_START:数字爆款>>>\n"
-            "真实大厂回购爆款主标题（带吸引力与emoji）\n"
-            "正文（1️⃣2️⃣3️⃣ 大数字键帽 + ‼️ + 💯 轰炸，痛点切入，节奏极快）\n"
-            "#热门话题标签\n"
+            "<<<VERSION_START:红书自然>>>\n"
+            "【GPT链接原味·自然小红书版】克制自然的地点季节团建标题（≤20字）\n"
+            "⠀\n"
+            "正文（对齐GPT在线链接里打磨出的成熟运营自然口吻：开头直接给动静节奏判断 → 玩法怎么搭与取舍理由 → 💡HR怎么选分人群加减法 → ⚠️出发前天气/开放确认提醒，表情克制不夸张，段落间独立一行 ⠀）\n"
+            "⠀\n"
+            "#8至10个热门团建标签\n"
             "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:分天动线>>>\n"
-            "海岛度假慢调漫步主标题\n"
-            "正文（𝗗𝗔𝗬❶ 𝗗𝗔𝗬❷ 加粗西文 + 🔅 🔹 🔸 几何圆圈动线，松弛不赶路）\n"
-            "#热门话题标签\n"
+            "<<<VERSION_START:红书大纲>>>\n"
+            "【时间线大纲版】带天数或时间推进感的团建排期标题（≤20字）\n"
+            "⠀\n"
+            "正文（专门做清晰的时间线大纲！开头1句总基调 → 📍基础信息 → 按 DAY1 / DAY2 + 具体时间节点 09:00｜… 11:30｜… 13:30｜… 16:00｜… 18:30｜… 顺次推进，写清每个时间点玩什么、为什么这么衔接、体力怎么分配 → 📌排期避坑提醒，段落间独立一行 ⠀）\n"
+            "⠀\n"
+            "#8至10个精准团建标签\n"
             "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:三箭头体>>>\n"
-            "大自然森系吸氧主标题\n"
-            "正文（- 》》》 招牌三箭头 + ✅ 双勾 + 治愈自然Emoji符号清单）\n"
-            "#热门话题标签\n"
+            "<<<VERSION_START:红书种草>>>\n"
+            f"【表情超多·花里胡哨同事爆款版（{_matched_style_id}）】痛点反问或高能量吸睛标题（≤20字）\n"
+            "⠀\n"
+            f"正文（参照上方注入的 {_matched_style_id} 子模式提示词与随机抽样的同事真源原料：满屏高密度灵动 Emoji 表情🔥🎉🏎️🍵📸✨、情绪饱满、具象菜名、文末可带三列竖线玩法矩阵 ｜；注意：小标题名称和开篇切入点必须根据本素材亮点自由创新，严禁死套固定小标题模板！段落间独立一行 ⠀）\n"
+            "⠀\n"
+            "#8至10个热门话题标签\n"
             "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:杂志长条>>>\n"
-            "杂志级画册选型指南主标题\n"
-            "正文（—— 🌿【企划】—— 长横线装饰条 + 01 ｜ 空间美学配置）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:时间轴体>>>\n"
-            "秋日轻奢慢节奏日程主标题\n"
-            "正文（08:30 | 竖线精准时间颗粒度行程，优雅松弛）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:原生种草>>>\n"
-            "真实博主亲历自用劝退主标题\n"
-            "正文（第一人称口语化，真实体验避坑，零广告套路感）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:决策矩阵>>>\n"
-            "HR向上汇报横向比选主标题\n"
-            "正文（📊 横向维度比对、适合/不适合团队分析、选型建议）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:货架明细>>>\n"
-            "预算清晰拆解防超标主标题\n"
-            "正文（📦 模块化费用清单：大巴/门票/餐饮/住宿人均透明列式）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:包院私享>>>\n"
-            "独栋私密小院沉浸研讨主标题\n"
-            "正文（山野院落、高管复盘、星空夜话，私密高端体验）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:案例背书>>>\n"
-            "名企实操落地全记录主标题\n"
-            "正文（真实团队案例复盘，高满意度与无加班焦虑背书）\n"
-            "#热门话题标签\n"
-            "<<<VERSION_END>>>\n\n"
-            "<<<VERSION_START:抖音避坑>>>\n"
-            "纯个人自驾生活避坑短卡主标题\n"
-            "正文（去商业去涉旅敏感词，口语化纯经验避坑与装备建议）\n"
-            "#5个生活类标签\n"
+            "<<<VERSION_START:抖音无营销>>>\n"
+            "【GPT链接原味·抖音无营销版】周末出行/老玩家玩法避坑标题（≤20字）\n"
+            "⠀\n"
+            "正文（对齐GPT在线链接里的抖音配对稿：普通人周末出游/自驾玩法取舍视角，开头给真实判断 → 怎么玩/哪个刺激哪个松弛 → 天气鞋服确认，彻底消杀团建/HR/方案/价格/天数等涉旅词，段落间独立一行 ⠀）\n"
+            "⠀\n"
+            "#5个泛生活避坑标签\n"
             "<<<VERSION_END>>>\n"
         )
         js_inject_copy = f"""(() => {{
@@ -451,11 +443,11 @@ class StandaloneProducer:
         clean_title = re.sub(r"[\s\-_]*\d{8}$", "", clean_title)
         clean_title = re.sub(r'[\\/:*?"<>|]', '_', clean_title).strip()[:50]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        producing_dir = os.path.join(OUTPUT_BASE, "_制作中")
+        producing_dir = os.path.join(OUTPUT_BASE, "_网页CDP产线正在制作")
         os.makedirs(producing_dir, exist_ok=True)
         target_pkg_dir = os.path.join(producing_dir, f"{timestamp}-网页CDP-{clean_title}")
         os.makedirs(target_pkg_dir, exist_ok=True)
-        log(f"-> 制作中临时物理目录已建立: {target_pkg_dir}")
+        log(f"-> 制作中临时物理目录已建立 (带下划线隔离区): {target_pkg_dir}")
 
         expr_fetch_urls = """(() => {
             const allImgs = Array.from(document.querySelectorAll('img'));
@@ -529,7 +521,9 @@ class StandaloneProducer:
         with open(os.path.join(target_pkg_dir, "文案.txt"), "w", encoding="utf-8") as f:
             f.write(clean_copy)
 
-        with open(os.path.join(target_pkg_dir, "全量生成记录.txt"), "w", encoding="utf-8") as f:
+        evidence_dir = os.path.join(OUTPUT_BASE, "_内部台账与历史数据", "生产证据", os.path.basename(target_pkg_dir))
+        os.makedirs(evidence_dir, exist_ok=True)
+        with open(os.path.join(evidence_dir, "全量生成记录.txt"), "w", encoding="utf-8") as f:
             f.write(full_text)
 
         # 10. 回写 .tags.json
@@ -554,7 +548,7 @@ class StandaloneProducer:
             log(f"回写 .tags.json 异常: {e}")
 
         # 11. 登记作品历史数据库
-        db_path = os.path.join(OUTPUT_BASE, "_作品历史数据", "作品历史数据库.json")
+        db_path = os.path.join(OUTPUT_BASE, "_内部台账与历史数据", "_作品历史数据", "作品历史数据库.json")
         if os.path.exists(db_path):
             try:
                 with open(db_path, 'r', encoding='utf-8') as f:
@@ -582,12 +576,13 @@ class StandaloneProducer:
             log("-> 运行 Pillow 自动化质检验收...")
             subprocess.run([sys.executable, VERIFY_SCRIPT, "--dir", target_pkg_dir, "--engine", f"ChatGPT-CDP全新窗口-{self.cdp_port}"])
 
-        # 12.5 保存全套标准元数据清单 manifest.json
-        manifest_data = {
+        # 12.5 保存全套标准元数据清单 manifest.json 并通过统一准入网关联动分类入库
+        extra_manifest = {
             "workId": f"cdp_{abs(hash(mat_name)):x}",
             "title": mat_name,
             "producedAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "rawMaterialPath": mat_dir,
+            "sourceMaterialPath": mat_dir,
             "imageCount": len(saved_images),
             "engine": f"ChatGPT-CDP-FreshWindow-{self.cdp_port}",
             "progress": {
@@ -601,25 +596,25 @@ class StandaloneProducer:
             }
         }
         try:
-            with open(os.path.join(target_pkg_dir, "manifest.json"), "w", encoding="utf-8") as f:
-                json.dump(manifest_data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-        # 12.8 原子移动至成品库根目录（取消旧已发送0次目录）
-        final_pkg_dir = os.path.join(OUTPUT_BASE, os.path.basename(target_pkg_dir))
-        try:
-            if os.path.exists(final_pkg_dir):
-                shutil.rmtree(final_pkg_dir, ignore_errors=True)
-            shutil.move(target_pkg_dir, final_pkg_dir)
-            target_pkg_dir = final_pkg_dir
-            manifest_data["finishedProductPath"] = target_pkg_dir
-            manifest_data["tags"] = ["待发送", "小红书可发", "抖音可发"]
-            with open(os.path.join(target_pkg_dir, "manifest.json"), "w", encoding="utf-8") as f:
-                json.dump(manifest_data, f, ensure_ascii=False, indent=2)
-            log(f"-> 质检通过，已原子流转至成品库: {target_pkg_dir}")
+            gate_dir = r"D:\AICode\工具开发\scripts"
+            if gate_dir not in sys.path:
+                sys.path.insert(0, gate_dir)
+            import pipeline_staging_gate as gate
+            ok, msg, promoted_dir = gate.promote_staging_to_portfolio(
+                target_pkg_dir,
+                title=mat_name,
+                raw_dir=mat_dir,
+                extra_manifest=extra_manifest,
+                destroy_on_fail=True,
+                portfolio_root=OUTPUT_BASE,
+            )
+            if not ok:
+                raise RuntimeError(f"出库门禁拦截: {msg}")
+            target_pkg_dir = promoted_dir
+            log(f"-> 质检通过，{msg}: {target_pkg_dir}")
         except Exception as e:
-            log(f"原子移动至成品库异常: {e}")
+            log(f"原子移动至分类成品库异常: {e}")
+            raise
 
         # 13. 发送飞书交付通知至用户移动端（原素材与成品双绝对路径）
         try:
