@@ -5657,6 +5657,7 @@ function renderGptAutoSettings() {
   renderGptBrowserManager({ hydrateNative: true });
   renderSettingsHome();
   applyReadOnlyGptPreviewControls();
+  if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
 }
 
 function saveGptAutoSettings() {
@@ -8831,7 +8832,7 @@ function refreshCodexStudioSelection() {
     else node.removeAttribute('aria-current');
   });
   window.refreshCodexManualPrompt?.();
-  refreshProductionTemplateModeHints();
+  if (typeof refreshProductionTemplateModeHints === "function") refreshProductionTemplateModeHints();
 }
 
 // Container executeJavaScript handoff: select indexed material only; never run
@@ -33983,7 +33984,7 @@ window.setTimeout(() => {
         actionStatus.textContent = `登记未确认：${error.message}。尚未开始生产；超时请先刷新请求台账，避免重复提交。`;
       }
     } finally {
-      updateProductionCapabilityView();
+      if (typeof updateProductionCapabilityView === "function") updateProductionCapabilityView();
     }
   });
 
@@ -34096,9 +34097,35 @@ window.setTimeout(() => {
 // ========================================================
 // 内容制作 · 顶栏 ABCD 账号中枢极速切换驱动
 // ========================================================
+function renderProdTopbarAbcd() {
+  const abcdGroup = document.getElementById('prodTopbarAbcdGroup');
+  if (!abcdGroup) return;
+  const accounts = (Array.isArray(gptAccounts) && gptAccounts.length > 0)
+    ? gptAccounts.filter(a => !a.hidden)
+    : [
+        { id: 'account-1', name: '账号 1' },
+        { id: 'account-2', name: '账号 2' },
+        { id: 'account-3', name: '账号 3' },
+        { id: 'account-4', name: '账号 4' }
+      ];
+
+  const currentActive = typeof activeGptAccountId === 'string' ? activeGptAccountId : 'account-1';
+
+  const html = accounts.map((acc, index) => {
+    const letter = String.fromCharCode(65 + (index % 26));
+    const isActive = acc.id === currentActive;
+    const name = acc.name || ('账号 ' + (index + 1));
+    return `<button type="button" class="abcd-pill-btn${isActive ? ' active' : ''}" data-account="${escapeHtml(acc.id)}" data-inst="${letter}" title="【${letter} 账号】${escapeHtml(name)} · 点击即刻切换"><span class="subline-dot online"></span><span>${letter}</span></button>`;
+  }).join('') + '<button type="button" class="abcd-add-inst-btn" id="btnContentProdAddInst" title="➕ 添加新生产槽位 (E、F...)">➕</button>';
+
+  abcdGroup.innerHTML = html;
+}
+
 function initProdTopbarAbcd() {
   const abcdGroup = document.getElementById('prodTopbarAbcdGroup');
   if (!abcdGroup) return;
+
+  renderProdTopbarAbcd();
 
   abcdGroup.addEventListener('click', (e) => {
     const pill = e.target.closest('.abcd-pill-btn');
@@ -34123,21 +34150,34 @@ function initProdTopbarAbcd() {
 function syncTopbarAbcdActive(activeId) {
   const abcdGroup = document.getElementById('prodTopbarAbcdGroup');
   if (abcdGroup) {
-    abcdGroup.querySelectorAll('.abcd-pill-btn').forEach(btn => {
-      const isCurrent = btn.dataset.account === activeId || 
-        (activeId === 'account-1' && btn.dataset.inst === 'A') ||
-        (activeId === 'account-2' && btn.dataset.inst === 'B') ||
-        (activeId === 'account-3' && btn.dataset.inst === 'C') ||
-        (activeId === 'account-4' && btn.dataset.inst === 'D');
-      btn.classList.toggle('active', isCurrent);
-    });
+    const existingPills = abcdGroup.querySelectorAll('.abcd-pill-btn');
+    const accounts = (Array.isArray(gptAccounts) && gptAccounts.length > 0) ? gptAccounts.filter(a => !a.hidden) : [];
+    if (existingPills.length !== accounts.length && accounts.length > 0) {
+      renderProdTopbarAbcd();
+    } else {
+      let found = false;
+      existingPills.forEach(btn => {
+        const isCurrent = btn.dataset.account === activeId;
+        if (isCurrent) found = true;
+        btn.classList.toggle('active', isCurrent);
+      });
+      if (!found && accounts.length > 0) {
+        renderProdTopbarAbcd();
+      }
+    }
   }
 
   // 同步浏览器导航条的独立配置账号徽章
   const labelEl = document.getElementById('browserActiveAccountLabel');
   if (labelEl) {
-    const instMap = { 'account-1': 'A·账号 1', 'account-2': 'B·账号 2', 'account-3': 'C·账号 3', 'account-4': 'D·账号 4', 'account-5': 'E·账号 5', 'account-6': 'F·账号 6' };
-    labelEl.textContent = instMap[activeId] || `账号 ${activeId}`;
+    const accounts = Array.isArray(gptAccounts) ? gptAccounts : [];
+    const idx = accounts.findIndex(a => a.id === activeId);
+    if (idx >= 0) {
+      const letter = String.fromCharCode(65 + (idx % 26));
+      labelEl.textContent = `${letter}·${accounts[idx].name || ('账号 ' + (idx + 1))}`;
+    } else {
+      labelEl.textContent = `账号 ${activeId}`;
+    }
   }
 
   // 同步地址栏显示的 URL

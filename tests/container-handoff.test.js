@@ -259,25 +259,69 @@ test("Codex button registers a persisted request without claiming generation", a
   const script = source.slice(source.indexOf("  document.getElementById('codexStartProductionBtn')"),
     source.indexOf("  document.getElementById('codexReadRequestsBtn')"));
   let sent;
-  vm.runInNewContext(script, { window: { TBProductionRequest: require('../src/public/production-request') },
+  const productionRoute = require('../src/server/routes/production-request');
+  const CONFIGURATION_REVISION = `sha256:${'b'.repeat(64)}`;
+  const templateOptions = [{ id: 'T79', label: '母版 T79', referenceHashes: { P1: '1'.repeat(64), P2: '2'.repeat(64) } }];
+  const lines = productionRoute.LINE_CATALOG.map((line) => ({
+    ...line,
+    instances: line.instances.map((instance) => ({ ...instance }))
+  }));
+  const capabilities = lines.map((line) => ({
+    ...line,
+    instances: line.instances.map((instance) => ({
+      ...instance,
+      modes: productionRoute.MODE_CATALOG.map((mode) => ({
+        mode: mode.id,
+        modeLabel: mode.label,
+        selection: { schemaVersion: 1, pipeline: instance.pipeline, mode: mode.id,
+          templateCandidates: ['T79'], selectedTemplateId: null,
+          selectedTemplateReferenceSha256: null, configurationRevision: CONFIGURATION_REVISION },
+        registration: {
+          state: 'READY',
+          label: '可登记请求',
+          templateCandidateCount: 1,
+          templateOptions
+        },
+        execution: { state: 'HOST_AGENT_REQUIRED', label: '需由当前 Codex 对话执行' }
+      }))
+    }))
+  }));
+  const asOfUtc = new Date().toISOString();
+  const validSnapshot = {
+    ok: true, schemaVersion: 4, asOfUtc, selectionSchemaVersion: 1, configurationRevision: CONFIGURATION_REVISION,
+    catalog: { lines, modes: productionRoute.MODE_CATALOG },
+    capabilities: { revision: 'production-capabilities-v4', selectionSchemaVersion: 1,
+      configurationRevision: CONFIGURATION_REVISION, declaredProfileRevision: null,
+      declaredProfileRevisionState: 'NOT_DECLARED', profileState: 'READABLE', lines: capabilities },
+    runtime: productionRoute.productionRuntimeSnapshot({ DATA_ROOT: 'D:\\missing-runtime-profile' }, null, asOfUtc),
+    requests: [], omittedInvalidCount: 0, requestLimit: 20
+  };
+
+  vm.runInNewContext(script, {
+    window: { TBProductionRequest: require('../src/public/production-request') },
+    readFreshProductionStateForRequest: async () => validSnapshot,
+    selectedProductionTemplates: () => [{ id: 'T79' }],
     selectedGptTestEntries: () => [{ item: { path: 'D:\\source\\one' } }],
     selectedGptTestTemplates: () => [{ id: 'T79' }],
     refreshCodexStudioSelection() {},
+    updateProductionCapabilityView: () => { button.disabled = false; },
     refreshCodexRequestCards: async () => {},
     apiWithTimeout: async (path, options) => {
       sent = { path, payload: JSON.parse(options.body) };
-      return { ok: true, status: 'PREPARED_NOT_GENERATED', completed: false, requestId: 'r1', requestPath: 'D:\\requests\\r1.json', sourceCount: 8, mode: '3_fixed_template', templateId: 'T79' };
-    }, document: { getElementById(id) {
-    if (id === "codexStartProductionBtn") return button;
-    if (id === "codexLiveOutputLog") return log;
-    if (id === "codexRequestActionStatus") return actionStatus;
-    if (id === "codexPromptPreview") return { value: "fixed template prompt" };
-    if (id === "codexContentTemplateMode") return { value: "3_fixed_template" };
-    return null;
-  } } });
+      return { ok: true, status: 'PREPARED_NOT_GENERATED', completed: false, requestId: 'r1', requestPath: 'D:\\requests\\r1.json', sourceCount: 8, mode: '3_fixed_template', templateId: 'T79', pipeline: 'codex-api', selection: { schemaVersion: 1, pipeline: 'codex-api', mode: '3_fixed_template', templateCandidates: ['T79'], selectedTemplateId: 'T79', selectedTemplateReferenceSha256: { P1: '1'.repeat(64), P2: '2'.repeat(64) }, configurationRevision: CONFIGURATION_REVISION } };
+    },
+    document: { getElementById(id) {
+      if (id === "codexStartProductionBtn") return button;
+      if (id === "codexLiveOutputLog") return log;
+      if (id === "codexRequestActionStatus") return actionStatus;
+      if (id === "codexPromptPreview") return { value: "fixed template prompt" };
+      if (id === "codexContentTemplateMode") return { value: "3_fixed_template" };
+      return null;
+    } }
+  });
   await click({ currentTarget: button });
   assert.equal(sent.path, '/api/production/requests/prepare');
-  assert.equal(sent.payload.pipeline, 'codex-api');
+  assert.equal(sent.payload.selection?.pipeline || sent.payload.pipeline, 'codex-api');
   assert.match(log.textContent, /已保存请求 r1/);
   assert.match(log.textContent, /尚未生成/);
   assert.doesNotMatch(log.textContent, /正在调用|任务已分发|成品将自动/);
