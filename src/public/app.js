@@ -12331,6 +12331,8 @@ async function switchGptAccount(accountId, options = {}) {
   if (!activeGptWindowWorkerState().autoRunning && options.resumeWindow !== false) {
     await reconcileGptWindow(account.id, { force: Boolean(options.forceResume) });
   }
+  // 同步顶栏 ABCD 胶囊高亮：让外层 renderGptAccountTabs 之后顶栏也对齐
+  if (typeof syncTopbarAbcdActive === 'function') syncTopbarAbcdActive(account.id);
 }
 
 async function addGptAccount() {
@@ -12338,10 +12340,7 @@ async function addGptAccount() {
     showSystemNotice("自动生产进行中", "完成或暂停后再新增账号。");
     return;
   }
-  if (gptAccounts.length >= 26) {
-    showSystemNotice("账号数量已到上限", "最多可保留 26 个相互隔离的 GPT 登录账号（A-Z）。");
-    return;
-  }
+  // 无上限：账号窗口数量不再受 26 个字母硬限制，想加多少就加多少
   const used = new Set(gptAccounts.map((item) => item.id));
   let sequence = 1;
   while (used.has(`account-${sequence}`)) sequence += 1;
@@ -12368,6 +12367,8 @@ async function addGptAccount() {
   saveGptAccounts();
   renderGptAccountTabs();
   renderGptBrowserManager();
+  // 同步顶栏 ABCD，让新加的账号立即出现并高亮
+  if (typeof syncTopbarAbcdActive === 'function') syncTopbarAbcdActive(account.id);
   gptLastShowSignature = "";
   await showEmbeddedGptView();
   if (isContinuousGptMode() && isContinuousGptProductionArmed()) {
@@ -12419,6 +12420,8 @@ async function removeGptAccount(accountId) {
   saveGptAccounts();
   renderGptAccountTabs();
   renderGptBrowserManager();
+  // 同步顶栏 ABCD 胶囊，删除后高亮对齐到当前激活账号
+  if (typeof syncTopbarAbcdActive === 'function') syncTopbarAbcdActive(activeGptAccountId);
   gptLastShowSignature = "";
   await showEmbeddedGptView();
   showWorkbenchAssistantBubble(`账号窗口“${account.name}”已删除，登录数据已清除。`, { tone: "warning", duration: 4000 });
