@@ -34115,7 +34115,10 @@ function renderProdTopbarAbcd() {
     const letter = String.fromCharCode(65 + (index % 26));
     const isActive = acc.id === currentActive;
     const name = acc.name || ('账号 ' + (index + 1));
-    return `<button type="button" class="abcd-pill-btn${isActive ? ' active' : ''}" data-account="${escapeHtml(acc.id)}" data-inst="${letter}" title="【${letter} 账号】${escapeHtml(name)} · 点击即刻切换"><span class="subline-dot online"></span><span>${letter}</span></button>`;
+    const isDisabled = Boolean(acc.disabled);
+    const dotClass = isDisabled ? 'offline' : 'online';
+    const disabledBadge = isDisabled ? ' · 已禁用（自动化跳过）' : '';
+    return `<button type="button" class="abcd-pill-btn${isActive ? ' active' : ''}${isDisabled ? ' disabled' : ''}" data-account="${escapeHtml(acc.id)}" data-inst="${letter}" title="【${letter} 账号】${escapeHtml(name)}${disabledBadge} · 左键切换 · 右键菜单"><span class="subline-dot ${dotClass}"></span><span>${letter}</span></button>`;
   }).join('') + '<button type="button" class="abcd-add-inst-btn" id="btnContentProdAddInst" title="➕ 添加新生产槽位 (E、F...)">➕</button>';
 
   abcdGroup.innerHTML = html;
@@ -34127,6 +34130,7 @@ function initProdTopbarAbcd() {
 
   renderProdTopbarAbcd();
 
+  // 左键点击：切换账号或新增槽位
   abcdGroup.addEventListener('click', (e) => {
     const pill = e.target.closest('.abcd-pill-btn');
     if (pill && pill.dataset.account) {
@@ -34141,6 +34145,23 @@ function initProdTopbarAbcd() {
       if (typeof addGptAccount === 'function') addGptAccount();
       else if (typeof openPageSettings === 'function') openPageSettings('gptAuto');
       return;
+    }
+  });
+
+  // 右键点击：弹出账号管理快捷菜单（重命名、禁用/启用、删除）
+  abcdGroup.addEventListener('contextmenu', (e) => {
+    const pill = e.target.closest('.abcd-pill-btn');
+    if (!pill || !pill.dataset.account) return;
+    e.preventDefault();
+    const account = Array.isArray(gptAccounts) ? gptAccounts.find((item) => item.id === pill.dataset.account) : null;
+    contextMenuTarget = {
+      kind: 'gpt-browser-profile',
+      accountId: pill.dataset.account,
+      label: account?.name || '账号窗口',
+      path: ''
+    };
+    if (typeof showContextMenu === 'function') {
+      showContextMenu(e.clientX, e.clientY);
     }
   });
 

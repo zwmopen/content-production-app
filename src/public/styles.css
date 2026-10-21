@@ -21741,6 +21741,22 @@ body.is-embedded .gpt-browser-toolbar {
   transform: translateY(-1px) !important;
 }
 
+.abcd-pill-btn.disabled {
+  opacity: 0.45 !important;
+  border-style: dashed !important;
+  border-color: rgba(239, 68, 68, 0.45) !important;
+  color: #64748b !important;
+  background: rgba(0, 0, 0, 0.3) !important;
+  text-decoration: line-through !important;
+}
+.abcd-pill-btn.disabled:hover {
+  opacity: 0.8 !important;
+  border-color: rgba(239, 68, 68, 0.7) !important;
+}
+.abcd-pill-btn .subline-dot.offline {
+  background: #ef4444 !important;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6) !important;
+}
 .abcd-pill-btn.active {
   background: rgba(16, 185, 129, 0.2) !important;
   color: #34d399 !important;
