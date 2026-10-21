@@ -1,3 +1,13 @@
+
+// 顶层未捕获异常门禁保护：拦截已销毁对象的访问（如第三方认证/Google OAuth 重定向），绝对杜绝弹出 Windows 崩溃大红叉
+process.on("uncaughtException", (err) => {
+  if (err && String(err.message || "").includes("Object has been destroyed")) {
+    appendDesktopLog("suppressed-destroyed-object-error", String(err.stack || err.message));
+    return;
+  }
+  console.error("[Main Process] Uncaught exception:", err);
+});
+
 const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, Tray, Menu, Notification, screen } = require("electron");
 
 if (process.env.TB_REMOTE_DEBUGGING_PORT) {
@@ -49,6 +59,16 @@ const {
   normalizeInstanceId,
   resolveAssignedAccountIds
 } = require("../lib/instance-account-policy");
+
+function safeGetWebContentsUrl(contents, fallback = "") {
+  try {
+    if (!contents || contents.isDestroyed()) return fallback;
+    return contents.getURL() || fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
 const {
   WECHAT_HOME_URL,
   classifyWechatWebPage,
@@ -3023,23 +3043,31 @@ function loadGptUrlBounded(contents, url, timeoutMs = 15_000) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      contents.removeListener("dom-ready", onReady);
-      contents.removeListener("did-fail-load", onFail);
+      try {
+        if (contents && !contents.isDestroyed()) {
+          contents.removeListener("dom-ready", onReady);
+          contents.removeListener("did-fail-load", onFail);
+        }
+      } catch (_) {}
       resolve(result);
     };
-    const onReady = () => finish({ ok: true, url: contents.getURL(), readyAt: "dom-ready" });
+    const onReady = () => finish({ ok: true, url: safeGetWebContentsUrl(contents, url), readyAt: "dom-ready" });
     const onFail = (_event, code, description, validatedURL, isMainFrame) => {
       if (isMainFrame) finish({ ok: false, error: `${code}: ${description}`, url: validatedURL });
     };
     const timer = setTimeout(() => finish({
       ok: false,
       error: "GPT 网页加载超时，已交给自动恢复继续探测",
-      url: contents.getURL() || url,
+      url: safeGetWebContentsUrl(contents, url),
       readyAt: "timeout"
     }), Math.max(3000, Number(timeoutMs || 0)));
-    contents.once("dom-ready", onReady);
-    contents.on("did-fail-load", onFail);
-    Promise.resolve(contents.loadURL(url)).catch((error) => finish({ ok: false, error: error.message, url }));
+    try {
+      contents.once("dom-ready", onReady);
+      contents.on("did-fail-load", onFail);
+      Promise.resolve(contents.loadURL(url)).catch((error) => finish({ ok: false, error: error.message, url }));
+    } catch (e) {
+      finish({ ok: false, error: e.message, url });
+    }
   });
 }
 
@@ -3056,24 +3084,32 @@ async function ensureGptView(accountId = activeGptAccountId) {
 }
 
 function waitForGptPageLoad(contents, timeoutMs = 120000) {
-  if (!contents || contents.isDestroyed()) return Promise.resolve({ ok: false, error: "GPT 网页视图不可用" });
+  if (!contents || contents.isDestroyed()) return Promise.resolve({ ok: false, error: "GPT 网页视图不可用", url: "" });
   return new Promise((resolve) => {
     let settled = false;
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      contents.removeListener("did-finish-load", onFinish);
-      contents.removeListener("did-fail-load", onFail);
+      try {
+        if (contents && !contents.isDestroyed()) {
+          contents.removeListener("did-finish-load", onFinish);
+          contents.removeListener("did-fail-load", onFail);
+        }
+      } catch (_) {}
       resolve(result);
     };
-    const onFinish = () => finish({ ok: true, url: contents.getURL() });
+    const onFinish = () => finish({ ok: true, url: safeGetWebContentsUrl(contents) });
     const onFail = (_event, code, description, validatedURL, isMainFrame) => {
       if (isMainFrame) finish({ ok: false, error: `${code}: ${description}`, url: validatedURL });
     };
-    const timer = setTimeout(() => finish({ ok: false, error: "GPT 网页刷新超时", url: contents.getURL() }), Math.max(5000, timeoutMs));
-    contents.once("did-finish-load", onFinish);
-    contents.on("did-fail-load", onFail);
+    const timer = setTimeout(() => finish({ ok: false, error: "GPT 网页刷新超时", url: safeGetWebContentsUrl(contents) }), Math.max(5000, timeoutMs));
+    try {
+      contents.once("did-finish-load", onFinish);
+      contents.on("did-fail-load", onFail);
+    } catch (_) {
+      finish({ ok: false, error: "绑定加载监听失败", url: safeGetWebContentsUrl(contents) });
+    }
   });
 }
 
