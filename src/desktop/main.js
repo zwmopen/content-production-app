@@ -3778,8 +3778,8 @@ ipcMain.handle("desktop:gpt-profile-save", async (_event, input = {}) => {
     lastOpenedAt: String(input.lastOpenedAt || existing?.lastOpenedAt || new Date().toISOString())
   };
   if (existing) Object.assign(existing, profile);
-  else if (state.profiles.length < 8) state.profiles.push(profile);
-  else throw new Error("最多保留 8 个账号窗口档案");
+  else if (state.profiles.length < 26) state.profiles.push(profile);
+  else throw new Error("最多保留 26 个账号窗口档案（A-Z）");
   state.activeId = input.active === false ? state.activeId : id;
   writeBrowserProfiles(state);
   return state;

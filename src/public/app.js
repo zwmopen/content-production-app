@@ -3683,6 +3683,7 @@ function applyReadOnlyGptPreviewControls() {
       window.setTimeout(() => {
         applyReadOnlyGptPreviewControls.pending = false;
         applyReadOnlyGptPreviewControls();
+  if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
       }, 0);
     });
     applyReadOnlyGptPreviewControls.observer.observe(document.body, { childList: true, subtree: true });
@@ -5273,7 +5274,7 @@ function loadGptAccounts() {
   try {
     const stored = JSON.parse(localStorage.getItem(GPT_ACCOUNTS_STORAGE_KEY) || "[]");
     const accounts = Array.isArray(stored)
-      ? stored.filter((item) => item && /^[a-z0-9_-]+$/i.test(String(item.id || ""))).slice(0, 8)
+      ? stored.filter((item) => item && /^[a-z0-9_-]+$/i.test(String(item.id || ""))).slice(0, 26)
       : [];
     if (accounts.length) {
       const isolatedAccounts = filterContentInstanceAccounts(accounts.map((item, index) => ({
@@ -5328,18 +5329,22 @@ function contentInstanceId() {
 
 function contentInstanceAccountIds() {
   const runtimeRoot = String(dashboard?.appInfo?.runtimeRoot || "");
-  if (runtimeRoot.includes("unified-runtime") || (Array.isArray(dashboard?.appInfo?.assignedAccountIds) && dashboard.appInfo.assignedAccountIds.length === 0)) {
+  // 统一内容制作架构 / 主实例模式：始终支持全量多账号 (A-Z)，不进行账号截断过滤
+  if (runtimeRoot.includes("unified-runtime") || !runtimeRoot || (Array.isArray(dashboard?.appInfo?.assignedAccountIds) && dashboard.appInfo.assignedAccountIds.length === 0)) {
     return null;
   }
-  const assigned = Array.isArray(dashboard?.appInfo?.assignedAccountIds)
-    ? new Set(dashboard.appInfo.assignedAccountIds
+  if (Array.isArray(dashboard?.appInfo?.assignedAccountIds) && dashboard.appInfo.assignedAccountIds.length > 0) {
+    return new Set(dashboard.appInfo.assignedAccountIds
       .map((accountId) => String(accountId || "").trim().toLowerCase())
-      .filter((accountId) => Object.values(CONTENT_INSTANCE_ACCOUNT_BY_ID).includes(accountId)))
-    : new Set();
-  if (assigned.size) return assigned;
-  const instance = contentInstanceId();
-  const accountId = CONTENT_INSTANCE_ACCOUNT_BY_ID[instance];
-  return accountId ? new Set([accountId]) : null;
+      .filter(Boolean));
+  }
+  const match = runtimeRoot.match(/[\/]内容生产App[\/]instance-([B-D])(?:[\/]|$)/i);
+  if (match) {
+    const instance = match[1].toUpperCase();
+    const accountId = CONTENT_INSTANCE_ACCOUNT_BY_ID[instance];
+    if (accountId) return new Set([accountId]);
+  }
+  return null;
 }
 
 function contentInstanceDisplayLabel() {
@@ -5657,6 +5662,7 @@ function renderGptAutoSettings() {
   renderGptBrowserManager({ hydrateNative: true });
   renderSettingsHome();
   applyReadOnlyGptPreviewControls();
+  if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
   if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
 }
 
@@ -8518,6 +8524,7 @@ function renderGptTestMaterials() {
   $("#gptTestMaterialCount").textContent = `${gptTestSelectedMaterials.size} 个已选`;
   updateGptTestQueueStatus();
   applyReadOnlyGptPreviewControls();
+  if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
 }
 
  function renderGptTestTemplates() {
@@ -8698,6 +8705,7 @@ function renderGptTestTemplates() {
   $("#gptTestTemplateName").textContent = gptTestSelectedTemplates.size ? `${gptTestSelectedTemplates.size} 个已选` : "未选时沿用当前会话";
   updateGptTestQueueStatus();
   applyReadOnlyGptPreviewControls();
+  if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
 }
 
 async function loadGptOnlineTemplates() {
@@ -11918,6 +11926,7 @@ function updateGptTestQueueStatus(message = "", progressContext = null) {
   }
   updateGptAssistantBubble(message);
   applyReadOnlyGptPreviewControls();
+  if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
 }
 
 function blockGptSelectionDuringRun() {
@@ -11965,6 +11974,7 @@ function renderGptAccountTabs() {
   `).join("");
   renderSettingsHome();
   applyReadOnlyGptPreviewControls();
+  if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
 }
 
 async function renameGptAccount(accountId) {
@@ -12103,6 +12113,7 @@ function renderGptBrowserManager(options = {}) {
     </section>
   `).join("");
   applyReadOnlyGptPreviewControls();
+  if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
 }
 
 function singleAccountQuotaAutoSwitchEnabled() {
@@ -12327,8 +12338,8 @@ async function addGptAccount() {
     showSystemNotice("自动生产进行中", "完成或暂停后再新增账号。");
     return;
   }
-  if (gptAccounts.length >= 8) {
-    showSystemNotice("账号数量已到上限", "最多可保留 8 个相互隔离的 GPT 登录账号。");
+  if (gptAccounts.length >= 26) {
+    showSystemNotice("账号数量已到上限", "最多可保留 26 个相互隔离的 GPT 登录账号（A-Z）。");
     return;
   }
   const used = new Set(gptAccounts.map((item) => item.id));
@@ -12903,6 +12914,7 @@ function renderGptProductionTest() {
   window.setTimeout(() => showEmbeddedGptView().catch(() => {}), 320);
   window.setTimeout(() => showEmbeddedGptView().catch(() => {}), 1200);
   applyReadOnlyGptPreviewControls();
+  if (typeof renderProdTopbarAbcd === "function") renderProdTopbarAbcd();
 }
 
 async function refreshExpandedGptMaterialTrees() {
@@ -34098,28 +34110,39 @@ window.setTimeout(() => {
 // 内容制作 · 顶栏 ABCD 账号中枢极速切换驱动
 // ========================================================
 function renderProdTopbarAbcd() {
-  const abcdGroup = document.getElementById('prodTopbarAbcdGroup');
+  const abcdGroup = document.getElementById("prodTopbarAbcdGroup");
   if (!abcdGroup) return;
-  const accounts = (Array.isArray(gptAccounts) && gptAccounts.length > 0)
+  let accounts = (Array.isArray(gptAccounts) && gptAccounts.length > 0)
     ? gptAccounts.filter(a => !a.hidden)
-    : [
-        { id: 'account-1', name: '账号 1' },
-        { id: 'account-2', name: '账号 2' },
-        { id: 'account-3', name: '账号 3' },
-        { id: 'account-4', name: '账号 4' }
-      ];
+    : [];
+  if (!accounts.length) {
+    try {
+      const stored = JSON.parse(localStorage.getItem(GPT_ACCOUNTS_STORAGE_KEY) || "[]");
+      if (Array.isArray(stored) && stored.length > 0) {
+        accounts = stored.filter(a => !a.hidden);
+      }
+    } catch {}
+  }
+  if (!accounts.length) {
+    accounts = [
+      { id: "account-1", name: "账号 1" },
+      { id: "account-2", name: "账号 2" },
+      { id: "account-3", name: "账号 3" },
+      { id: "account-4", name: "账号 4" }
+    ];
+  }
 
-  const currentActive = typeof activeGptAccountId === 'string' ? activeGptAccountId : 'account-1';
+  const currentActive = typeof activeGptAccountId === "string" ? activeGptAccountId : (accounts[0]?.id || "account-1");
 
   const html = accounts.map((acc, index) => {
     const letter = String.fromCharCode(65 + (index % 26));
     const isActive = acc.id === currentActive;
-    const name = acc.name || ('账号 ' + (index + 1));
+    const name = acc.name || ("账号 " + (index + 1));
     const isDisabled = Boolean(acc.disabled);
-    const dotClass = isDisabled ? 'offline' : 'online';
-    const disabledBadge = isDisabled ? ' · 已禁用（自动化跳过）' : '';
-    return `<button type="button" class="abcd-pill-btn${isActive ? ' active' : ''}${isDisabled ? ' disabled' : ''}" data-account="${escapeHtml(acc.id)}" data-inst="${letter}" title="【${letter} 账号】${escapeHtml(name)}${disabledBadge} · 左键切换 · 右键菜单"><span class="subline-dot ${dotClass}"></span><span>${letter}</span></button>`;
-  }).join('') + '<button type="button" class="abcd-add-inst-btn" id="btnContentProdAddInst" title="➕ 添加新生产槽位 (E、F...)">➕</button>';
+    const dotClass = isDisabled ? "offline" : "online";
+    const disabledBadge = isDisabled ? " · 已禁用（自动化跳过）" : "";
+    return `<button type="button" class="abcd-pill-btn${isActive ? " active" : ""}${isDisabled ? " disabled" : ""}" data-account="${escapeHtml(acc.id)}" data-inst="${letter}" title="【${letter} 账号】${escapeHtml(name)}${disabledBadge} · 左键切换 · 右键管理"><span class="subline-dot ${dotClass}"></span><span>${letter}</span></button>`;
+  }).join("") + '<button type="button" class="abcd-add-inst-btn" id="btnContentProdAddInst" title="➕ 添加新生产槽位">➕</button>';
 
   abcdGroup.innerHTML = html;
 }
