@@ -4,11 +4,11 @@
 // 现在启动时按优先级探测本机端口，谁活着用谁；探测失败再退回原值（行为不劣于旧版）。
 const { spawnSync } = require("child_process");
 
-const DEFAULT_ELECTRON_PROXY = "http://127.0.0.1:17897";
+const DEFAULT_ELECTRON_PROXY = "http://127.0.0.1:7890";
 const ELECTRON_PROXY_BYPASS_LIST = "localhost;127.0.0.1;[::1]";
 const SUPPORTED_PROXY_PROTOCOLS = new Set(["http:", "https:", "socks4:", "socks5:"]);
 // 本机 Clash 系（Clash Party / mihomo / verge）历史上出现过的混合端口，按新旧优先级排列
-const LOCAL_PROXY_FALLBACK_PORTS = [17897, 7897, 7890, 7891, 7892, 7900];
+const LOCAL_PROXY_FALLBACK_PORTS = [7890, 7897, 17897, 7891, 7892, 7900];
 
 let cachedLivePort = null;
 
@@ -107,5 +107,7 @@ function resolveElectronProxy(value) {
 module.exports = {
   DEFAULT_ELECTRON_PROXY,
   ELECTRON_PROXY_BYPASS_LIST,
+  LOCAL_PROXY_FALLBACK_PORTS,
+  probeFirstLiveLocalProxyPort,
   resolveElectronProxy
 };

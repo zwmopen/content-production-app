@@ -162,7 +162,7 @@
 
   function accountQuotaBoundary(quota = {}, now = Date.now()) {
     const generated = Math.max(0, Number(quota.generated || 0));
-    const limit = Math.max(1, Number(quota.settings?.generationLimit || 45));
+    const limit = Math.max(1, Number(quota.settings?.generationLimit || 50));
     const expiry = Date.parse(String(quota.nextExpiryAt || ""));
     return {
       reached: generated >= limit,
@@ -178,7 +178,7 @@
       .map((account) => [String(account.id), account]));
     const fallback = {
       uploadLimit: Math.max(1, Number(defaults.uploadLimit || 80)),
-      generationLimit: Math.max(1, Number(defaults.generationLimit || 45)),
+      generationLimit: Math.max(1, Number(defaults.generationLimit || 50)),
       windowHours: Math.max(1, Number(defaults.windowHours || 3))
     };
     return (Array.isArray(profiles) ? profiles : [])
@@ -192,6 +192,12 @@
           ...fallback
         };
       });
+  }
+
+  function restoreLegacyGenerationEstimate(value, { legacyDowngradeApplied = false, migrationApplied = false } = {}) {
+    const number = Number(value);
+    if (migrationApplied || !legacyDowngradeApplied || number !== 45) return value;
+    return 50;
   }
 
   function taskQuotaBoundary(options = {}) {
@@ -354,6 +360,7 @@
     recentSuccessfulMaterialKeys,
     recoverableMaterialPaths,
     reconcileAccountQuotaSettings,
+    restoreLegacyGenerationEstimate,
     rotationRunAfterModeSwitch,
     rotationBoundaryRecovery,
     rotationResumeCheckpoint,

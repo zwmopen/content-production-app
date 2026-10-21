@@ -937,14 +937,14 @@ def main():
         # Codex API 产线
         {
             "line_key": "03-Codex_API产线",
-            "line_name": "Codex API 产线 (GPT Image)",
+            "line_name": "本地模式（Codex 客户端）",
             "work_subfolder": "模式1_纯原图复刻打乱_安吉秋季团建",
             "mode": 1,
             "extra": {}
         },
         {
             "line_key": "03-Codex_API产线",
-            "line_name": "Codex API 产线 (GPT Image)",
+            "line_name": "本地模式（Codex 客户端）",
             "work_subfolder": "模式3_固定模板模式_T79安吉方案",
             "mode": 3,
             "extra": {"fixed_tid": fixed_t79}

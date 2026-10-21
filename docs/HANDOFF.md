@@ -1,3 +1,315 @@
+# 2.6.41-dev｜修复精准团建素材被活动标签误分
+
+- 复现：HR 素材 `.tags.json` 同时含 `trafficType=精准团建`、主标签“团建方案”及活动标签“团建游戏”；旧顺序先检查所有游戏词，返回 `game`，把上海 HR 服务方案路由到农庄视觉的小游戏库。
+- 修复：明确精准团建类型/企业团建主标签优先于泛活动词；显式“团建游戏/破冰游戏”来源目录仍保留 `game` 路由。
+- 验证：`python -m unittest scripts.test_material_template_router -v` 2/2；`python -m py_compile scripts/material_template_router.py scripts/test_material_template_router.py` 通过；当前 HR 素材回读分类 `team_building`。
+- 保护边界：保留原工作区未提交的随机模板资格改动；未重选/绑定模板，未调用生图或改活动进程。HR workset 仍需完成随机候选池及抽中 P1/P2 适配审查。
+- 下一步：修复后的分类进入精准团建候选池；P1/P2 适配后再绑定，逐页生产并落入正式本地成品库。
+
+# 2.6.40-dev｜A/B 守护跳过已运行实例（2026-10-17，本地未发布）
+
+- A/B 启动脚本不再删除 Electron `SingletonLock`。每次尝试前探测专属 CDP 端口；端口被原实例占用则跳过，15 秒后复查；探测失败保留现场并延后复查。
+- 定向 Node 测试 2/2、两个守护脚本及 helper 语法检查通过。活动 A/B 主实例仍分别为 PID 85616/80432，端口 9431/9432；重启的守护 PID 93072/79280 均记录“实例已占用，跳过重复启动”，没有另起 Electron。
+- A/B runtime 截至 2026-10-17 15:46：A `running=false, paused=false`；B `running=false, paused=true`。两者队列均不含当前计划 workId 的匹配执行任务；未提交新图片，生产续页仍阻塞。状态面板于 15:47 从本机 runtime 文件重新构建。
+- 剩余：定位已登记、受支持的 A/B 当前 workId 续页 writer；不解暂停、不改队列、不绕过已拒绝审计的直接 CDP 发送路径。
+
+## 2.6.38-dev｜Codex 保存模式显示同步（2026-10-14，本地未发布）
+
+- A/B 内容制作服务配置都指向 `D:\AICode\AI\private-config\skills\codex-teambuilding-api-replication\profile.json`；状态接口按该 profile 的 `paths.pipelineModeTemplateConfig` 回读当前 Codex 模式。
+- 当前共享设置为 `1_replica_shuffle`；模式 1 的状态 DTO 不带模板 ID，所以配置文件中保留的 T79 不会显示为正在使用的模板。前端首次加载采用保存值；用户手动切换后不被刷新覆盖。
+- 针对性服务端与 UI 测试通过，新增字段按本地接口函数已读回验证。活动 Electron 服务 4331/4332 仍返回旧 schema v4（没有 `savedSelections`）；为避免打断活动实例，本轮未重启。安全刷新服务后再做活动页/API验收。
+- 自动新建 Codex 对话、粘贴/发送提示词和调用生图仍未接通；本次只修读取/显示一致性。
+
+## 2.6.36-dev：成品元数据双线一致（2026-10-12，本地未发布）
+
+- 共用源码 `src/lib/production-delivery-metadata.js` 为在线打包生成档案；A/B 实例已同步相同 helper。新包同时写 `metadata.json` 与 `GPT作品记录.json.deliveryMetadata`，源素材归档后再区分原路径和当前路径。
+- Codex 本地归档器 `AI/skills/技能包/技能/codex-teambuilding-api-replication/scripts/clean_delivery.py` 写 `metadata.json` 与 `manifest.json.deliveryMetadata`。
+- 统一字段涵盖来源、成品、实际选择模板、明确的逐页映射、图片/文案路径与 SHA、文案版本、QA 和云端同步状态。没有证据的逐页关系留作未核实。
+- 验证：本地归档测试 15/15；共享源码、A、B 的元数据测试各 3/3，相关服务端/扩展脚本语法检查通过。
+- 限制：只验证代码和隔离临时目录；未启动/重载 A/B、未提交一套真实在线作品；旧作品未批量回填。运行中版本、桌面端效果、真实模板/源映射和飞书回读仍需单独验收。
+
+## 2.6.35-dev：内容制作页移除顶部执行总览卡（2026-10-11，未发布）
+
+按用户反馈移除占空间的顶部执行状态卡，并清掉对应的渲染函数与样式；产线模式说明、后端能力状态和生产请求列表保留。定向 UI 回归 1/1，`node --check src/public/app.js` 与 `git diff --check` 通过。尚未重载桌面工作台，也没有新增真实生图或整套交付；两条产线六种组合仍未完成端到端验收。
+
+## 2.6.34-dev：双线实际续跑与在线连接修复（2026-10-11，未发布）
+
+在线 producer 的内存回收与生产共享 WebSocket 接收器会互抢，现将完整命令交换、重连与关闭串行化；专项测试 5/5，附件严格计数测试 4/4。A/B 均 HALTED、无 current_package 后已替换闲置旧进程，当前 PID 34668；浏览器与登录保留，批量领料保持暂停。新进程启动不代表模型生产验收。
+
+独立固定模板 adapter 分开验证附件齐全与提示词发送就绪，使用原生输入并完整回读正文，缺图、多图、截断或已有草稿均拒绝发送。在线 T27 新会话学习正在实测；旧模板链接为空不能伪造 READY。两条产线的完整交付及三种制作模式仍未全部验收。
+
+本地 Codex 已实际接续义乌 T27 测试套图，按 manifest 页码保留旧合格图继续缺页；实际张数和 SHA 以测试 manifest 为准。11 版本文案已落盘并通过现有检查。没有把单页图片、学习回复或程序测试计为完整成品。
+
+飞书异常消息已由 feishu-main bot 发送并精确回读，message ID om_x100b63926cc980a4c295c873df246a1；总控卡更新 API 230075 独立记为 PENDING，不重发警报、不更换总控消息 ID。通知脚本回归 29/29。未推送 GitHub。
+
+下一步：完成本地整套图片与交付；在线取得真实 T27 学习回执后执行同素材单套，不解除批量暂停冒进。
+
+
+### 2.6.33-dev 本轮验证与剩余事项
+
+- 相关 Node 合同/界面测试62/62；随后新增真实 Python 整套验证入口定向测试1/1（隔离临时图片，未调用模型）。Python 请求/接手/包验证38/38，追加真实11版文案通过、重复正文拒绝和整套包验证3项后，包验证10/10；合计41项。
+- 缺页、错源映射、损坏原生图、文案SHA变化、QA缺页、同大小原生字节变化、验收后文件变化均有回归覆盖。整套入口匹配原领取者，并发不覆盖已有记录。
+- 主观事实/水印/布局检查仍为实际执行者的逐页检查声明；程序只核实声明绑定同一文件，不宣称自动视觉审查。
+- 返修后的追加验收版本、正式入库与云端完成回写尚未接入。新版未重启活动进程、未实机生图、未发成功通知、未推GitHub；总计划P09/P11只推进部分。
+
+
+## 2.6.33-dev：完整套图与文案核验（本地开发，未发布）
+
+新增同一请求的整套实物验收入口：按原素材逐页核对原生图 SHA、实际图片解码及 1086×1448 规范图，复用现行 11 版文案检查，并拒绝正文完全重复的版本。验收后界面显示“整套已核验 · 待交付”；正式归档和云端回读尚未接入，仍不计为完成。状态回读重新检查文件 SHA，文件变化后旧合格状态失效。
+
+该项属于总计划 P09/P11 的部分实现，不代表两条产线、三种模式现场跑通。现有活动进程未强制重启，未发布 GitHub，未发送成功通知。
+
+## 本地开发断点 2.6.31-dev｜额度异常通知不得把计划写成事实（2026-10-10，未发布）
+
+- 复现与根因：在线模式生图额度提醒在任务锁释放之前发送，却写成“已退回待生产池、另一实例会自动接手”；没有说明本次会话、作品或处理验证。公共异常卡还用固定文案暗示自动重试/恢复。
+- 修复：通知统一列出来源平台、实例/会话窗口、执行者/任务、问题与影响、尝试处理及验证、当前状态和下一步；缺少的现场信息明确标为未核实。队列退回与 B 实例领取在回读前只写“待确认”。本机等待时间明确为按网页提示估算。
+- 验证：纯本地通知合同测试 2/2、两个 Python 文件编译检查通过。没有运行会发飞书的集成测试。
+- 边界：本轮不发飞书消息、不调用生图、不启动生产。若在线 producer 仍在运行，不强制杀进程或热替换；新文案需在受支持的安全生命周期重载后才会生效，运行中行为尚未验收。
+- 下一步：在线实例安全空闲并按支持流程重载后，再核验真实通知及 A→共享队列→B 的实际接续回执；在此之前只确认本地代码与离线合同。
+
+## 本地开发断点 2.6.30-dev｜CDP 附件必须整套挂载（2026-10-10，未发布）
+
+- 复现与根因：CDP 旧 producer 把附件预览百分比当成提交门槛；3 张源图只挂 1 张时也可能达到向下取整后的 60% 门槛并启动模型。计数还曾以页面上的“移除”按钮作为兜底，可能把非附件 UI 元素当作图片。
+- 修复：附件计数只读取表单图片、附件 tile 与真实 FileList；`is_complete_attachment_batch()` 要求期望数量大于 0 且观测数精确相等。任何缺图或多计都 fail-closed；已确认上传数仍写入本地预算，避免失败重试低估使用量。
+- 验证：`python -m unittest discover -s tests -p "test_attachment_batch_gate.py" -v` 4/4；`python -m py_compile scripts/attachment_batch_gate.py scripts/dual_browser_autonomous_producer.py` 通过；`git diff --check` 通过。未执行真实 CDP 上传或模型调用。
+- 现场约束：自动 producer 进程已载入旧代码且仍在运行，项目规则禁止强杀生产实例。本次只改源码并发出一次已回读的 CDP 附件故障异常通知；指定群总控卡更新接口失败，保留待修，不重发异常消息。
+- 下一步：等 A/B 都自然空闲后，通过受支持的生命周期重载新版，再做小批量实机检查，确认附件精确数、模型提交和失败退让；未完成前不将该产线标记为已修复，也不把被隔离/未闭环材料重做。
+
+## 本地开发断点 2.6.29-dev｜两条产线统一名称（2026-10-10，未发布）
+
+- 用户可见名称统一为“在线模式（GPT 网页/CDP）”和“本地模式（Codex 客户端）”。在线模式包含 CDP A/B 两个实例；Gemini 入口降为只读历史。三种制作方式保持为另一层目录选项。
+- 服务端产线目录、前端标签/状态卡、工作台错误提示、操作手册与三模式共享技能已同步此命名；内部 `cdp-a`、`cdp-b`、`codex-api` ID 保持不变。
+- 自动验证：三文件定向合同套件 51/51 通过；随后对最终产线 aria-label 文案变更的前端合同测试 17/17 通过。`node --check`（服务端路由/前端脚本）、能力注册 JSON 解析与 `git diff --check` 通过。桌面安全空闲现场验收未执行；未调用生图、未写作品台账/生产通知群，第二大脑状态文档已依规则同步飞书；未重启工作台/Electron，也未推送 GitHub。
+- 下一步：待活动工作台安全空闲后再刷新并核对可见标签与服务端快照。真实生产矩阵与作品闭环仍须按实际模型回执、逐页 QA 和归档/飞书证据验收。
+
+## 本轮合同验证增补（2026-10-10）
+
+- 在隔离临时目录中新增 12 组合测试：CDP A、CDP B、Codex、Gemini × 复刻重组、随机模板、固定模板，逐一经过请求准备、正确执行器领取、逐源页哈希绑定的生成回执和状态回读。
+- `node --test src/server/routes/production-request.test.js`：23/23 通过。该矩阵用隔离生成图片校验本地协议，不调用真实模型；回执只到 `GENERATED_PENDING_QA`，不表示图片质检、飞书或正式归档。
+- 2026-10-10 16:39 +08 现场探测：4331 API 连接失败；4332 可回读 schema v4、请求数 0，CDP B 报 `REPORTED_PRODUCING`、A 报 `REPORTED_ERROR`、Codex 为 `UNOBSERVED`、Gemini 为 `UNCONNECTED`；Gemini 网关/看板 8792/8820 无监听。CDP 调试端口监听本身不作为生图回执。
+- 三线 × 三模式真实闭环仍是 0/9；本轮未发起生图、未改生产素材、未写飞书、未推 GitHub。当前需要继续补各自真实执行器并逐线做物理验收。
+
+## 本地开发断点 2.6.27-dev：A 实例黑屏恢复（2026-10-10，未发布）
+
+- 复现：实例 A 的 Electron 窗口标题栏正常，内容区全黑；http://127.0.0.1:4331 页面 DOM 已加载，但 body 的计算样式为 display:none、矩形为 0×0。
+- 根因：preload.js 暴露 assistantOverlay: true；app.js 因此把 native-assistant-overlay 加到整个 document.body；styles.css 把该类作为通用隐藏选择器，意外隐藏整页。GPT 宿主随即成为 0×0，日志出现 gpt-surface-skip bounds=0x0。可用内存约 1.19 GB 属于资源压力事实，但未发现内存保护主动黑屏的证据。
+- 修复：从助手装饰控件的 display:none 选择器组移除 native-assistant-overlay，保留各个助手控件的单独隐藏规则；静态资源缓存版本提升到 2.6.27-dev。
+- 验证：新增回归 1/1；A 页面重载后 body=block、主区域 1506×904、GPT 宿主 1188×388；定向窗口截屏显示工作台恢复。未发送模板内容或模型请求。
+- 剩余：GPT 扩展仍记录初始化/状态查询超时；需在确认 ChatGPT composer 位于“模板库”项目后再创建新模板对话。B 未操作。
+
+## 现场稳定性复核（2026-10-10 12:16 Asia/Shanghai）
+
+- 4332（B）仍有 `src/server.js` 子进程 PID 35440；TCP 可快速连接，但 `/`、`/api/runtime-info`、`/api/production/capabilities` 与 `/api/production/state` 连续探测无响应，连接堆积。该进程 CPU 采样基本静止；根因尚未查明。
+- 4331 只在间歇请求中短暂成功，随后同样多次超时；一次成功快照不能作为稳定性通过。4399 对应 API 为 404。当前工作台运行态应显示未核实。
+- B 日志仍有 worker 活动，所以本轮没有重启或杀进程。安全动作：等 B worker 自然空闲，通过工作台正常生命周期重建服务，再验证 runtime-info ≤2 秒及 capabilities；不要绕过生命周期强制终止。
+- 三产线×三模式真实闭环仍是 0/9。昨夜网页动作日志没有绑定 workId、输出 SHA、逐页 QA、正式归档与飞书回读；昨夜完成套数仍未核实。
+- Codex 生图明确额度门：12:19:18 重置，12:24:18 后才允许单次探测。探测之前不得标 READY，也不得重开活动 workLock。
+
+## 本轮延续核对（2026-10-10，用户要求完成三产线 × 三模式真实闭环）
+
+- 全局完成定义维持严格口径：三产线 × 三模式不是 9 个“可登记”就算跑通；每个组合需同一隔离完整素材夹上的真实模型调用、逐页物理输出/源 SHA、独立 QA、文案与 manifest、正式目录和所需云端回读。异步登记、进程存活、旧文件和离线 stub 都不能替代实跑。
+- 昨夜 2026-10-09 18:00 至 2026-10-10 05:00 的只读核对：3 套 CDP 本地图片+文案包，另 1 套只有文案；三套图片包均缺逐页 QA 与飞书图片回读凭证，完整闭环为 0。样品细节在 `THREE-LINES-SAME-MATERIAL-20261009.md`；旧报告不能升格成通过。
+- 最新代码修补位于共享 Codex 生产技能 `AI/skills/技能包/技能/codex-teambuilding-api-replication/`：完成通知现在校验 SHA 绑定 manifest、完整页计划、整套本地验证、逐图飞书 token/尺寸回执和生产字段回读；配对同步器会把对应凭证写入 manifest。定向测试：通知 22/22、配对 19/19、归档 22/22 通过，均为离线合同测试，不是云端/E2E 通过。
+- 三模式共享入口源为 `AI/skills/技能包/技能/teambuilding-production-3modes/SKILL.md`（1.2.2-chat-entry）；AICode 实际运行副本 `.agents/skills/teambuilding-production-3modes/SKILL.md` 在本次开始时仍为 1.1.5。Codex 技能能力注册、运行时技能和本手册尚需逐一同步并做哈希回读，禁止运行全局 Sync-CoreSkillRuntimes。
+- 当前已知接线边界：内容制作 App 的通用请求只提供 prepare/claim/逐页 receipt，不会自动唤醒 Codex/Gemini 或任意 CDP 会话；唯一隔离 CDP 执行器目前只支持固定模板模式，Gemini dispatcher 仍未接入；Codex 需当前宿主原生 imagegen。模式 1/2 及 9 个组合的实机验证尚未完成。
+- 不得为完成数字重启正在使用的 CDP B 窗口、轮换账号、重复旧页或把正式素材上传测试表。未完成之前不推送 GitHub，不发“已跑通”结论。继续先完成技能/手册一致性与隔离模式合同测试，再选一个用户确认隔离的测试素材做逐组合实机验收；不能跑的组合记录具体执行器/登录态缺口和待办。
+
+## 本地开发断点 2.6.26-dev（2026-10-10，未发布）
+
+- 请求阶段桥已扩展：`GET /api/production/requests/:requestId` 回读详情；`POST /:requestId/claim` 以请求编号和 worker UUID 独占领取、同 worker 幂等；`POST /:requestId/receipt` 只接受绑定领取凭证与原素材/文案/P1/P2哈希的完整逐页输出回执。
+- 请求正文保持不可变；输出必须在该请求独立 `outputs/` 子目录，每页匹配源 SHA、唯一原生图片文件哈希及本地调用 UUID。回执后文件发生变化或丢失时，统一 DTO 会显示异常状态，不标为完成。
+- UI 的 Codex/Gemini 请求卡现在从 `/api/production/state.requests[].status/lifecycle` 显示真实后端阶段，不再把所有请求一律显示为“尚未生成”。QA 与交付字段保持 `NOT_REPORTED`，`completed=false`。
+- 验证：后端请求路由 `22/22`、前端请求状态投影 `16/16`、UI 合同 `10/10`、CDP 消费者合同 `5/5`，合计 `53/53`。相关 JS `node --check` 与 `git diff --check` 通过。
+- 边界：接收本地回执不自动触发原生 imagegen 或 CDP/Gemini worker，不证明第三方模型调用、图片主观 QA、正式成品入库或飞书闭环。无领取释放/过期自动重领；执行器中断时须先对账回执与文件，不能盲目重派。运行实例和桌面 UI 尚未刷新。
+
+## 本地开发断点 2.6.25-dev（2026-10-10，未发布）
+
+- 产线状态页遇到“后端声明 capabilities-v4 但缺 `declaredProfileRevisionState`”时，现在给出具体 DTO 错配文案；不再落入笼统快照错误。
+- 定向验证：`node --test src/public/production-request.test.js`；并需连同 server route 与 UI 合同测试复跑。
+- 现场 4332 在 06:51（+08）仍缺该字段，说明运行进程没有载入 2.6.24 修复源码。当前 CDP B 桌面/浏览器会话在用，未重启或热加载；新诊断要等安全空闲后现场验收。
+- 该改动不接通 CDP worker、Codex 宿主或 Gemini 执行器，不产生图片或作品交付证据。
+
+## 本地开发断点 2.6.24-dev（2026-10-10，未发布）
+
+- 根因：`capabilitySnapshot()` 返回 `declaredProfileRevisionState`，但 `productionStateSnapshot()` 构造 `/api/production/state` 时遗漏该字段；浏览器 v4 验证器将快照判为无效，因此内容制作的统一状态、模板和模式控件不能正常启用。
+- 修复：统一快照现在原样投影该字段；服务端回归直接调用浏览器 `validateStateSnapshot()` 校验 DTO，防止前后端字段再度漂移；静态资源查询版本和 `VERSION` 更新为 `2.6.24-dev`。
+- 自动回归：`node --test src/server/routes/production-request.test.js src/public/production-request.test.js tests/production-request-ui.test.js` 45/45；`node --check src/server/routes/production-request.js`、`node --check src/server/routes/production-request.test.js` 和 `git diff --check` 通过。2026-10-10 06:33（+08）现场 GET 仍回读旧进程快照，字段缺失且浏览器校验为 false；没有刷新或重启活动 CDP B 工作台，避免打断其现有窗口/队列。安全空闲后需重新加载服务并验收 HTTP 与桌面。
+- 该修复仅恢复统一状态快照合同，不连接执行器、不调用模型、不证明图片生成、QA、入库或飞书闭环。
+
+## 本地开发断点 2.6.23-dev（2026-10-10，未发布）
+
+- CDP 消费链统一采用扩展共享的 canonical 固定模板合同。桌面派单显式转发 `templateSelectionMode`、`pipelineConfigMode`、`pipelineConfigRevision`、`pipelineConfigTemplateId` 和 `pipelineTemplateReferences`；桌面与扩展均 fail-closed 校验，只有 `3_fixed_template` 可进入 P1/P2 附件消费，其余模式明确拒绝。
+- 桌面先按配置重新读取 P1/P2 文件并核 SHA-256/字节数；扩展只在实际 GPT FileList 中再次逐字节核验附件，并确认输入框预览完整后产生 proof。桌面把 receipt 写入唯一匹配的原运行队列任务，再回读 `MATCH` 后才 ACK 扩展。receipt 的 phase 是 `TEMPLATE_REFERENCES_ATTACHED_BEFORE_MODEL_START`，不等同于模型调用、生成、QA 或入库。
+- 发现并修复误报：目前 `runAutomaticProduction()` 明确返回 `legacy_extension_pipeline_disabled`；固定模板 auto-run 在得到附件 receipt 后会以 `PIPELINE_WORKER_UNAVAILABLE` 失败关闭，明确没有注入生产指令或启动模型，不再落入通用附件上传 `success`。该错误使当前 composer 边界暂停，避免后续素材叠加到残留 P1/P2/源图上。
+- UI consumer 使用新鲜 `/api/production/state` 快照构造 Codex API selection，并将同一 selection 交给 response readback；更新 B_ONLY fixture 的 selection 候选，避免测试夹具遗漏合同字段。
+- 回归：`node --test tests/production-request-ui.test.js src/integrations/gpt-production-extension/cdp-pipeline-consumer.test.js` 15/15；`node --check src/desktop/main.js`、`src/integrations/gpt-production-extension/sidebar.js`、`src/public/app.js` 通过；静态资源版本与 `VERSION` 对齐，`src/package.json` JSON 有效。
+- 没有启动浏览器、模型、飞书或 Electron reload；没有证明桌面实际 FileList event、WebContents bridge 和运行时 receipt 路由通过实机验收。模式 1/2 不支持；模式 3 目前只实现可核验的 P1/P2 附件消费回执，实际模型生产 worker 仍未接通，三产线×三模式端到端仍未完成。
+
+## 本地开发断点 2.6.22-dev（2026-10-10，未发布）
+
+- 内容制作两个入口的首步按钮统一改为“生成生产计划”，初始说明和帮助提示也按实际操作写清计划检查后才会生图。计划生成后同一按钮显示“生成首张校准图（仅1次调用）”；确认执行仍走 `/api/production/run`。
+- Codex API 的真实按钮本来已是“登记这套制作请求”；源码复核确认它 POST `/api/production/requests/prepare`，回执明确 `PREPARED_NOT_GENERATED`，所以保留原文案，没有误改。
+- 自动回归新增 UI 合同；按钮/API/阶段提示与静态资源版本回归 3/3，产线状态/请求合同 39/39，`node --check src/public/app.js` 与 `git diff --check` 通过。整份 `workbench-ui.test.js` 为 506 项：474 通过、31 失败、1 跳过；失败项覆盖其他导航、GPT 运行时和帮助模块，完整套件仍未绿，不能把本次定向通过描述成全量通过。
+- 未运行模型、未改作品队列/成品、未写飞书、未重启或发布桌面应用。
+- 尚未完成：Codex/Gemini 执行器接通；三线×三模式真实生成、独立 QA、正式归档与飞书读回；工作台桌面显示验收。
+
+## 本地开发断点 2.6.21-dev（2026-10-10，schema v4 未发布）
+
+- 当前源码补齐旧状态 API 的直观错误提示：`stateSnapshotMismatch` 识别 schema/revision 过旧，UI 将实际与期望版本写在错误卡中。定向测试覆盖 helper 与真实 catch 路径，39/39。
+- 2026-10-10 04:37（Asia/Shanghai）只读回读 B/4332：`runtime-info=2.6.20-dev`、`/api/production/state schemaVersion=4`、revision=`production-capabilities-v4`、0 条请求。CDP A=`OFFLINE`、B=`ERROR`；Codex=`UNOBSERVED`；Gemini=`UNCONNECTED`。与 CDP 日志里的 B 活动素材锁/仅挂载 1/10 附件存在状态不一致，不能据此说 B 仍在正常生产。守护进程约 04:37 自行拉起 Electron；本任务没有重启它。
+- 三线测试历史目录有 22 张图片，但只读审计发现它们由 Pillow/本地绘图生成，没有真实 CDP、Codex 或 Gemini 模型调用凭证；旧“实机全 PASS”不能作为闭环证据。执行矩阵尚未通过真实生产验收。
+- 当前优先素材 `AUTO-AUTUMN-9-10-39587e78f2c8-2026-WORK` 仍 0/7 张图；11 版本文案 QA PASS。明确 provider reset 是 2026-10-10 12:19（+08），策略探测不早于 12:24；04:37 未调用图像工具。仍需遵循同一 workset 锁，不能换到另一套素材逃避冷却。
+- 当前未完成：三条生产线 × 三种模式的真实执行、独立 QA、正式成品与飞书回读；活动 B 状态矛盾待自然收尾后复核；没有桌面视觉验收或发布。
+
+- 目标：前端显示内容必须与后端状态、配置一一对应，并区分当前运行证据与陈旧快照。
+- 修复：统一 `/api/production/state` 增加 `runtime` DTO；CDP A/B 从私有 profile 指定的旧执行器心跳文件只读状态，按 180 秒新鲜度门控制显示。过期状态不暴露队列数或最近完成项；Codex 宿主/Gemini 缺少执行器回执时只显示未观测/未连接。内容制作页顶部增加状态卡，前端严格校验四个执行实例均映射到后端目录。
+- 私有 B profile 增加只读 `runtimeEvidenceSources.cdpDaemon` 路径及 stale 门限；写入前 SHA-256 `da108ffcfa720818999c2ba54f428a2e57f23f79e51479bdf169acba1b7211b1`，写入后 `58d6f69e3b475fec43992acfe21d7929a667350d0da54fa92044f48671b0428b`。配置不含账号凭证。
+- 验证：请求路由、客户端 schema 校验、运行源 fresh/stale、安全字段屏蔽、工作台 UI 运行卡投影 37/37；`node --check` 与 `git diff --check` 通过。直接用 B 私有配置构造 schema v4，DTO 校验为 true；现场心跳年龄 1061 秒，回读标记 STALE，queueRemaining 不返回。没有泄露状态源路径。
+- 现场：B/4332 服务仍在旧版 `2.6.19-dev`，`/api/production/state` 返回 schema v3；生产器 PID 35920 仍存在，但状态文件过期，不能证明当前产出。没有重启/刷新活动服务或 Electron，也没有发起模型、飞书或生产写操作。
+- 未完成：新状态卡待安全窗口桌面验收；Codex 宿主回执与 Gemini 执行器尚未接入；真实生成、独立 QA、正式归档与飞书回读仍未完成。此修复只统一“登记/执行器观测”状态，不等于三条生产线已跑通。
+
+## 本地开发断点 2.6.19-dev（2026-10-10，schema v3 未发布）
+
+- 用户要求前端可视化、设置、后端数据与状态逐项对应。源码中的 `/api/production/state` 已升至 schema v3：主线为 CDP、Codex API、Gemini；CDP A/B 保留为精确执行实例；三种模式、登记/执行能力与服务端核验的模板编号、P1/P2 哈希在同一快照中。
+- 三条线的制作模板选择器都改为消费该快照，提交时只允许选择快照中的母版。Gemini 面板仍是“只登记、不生图”，请求回执为 `PREPARED_NOT_GENERATED`。
+- 定向测试：后端路由、前端投影和工作台 UI 合同共 36/36；JavaScript 语法检查与 `git diff --check` 通过。另覆盖 CDP 当前 A/B 实例切换时母版选项按当前实例投影。
+- 当前只读在线 B/4332 回读为 schema v3；服务下发 HTML 含 Codex 母版选择器，served client script 要求 v3 并校验模板选项。返回 3 条主线、3 种模式、0 条请求和 1 套有效母版。4399 的生产大屏是另一接口（`/api/status`），没有 `/api/production/state`；两者须保持为不同状态合同。
+- 额度、逐页生产进度、QA、正式归档与飞书回执还没有接入这一状态合同；三条线真实生成闭环仍未完成。不能把登记回执当作成品。
+- 下一步：在安全窗口验收容器/Electron 中的实际渲染与选择；之后按线取得真实模型、成品、QA、归档及飞书读回凭证。
+
+## 本地开发断点 2.6.18-dev（2026-10-10）
+
+- 目标：让“前端模式设置、界面状态、后端能力与请求记录”逐项对应，避免 HTML 固定选项和静态提示与后端执行现实不一致。
+- 修复：新增版本化 `GET /api/production/state`，一次回读服务端产线/模式目录、3×3 登记与执行能力矩阵、隔离请求台账及时间戳；前端按该快照同步模式选项，CDP 映射当前 A/B 实例，Codex 与请求卡显示对应执行能力。配置未就绪、身份未知、快照读取失败或 schema 不一致时显示未核实并禁用登记。
+- 具体素材/母版仍由 POST 准备接口核验；回执仍是 `PREPARED_NOT_GENERATED`，没有增加 AI 调用或后台生产。
+- 定向自动回归：服务端请求路由、前端纯投影和工作台 UI 合同 32/32；`node --check src/public/app.js`、`git diff --check` 通过。
+- 未完成：没有重启当前服务或 Electron；桌面实际渲染与实时接口读回待在安全窗口验收。真实生图、独立 QA、正式入库、飞书回读以及 3 条产线 × 3 模式全闭环仍未完成。
+- 现场生产锁/profile 未在本次 UI 修复中重新核验；不更新、不释放任何作品锁，不声称有新增作品。
+
+## 本地开发断点 2.6.17-dev（2026-10-09）
+
+- 目标：让容器交接确实绑定一个作品和一个指定 CDP 实例，并让用户可继续在当前 AI 对话中直接驱动技能；面板只做选料和状态辅助。
+- 修复：容器交接请求加入 `targetLineKey`、`targetInstanceId`；接收端校验当前实例身份与账号分配，并回传含目标/接收实例的回执。容器等待请求期间切换实例时，迟到回执只能归到原目标，不会误报当前实例收到。
+- 定向自动回归：内容制作接收端 `node --test tests/container-handoff.test.js` 17/17；容器定向交接/UI/配置回归 20/20，完整 `npm test` 58/58；`node --check src/public/app.js` 通过。
+- 运行态：当前活动 Codex workset `AUTO-AUTUMN-9-10-39587e78f2c8-2026-WORK`，队列记为 `pipelineState=RUNNING`、`imagegenState=COOLDOWN`，源端给出的重置时间 2026-10-10T04:19:18Z，策略探测不早于 2026-10-10T04:24:18Z；期间仍可推进不依赖生图的本套文案与结构 QA。没有新增图片。
+- 未完成：没有重启工作台/Electron；真实生图、3 条产线 × 3 模式逐组合闭环、正式归档/飞书回读和桌面实机交接验收均未证明。本地回归不代表整套真实产线跑通。
+- 保留所有既有脏改动，没有动私有 profile、素材队列或作品 manifest。
+
+## 本地开发断点 2.6.16-dev（2026-10-09）
+
+- 目标：修正“素材仓库 → 制作”入口的语义与选料边界，让一个作品文件夹清楚地成为一次制作输入。
+- 复现：素材库父级分类带有图片时也出现“制作”；散图卡片也可单独送入；父级分类交接会让内容制作接收端选中该分类全部素材。
+- 根因：容器只传路径/显示名、没有识别末级文件夹；接收端把分类路径映射成分类内全部帖子；剪贴板副作用取代了可见的当前素材状态。
+- 修复：目录扫描增加直接子文件夹数；入口只对含图且无子目录的文件夹显示“选这套素材”，移除散图和根目录批量入口；选中作品持久化到工作台并显示素材名/路径/张数/接收状态/是否已开始，复制路径变成显式动作；CDP 收到真实回执才显示“已带入”，Codex/Gemini 未确认接收时只报告容器选中，不伪称收到。
+- 回归：容器验证单文件夹路径、末级目录条件、散图/分类拒绝、hand-off 成功只返回 `SELECTED_NOT_STARTED`；内容制作端对分类路径明确拒绝，防止整类多作品被误选。详细桌面验收仍未执行。
+- 运行态：未重启工作台、Electron、CDP 或生产器；未调用模型、上传素材或创建生产任务。现有脏工作区均保留。
+
+## 本地开发断点 2.6.15-dev（2026-10-09）
+
+- 目标：给旧 CDP producer 加真正的 3 小时 / 最多 80 附件上传前安全门；额度等待时让素材交给另一条可用 CDP 实例，而非把同一素材全局冷却或归到失败。
+- 代码：新增 `scripts/production_quota_policy.py`；`dual_browser_autonomous_producer.py` 在挂载前预检整套附件；每个已确认挂载的附件在最低挂载门槛判断前、提示词提交前登记 `uploaded`，包括随后因挂载不足而拒绝提交的部分附件；作品验收后另记 `generated`。生产器本地事件与工作台按 `requestId` 镜像/去重；工作台不可达时本地账本兜底。
+- 让位：额度异常单独分型、无重试扣数/无 30 分钟素材冷却、移除任务锁并记录 `quotaYield`。超过单次上限的任务进入“额度待拆分”，避免无法满足的附件批次每秒重复领取；其他生产失败不改变原有冷却规则。此让位只在 CDP A/B 共享素材调度器内有效，不能自动切给没有执行器的 Codex/Gemini。
+- 生图守门也合并工作台当前账号的 `generated` 事件与 producer 本地 40/3h 安全线；事件按 request ID 去重，仍单独保留 180/日 producer 巡航线。
+- 测试：`python -B -m unittest discover -s scripts -p 'test_production_quota_policy.py' -v` 9/9（包含部分挂载先记账、整套额度预检和超大单套转“额度待拆分”不循环）；Python 编译通过；本节涉及文件定向 `git diff --check` 通过。
+- 运行态：没有重启、关闭或注入测试任务到正在运行的 CDP B；此代码未加载到活动进程。因此这是已完成静态实现、未完成实机验收，不报告“额度闸门已在线”。读取现场如 B 仍生产，就等当前套自然收尾；CDP A/ Codex / Gemini 若仍不可用则不启动真实组合测试。
+- 最新只读断点（2026-10-09 21:14:50 +08:00）：旧 producer PID `35920` 仍活跃，CDP A 端口不可达；CDP B 正处理一套完整秋季素材，10 个图片附件已挂载并提交，轮询 48/180、目标 6 张已有 1 张渲染，其余仍显示生成中。新版额度闸门未被活动 PID 加载。当前账本/API 额度是否已达 80 未核实，不据此发送“额度耗尽”通知；不得重启、重复提交或插入测试任务。
+- Git 写回：未提交/未推送。仓库还有多组先前的 UI、服务端、隔离 adapter 与测试脏改动；producer 文件也含本次之外的既有差异。安全提交器按文件路径暂存，无法只包含该文件中的本次 quota hunks，因此本轮不提交混合文件，避免夹带其他工作。
+- 三线 × 三模式：本地请求准备 9/9，不是真实生产。CDP A/B × 模式 1/2 执行器未接通；模式 3 仍待真实会话学习回执和整套归档/飞书验收；Codex API 仍待宿主执行器；模式 2 另缺真实候选模板池。详细矩阵见操作手册。
+- 下一步唯一优先：检查 B 当前套是否自然结束；在不重启、不抢占的窗口中先只验 CDP 模式 3 一套隔离素材的全闭环，再按模式/线路复制验收。面板按钮目前不能控制生图执行器。
+
+## 本地开发断点 2.6.14-dev（2026-10-09）
+
+- 请求接口现要求明确选择产线与模式；随机模板模式至少两个候选，服务端将选中模板、候选池及 P1/P2 哈希写入不可变请求。
+- 9/9 离线请求矩阵涵盖 CDP A/B 与 Codex API × 三种模式；随机模板以临时 T1/T2 候选验证稳定抽选与回读。状态均为 `PREPARED_NOT_GENERATED`，不是模型生产。
+- 回归：技能 39/39，工作台请求/API/UI 26/26；`node --check src/public/app.js` 与 `git diff --check` 通过。
+- 额度事实：三个私有准备配置目前都只列 T79，因此没有真实随机候选池。CDP A/B 的 3 小时 80 附件 / 45 生图是本地窗口安全线，不是官方配额。跨产线自动让位未接通。
+- 未进行真实生成、QA、正式入库、飞书写入或切号；没有重启运行中的工作台/生产器。九组合的实机闭环仍未验收。
+
+## 本地开发断点 2.6.13-dev（2026-10-09）
+
+- 新增 `docs/TWO-LINES-AND-THREE-MODES-USER-MANUAL.md`：分清执行产线、模板模式、任务类型；给出当前对话和 `http://127.0.0.1:4399/` 工作台的操作步骤、单套闭环标准及实机验收清单。
+- 本次重跑三模式技能合同 35/35、工作台请求/API/UI 26/26；并用临时素材逐个准备 3 条产线 × 3 种模式的 9 份请求，均为 `PREPARED_NOT_GENERATED`。工作台隔离测试完成 HTTP POST→Python 请求准备→物理 SHA→GET 回读。
+- 结论：只证明离线请求登记合同可用；没有证明任何真实模型调用、逐页图片 QA、正式归档或飞书闭环。隔离 CDP adapter 只执行模式 3；CDP A/B 的实机固定会话接线未核验；Codex 面板只登记/复制；Gemini 是独立线，未接统一工作台闭环；当前候选模板不足以证明随机模式生效。
+- 没有发起真实模型调用、上传、切号、飞书写入或生产进程重启；未改素材队列、共享 manifest 或用户私有配置。
+- 下一步：逐条补齐真实执行 adapter 与学习/来源回执，再用隔离测试素材对每个可用“产线 × 模式”组合完成生成、独立 QA、封装、台账/飞书读回；任何组合证据不全都保持未验收。
+
+## 本地开发断点 2.6.12-dev（2026-10-09）
+
+- 修复普通 CDP 自动生产漏记额度：扩展为非 API 任务分配 `cdp-<随机任务号>`，`recordWorkbenchQuota()` 接受 `externalRequestId` 或该本地任务号；账号 ID 缺失时读取当前工作台窗口 ID。事件保持按账号和事件类型幂等。
+- 上传事件仍只在成功提交附件与指令后记录，统计的是附件数（包含源图和随套 TXT）；GPT 页面预览/输入框挂载不会提前扣账。生图计数独立记录。
+- 新增 CDP 当前账号额度卡片，默认显示滚动 3 小时上传 80 附件与生图 45 张安全线；只有真实本地事件才显示计数，缺数据会显示未同步。历史漏记和网页外手动操作不会自动补录，面板的“账面余量”不是官方额度。
+- 通用 HTTP 429、rate limit、请求超时仅表示请求暂时受限，不自动分类为账号额度耗尽；明确配额用尽提示继续按账号窗口暂停。
+- 现有 rotate 模式可让触顶账号安全收尾后把下一套交给下一个可用 CDP 账号窗口。默认人工切换设置没有打开；Gemini/Codex API 尚无可用额度计数与自动执行入口，不做跨线伪切换。
+- 验证：CDP quota view + 账号轮换 + 扩展账本 34/34；配额相关 UI 回归 3/3；`node --check` 通过。未重启工作台/Electron，未调用模型或上传。
+- 运行中用户会话没有刷新，因此上述为源码和离线回归结果，不代表当前窗口已加载新版。下一步是在不打断作品的窗口安全刷新后，确认普通 CDP 完成提交会新增正确账号的上传事件。
+
+## 本地开发断点 2.6.11-dev（2026-10-09）
+
+- Codex API 页面新增两种固定模板提示词：一次性发送 P1/P2 的初始化指令，以及每次只处理一个完整素材文件夹的制作指令。预览与复制绑定当前模板和素材选择。
+- 文案要求换新对话重新附模板；模板/素材路径列表不证明文件已附到聊天。制作指令覆盖逐源图出页、封面照原模板文字与拼图处理、11 版本文案和无水印检查。
+- 功能仅复制文本；没有建聊天、附文件、调用模型、生图、入库或飞书功能。Codex 原生生图仍是宿主能力，页面没有 executor 接口。
+- 联合离线回归 42/42；Node 语法和 `git diff --check` 通过。没有加载运行中的工作台/Electron、没有实时视觉验收、真实对话回执、模型调用或发布。
+- 下一步：在不打断生产的安全窗口通过受支持入口刷新工作台，手动验收两种提示词的实际预览/复制与 P1/P2 附件步骤；若复制体验通过，再评估真实聊天附件/模型执行器是否有受支持接口，不宣称已接通。
+
+## 本地开发断点 2.6.10-dev（2026-10-09）
+
+- 修复 `scripts/launch_producer_daemon.py` 启动前删除共享 `producer.pid` 的问题；现在只派生子进程与追加 stdout/stderr 日志，锁仍归 producer。
+- 定向测试 2/2 与 py_compile 通过。测试使用临时目录/fake 进程，没有调用真实启动器。
+- 本地没有重启、关闭或再启动 producer；当时现存 PID 4156 的锁未触碰。Codex 生图仍处于上次宿主明确报告的额度冷却窗口；没有生成图片。
+- 本轮另将三模式技能注册入口恢复为可读路由页，并将过期飞书测试发送器改为 fail-closed；其离线回归单独记录，不能称三线已接通。
+- 修复固定模板/Codex 请求面板回归夹具：容器握手 VM 现提供真实选择函数和 DOM 查询桩；Codex 请求按钮测试独立模拟日志、动作状态与请求刷新，不再把所有元素指向同一旧日志对象。请求依旧只登记并明确显示尚未开始生图。
+- 验证：`node --test tests/container-handoff.test.js` 15/15；固定模板、请求合同/界面、容器握手及 Gemini 诚实状态联合回归 `39/39`；`node --check src/public/app.js` 与 `git diff --check` 通过。仅测试夹具与文档更新；未改运行代码、未重启工作台或生产器、未执行真实模型调用。
+- 下一步：继续用当前授权 Codex 宿主及 priorityQueue 工作；生图仅在明确冷却结束后复探。接通其他产线需逐条完成固定会话/adapter 的实机回执与整套落盘 QA，不从端口、面板或准备请求推断。
+
+## 本地开发 2.6.9：登记状态精确绑定（未发布）
+
+Codex 面板的请求步骤现只接受请求台账中的同一 `pipeline + sourcePath + templateId`。素材、母版或产线切换后，先前请求不再点亮当前步骤。请求卡使用“执行器未接入”；面板仅有不可变制作请求的准备/回读 API，不能声称自动领取、模型派发、生成、QA、封装、归档或飞书写入。
+
+固定模板复用分产线：CDP 固定网页会话必须用可回读的实际学习回执绑定账号、会话 URL、母版和 P1/P2 哈希；历史对话或仅配置 URL 不等于当前会话已学会。Codex 原生 imagegen 每次传真实 P1/P2 参照，不存在可持久绑定的对话模板。用户的一套作品仍是一份完整素材文件夹、单独 workId/manifest/锁；不得拼接其他文件夹，也不能用登记数当完成数。
+
+验证：`src/public/production-request.test.js` 8/8、`tests/production-request-ui.test.js` 3/3、`src/server/routes/production-request.test.js` 11/11；`node --check src/public/app.js` 与 `git diff --check` 通过。未重启或发布桌面应用；执行器接入和 CDP 学习回执的真实验收仍未完成。当前产线状态以项目入口和活动 manifest 为准。
+
+## 本地开发 2.6.8：Codex 单套制作驾驶舱（未发布）
+
+- 本地源码主线仍在 `src/`。Codex API 页改为完整素材夹、一个真实母版、五步阶段图、最近登记请求卡片与诚实执行边界；每条卡片仅来自 GET 请求回读，HTML 使用安全文本节点。
+- APPLY_TEMPLATE 跨面板消息只在精确匹配真实模板目录 ID 时选中该模板，名称消息不能假称模板已选。
+- 当前固定模式说明：Codex 原生生成调用必须逐次带母版参照；“先学习一次、随后只交素材”必须使用绑定的 CDP 固定会话模式并通过学习回执验收。
+- 验证：`node --check src/public/app.js` 和 `node --test src/public/production-request.test.js tests/production-request-ui.test.js` 9/9；`git diff --check`。未运行 app server/Electron，未接模型、不生成、不写正式库或飞书。
+- 下一步：在隔离测试实例验证桌面布局、选择/回读显示和无服务错误；执行链要另接真实宿主 dispatcher 与阶段回执。本地代码、dirty changes 和远端仍未发布。
+
+## 本地开发 2.6.7：Codex 产线状态面板修正（未发布）
+
+Codex 页过去同时出现“登记制作指令”与“全自动后台生成、无缝入库”的互相矛盾描述。现将标签、说明和状态卡统一为“登记请求 ≠ 生产”：显示单套四步流程，并明确此页面尚未连接自动领取/生图执行器。请求回执只证明请求已落盘并可回读，不证明生图、QA、成品归档或飞书闭环。
+
+验证：新增 `src/public/production-request.test.js` UI 合同断言，4/4 通过；`node --check src/public/app.js` 与定向 `git diff --check` 通过。仍需通过工作台支持入口加载后做真实桌面显示验收；不重启生产实例、不调用模型。版本 2.6.7 本地开发未发布。
+
+## 本地开发 2.6.6：真实制作请求登记与回读（未发布）
+
+Codex 面板按钮由仅追加日志改为调用现有 production 路由的 POST /api/production/requests/prepare；单个完整素材文件夹与单一母版才能提交。后端从服务端私有配置解析素材根和母版实物，调用三模式技能真实 CLI 的默认准备路径，保存不可变请求并回读 SHA；不传 --execute、不生图、不写正式库、不发送飞书。GET /api/production/requests 与“查看已登记请求”用于超时后核对，准备请求不算作品完成。
+
+三条产线共用请求合同，补充要求参与请求身份；同输入返回同文件。当前只配置已核实 T79 的准备映射，A/B 实际母版会话学习与模型执行尚未验收。本轮定向自动回归 33/33（含后端准备接口 14 项，并通过隔离 HTTP→Python→文件 SHA→GET 回读）；技能 35 项为此前验证。运行实例仍未加载新路由，当前 4331/4332 的新接口返回 404；因此不称三线已实机跑通。
+
+实机加载阻塞：运行中的 Electron `ensureServer()` 遇到已有端口只复用，不替换 Node 后端；没有受支持的无中断 API 热加载。托盘重启会重启 Electron 与自有后端，可能中断生产；本轮进程重启尝试在执行前被自动审查拒绝，未触碰进程。等待安全生产窗口后，通过工作台受支持入口加载，再验收三个产线的实际请求接收与后续执行边界。
+
+# 2026-10-09 / 技能自包含与唯一执行器（本地开发 2.6.5，未发布）
+
+- 主执行真源为 `.agents/skills/teambuilding-production-3modes` 1.1.1：`scripts/isolated_fixed_cdp_adapter.py`、`scripts/test_isolated_fixed_cdp_adapter.py`、`config/isolated_fixed_cdp_adapter.example.json`、`docs/ISOLATED-CDP-ADAPTER.md`、`requirements.txt`。技能总控和执行器共 34 项。
+- App 历史 Python 入口与测试仅薄委托；环境变量 `TEAMBUILDING_3MODES_SKILL_ROOT` 可指定独立安装技能根，不设置则从 app 祖先找到 `.agents/skills`。不硬编码 D 盘、缺技能不回退、没有双实现。App example JSON 只文档指针，不可作执行配置；App 合同文档指向技能唯一合同。
+- 默认离线预检；显式 `--execute` 才访问 exact fixed conversation。独占、账号可见身份、模板 SHA/学习回执、upstream prompt plan、实际 DOM 和原生图下载通道仍须主执行者真实验收；仅完整原生回执 `GENERATED_PENDING_QA`，不写正式库和通知。
+- 验证：技能 `python -m unittest test_real_dispatch test_isolated_fixed_cdp_adapter -q` 34/34 PASS；App `python -m unittest test_isolated_fixed_cdp_adapter -q` 同一 17/17 PASS。离线合同验证未证明真实账号可出图、母版已学或三线打通。
+- 未修改 shared manifest/排产队列/绑定状态；保留其他 dirty changes。未控制浏览器、切号、启动旧 producer、真实发送、构建、git push 或发布。面板仍仅登记，不因执行器文件存在改成已连接。
+- 下一步：主执行者核实两条 CDP 固定会话及 private 配置、执行完整 source folder 并独立 QA/11版本文案/飞书闭环；Codex 继续宿主原生 imagegen，每调用带母版。此前 2.6.3 UI 26 项与 Electron 未验收边界保持。
+
+# 2026-10-09 / 固定母版流程状态集成（本地开发 2.6.3，未发布）
+
+- 范围：新增 `src/public/fixed-template-session.js` / `.test.js`，已有 `app.js` 提示和模板日志改动，`index.html` 脚本加载及 Codex 诚实标签；同步 VERSION/README/CHANGELOG/设计/架构/回归/本交接。唯一源码仍为 `src/`。
+- CDP legacy 模式显示母版绑定状态和步骤。会话 URL 不能证明母版学习完成；投影校验账号、母版、会话和学习回执身份。fresh 模式同样显示参照核实状态和每套新建对话的步骤。实际渲染函数的 VM 集成测试已覆盖两种模式，但不替代 Electron 实际界面验收。
+- Codex 逐调用母版参照与网页固定会话分开。此项目 Codex 按钮仍只登记指令，标签明确执行器未连接；本次不提供新执行器、会话初始化或跨账号复用。
+- 模板名称消息改为纯文本“已接收母版选择，实物待核实”，不作为实物入库凭证。
+- 验证：`node --check src/public/app.js` 通过；`node --test src/public/fixed-template-session.test.js tests/container-handoff.test.js` 26/26 通过（投影 8 项、实际渲染 3 项、既有容器握手 15 项）。未用定向结果覆盖下文既有工作台回归失败，未执行全量测试或 Electron 桌面验收。
+- 安全边界：保留开工已有 `scripts/dual_browser_autonomous_producer.py`、`src/server.js` 和 `scripts/test_dy_expansion.py` 变更；未触碰共享队列、作品、manifest、私有配置或飞书。未启动/重启生产进程、构建、提交、推送或发布。
+- 下一步：主执行者在运行实例安全窗口验证母版提示和纯文本日志；为真实学习回执建立可回读写入链，再连接模型执行器和整套归档证据，不能从投影就绪推断真实生产完成。
+
 # 2026-10-07 / 容器素材接收握手（本地开发 2.6.2，未发布）
 
 - 范围：仅 `src/public/app.js`、新增 `tests/container-handoff.test.js` 和项目规则要求的 VERSION/README/CHANGELOG/设计/架构/回归/交接文档。容器与其他模块由主执行者拥有，未修改。
@@ -4703,3 +5015,59 @@
 - 修复：`src/desktop/main.js` 将执行 tail 改为按 `gptJavaScriptChannelForLabel()` 分组；同一通道继续串行并保留超时释放，不同通道不再互相阻塞。`src/public/workbench-ui.test.js` 增加隔离结构回归断言。
 - 验证：`node --check src/desktop/main.js`、`node --check src/integrations/gpt-production-extension/sidebar.js`；相关回归 `612` 项，`611` 通过、`1` 跳过、`0` 失败。
 - 运行边界：未重启 Electron，未清理 GPT 登录态，未修改队列、素材、检查点或会话；需要重启后再以真实上传→计划→出图/文案→归档证据验收。
+
+## 2.6.32-dev：工作台任务与对话技能接手（2026-10-10，本地开发，未发布）
+
+- 本地任务卡增加“复制任务给 Codex”：包含同一请求编号、工作台地址与接手步骤，不另外选择素材或母版。
+- 共享技能增加 workbench_operator：从现有后端读取、校验源文件、独占领取任务、提交生成回执并回读；没有第二套任务状态库。
+- 自动打开带任务的 Codex 新对话尚未实现；按钮只复制说明。生成回报仍为待质检，不能当成作品交付完成。
+
+执行者：Codex。未重启活动生产进程，未调用模型，未向飞书发通知。
+
+现场回读：4331 为内容工作台，任务接口可读但暂无 Codex 请求；静态脚本已含新版交接入口。4399 未提供此任务接口。未进行真实生成/交付验收。
+
+## 在线模式：用一句话创建计划（2.6.32-dev，本地代码，运行验收待完成）
+
+1. 在素材区输入关键词即时筛选，或直接写完整需求；有需要就勾选整套素材。
+2. 选择制作方式、模板；固定模式可在计划中保存多个模板候选，每套开工前记录实际选中模板。
+3. 点击“创建制作计划”。没有素材也能保存，状态是“等待找到素材”；不会偷偷选其他题材，也不会立刻生图。
+4. 点击“查看计划进度”，展开计划，点“复制计划给 AI”，粘贴到操作对话。AI 读取同一后端计划，每素材一子任务；A/B 属于同一在线模式，可关联到同一父计划。
+5. 图已生成仍显示待质检，只有文案、QA、归档和交付证据齐全才能算完成。目前尚未接通完整交付状态汇总，界面不显示虚假的完成数量。
+
+计划不是硬链接副本，也不是另一本手工表格：现有 production-jobs/plans 保存原始需求与来源路径，子项引用 production-requests 的真实编号。前端和技能读同一份数据。文件夹名会因 Windows 字符限制安全处理，但原素材路径和原文件夹名独立保留；原标题必须从原素材核实，未知时不能猜。
+
+谷歌云盘搜索/上传、谷歌日历完成通知尚未连接；当前没有云端端到端通过证据，不声称已可用。不要删除原素材或把内部 plan.json 当成云端成品。自动创建 Codex 对话、后台自动执行新计划、完整交付回写仍是后续待补工序。
+
+接续唯一下一步：活动生产安全空闲时加载 2.6.32-dev 后端，在页面用一套测试素材创建父计划、关联现有请求并由对应 AI 执行，核对图文/QA/归档/云端结果；未验证前不计完成、不发布全程跑通通知。新增计划路由未重载，云盘/日历和语义自动搜索尚未接通。
+
+最终验证（Codex，2026-10-10）：Node 前后端合同与计划回归 59/59；运行时 Python 请求/交接 31/31；注册技能入口代理测试 7/7；app.js 语法、producer 编译与定向 diff --check 通过。测试仅使用临时素材，不计真实生产。未重启活动服务，未推 GitHub，未发完成通知。后续还须核实原题提取与逐页映射，不可按顺序猜测复刻打乱后的来源对应。
+
+## 需求与未完成项统一管理（2026-10-10）
+
+唯一总计划：`D:\SecondBrain\zwm-second-brain\03-项目\01-团建项目—江湖有旅人\内容制作双产线升级与验收总计划.md`。用户已授权按依赖逐项推进及直接修复小bug。22项覆盖两条产线与三模式、计划/素材选择、启动执行、完整交付回写、原题路径/逐页映射、排产与补封面、额度/通知、对比/大屏、谷歌云盘/日历、六组合验收、手册与GitHub发布。状态以第二大脑总表为准，工程细节及验证仍记本 HANDOFF/REGRESSION-CHECKLIST，不另建平行需求清单。
+当前下一步：只读核实运行实例与在途任务，选择安全加载窗口；没有窗口时继续P09/P11独立代码，不终止活动生产。
+
+## 2.6.37-dev｜计划页数必须整套交付（2026-10-12，本地未发布）
+
+- 用户确认的验收口径：作品计划为 N 页，就必须产出并通过 N 页；9 页计划只出 5 页时属于未完成返修，绝不把 5 页当作固定目标或最低合格线。
+- 网页/CDP 执行器已绑定计划页数到模板素材准备、逐页追图、图片 URL 回收、下载、像素检查和逐页来源映射；未达到计划页数或超出计划时不能进入正式归档。
+- 随机模板资格读取模板元数据，低适配/拒绝/待审候选不进入随机池；候选不足时停止。固定模板仍按显式模板 ID 选取。
+- 不完整、重复字节或业务复核失败的包留在制作区并标记 `REWORK_REQUIRED`；复审回读失败会撤销原 PASS。清除了已废弃的 60% 页数阈值常量，避免误读为最低交付标准。
+- 视觉审美仍需逐页人工复核：机位/构图重复、贴纸密度和 AI 味不是当前旧 producer 的自动识别能力；共享工作包验收器要求 `compositionDuplicateReview` 等 QA 绑定图片 SHA，但尚未接入旧脚本的自动落架前置流程。
+- 当前仅完成源码静态解析和差异空白检查；隔离回归、真实产线重载与整套验收尚未执行。未启动模型、未重启活动服务，旧安吉样品保持原样。
+
+## 2026-10-15 手动下载按钮兼容修复（待运行验收）
+GPT新版generated-image-preview/search-message容器无旧conversation-turn节点，修复原油猴脚本生成图识别、图组统一与下载路径偏好；保留下载本组和下载并打包入口。下载配置从临时测试路径恢复为C盘Downloads及正式成品库，原配置已备份。JS语法检查通过。A正在回应，未刷新、未重启；按钮加载、C盘下载及剪贴板TXT端到端验收未完成。
+
+
+## 2026-10-15｜下载用户脚本1.12.6（待运行验收）
+
+统一新版生成图库的下载图组，防止每个缩略图/动作栏重复控件；打包从MULTI标记提取三版正文，排除块外旁白和围栏。手动目录配置恢复Downloads/正式成品库。JS语法检查通过；Electron缓存扩展尚未重新注册，A当前有新回应，未重启或打断。实际按钮、C盘下载和打包TXT验收仍未完成。
+## 2.6.39-dev｜A/B 生图估值回迁修复（2026-10-17）
+
+- 现场通过 A/B 的只读 CDP `Runtime.evaluate` 确认：两页当前 localStorage 都是 `generationLimit=45, uploadLimit=80, windowHours=3`，旧 global/account/server 降额迁移标记均为 `done`；两份 `app-settings.json` 的服务器持久账号值则已是 `50/80/3h`。
+- 根因在实际运行的共享源码 `D:\AICode\工具开发\projects\content-production-app\src`：新默认和三个旧迁移都把估值定为 45。
+- 已修共享源码 defaults、account rotation fallback 和一次性回迁逻辑；只回迁被旧迁移标记覆盖的 45，保留其他值。定向测试 55/55 通过。
+- 最新本机 runtime 文件于 15:33 更新：A `running=false, paused=false`，7 条队列均未绑定 workId，其中一条旧请求 `submitted=true`、阶段“等待文案”；B `running=false, paused=true`，2 条任务中一条保留 `_status=running` 但 `submitted=false` 且无 workId。两页均无生成停止按钮，composer 仅含空白换行。活动服务 4331/4332 对 `/api/runtime-info` 与 `/api/gpt-production/runtime-state` 均无响应；未导航、刷新、重启或提交。
+- 下一步：先读取/确认 composer 草稿内容和服务进程健康；服务恢复且草稿安全后，按受控恢复流程加载共享源码，再回读 A/B 的估值为 50/80/3h。此修复不证明网页额度余额，也不证明生产已恢复。
+

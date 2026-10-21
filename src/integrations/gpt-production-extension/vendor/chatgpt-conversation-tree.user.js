@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT 最近对话分组（飞书式目录）
 // @namespace    https://chatgpt.com/
-// @version      1.12.5
+// @version      1.12.6
 // @description  把可拖动、可嵌套的对话分组原生融入 ChatGPT"最近"列表，并给图片组增加外置下载全部快捷按钮，支持一键下载本轮所有图片。
 // @author       Codex
 // @match        https://chatgpt.com/*
@@ -25,7 +25,7 @@
   'use strict';
 
   const APP_ID = 'cgpt-conversation-tree';
-  const SCRIPT_VERSION = '1.12.5';
+  const SCRIPT_VERSION = '1.12.6';
   const HEADER_ID = `${APP_ID}-header-actions`;
   const MENU_ID = `${APP_ID}-menu`;
   const STYLE_ID = `${APP_ID}-style`;
@@ -5105,6 +5105,10 @@
       workPackageButtonVisible ? '隐藏作品包按钮' : '显示作品包按钮',
       () => setWorkPackageButtonVisible(!workPackageButtonVisible)
     );
+    addMenu('设置图片下载目录', () => {
+      const value = window.prompt('图片下载目录（需在本地下载器已授权的目录内）', localStorage.getItem('tb-manual-download-root') || '');
+      if (value !== null) localStorage.setItem('tb-manual-download-root', value.trim());
+    });
     addMenu('设置本地作品包目录', () => openWorkPackageProtocol('cgpt-workpkg://configure'));
     addMenu('复制诊断日志', () => copyDiagnosticLogs());
   }
@@ -5497,7 +5501,7 @@
   }
 
   function contentImageElements(scope = document) {
-    const root = scope === document ? (document.querySelector('main') || document.body) : scope;
+    const root = scope === document ? document : scope;
     return [...root.querySelectorAll('img')].filter((img) => {
       if (img.closest?.(`#${APP_ID}, #${MENU_ID}, .${IMAGE_DOWNLOAD_SLOT_CLASS}, .${TEXT_DOWNLOAD_SLOT_CLASS}`)) return false;
       if (img.closest?.('#history, nav, aside, [role="navigation"]')) return false;
@@ -5523,7 +5527,7 @@
   }
 
   function broadImageElements(scope = document, minSize = 24) {
-    const root = scope === document ? (document.querySelector('main') || document.body) : scope;
+    const root = scope === document ? document : scope;
     return [...root.querySelectorAll('img')].filter((img) => {
       if (img.closest?.(`#${APP_ID}, #${MENU_ID}, .${IMAGE_DOWNLOAD_SLOT_CLASS}, .${TEXT_DOWNLOAD_SLOT_CLASS}`)) return false;
       if (img.closest?.('#history, nav, aside, [role="navigation"]')) return false;
@@ -5537,7 +5541,8 @@
   }
 
   function imageTurnContainer(img) {
-    return img.closest?.('[data-testid^="conversation-turn"]')
+    return img.closest?.('[data-chatgpt-search-message-ids]')
+      || img.closest?.('[data-testid^="conversation-turn"]')
       || img.closest?.('[data-message-author-role="assistant"], article[data-turn="assistant"], [class*="group/conversation-turn"]')
       || img.closest?.('[id^="image-"][class*="imagegen-image"]')
       || img.closest?.('main > div > div > div')
@@ -5555,7 +5560,14 @@
     const assistantTurn = img.closest?.(
       '[data-message-author-role="assistant"], article[data-turn="assistant"], [data-testid^="conversation-turn"]'
     );
-    if (!assistantTurn) return false;
+    if (!assistantTurn) {
+      // New GPT gallery markup has no conversation-turn wrapper. A generated
+      // preview shell is an explicit result marker; attachments remain excluded.
+      if (/用户附件|user attachment/i.test(img.getAttribute?.('alt') || '')) return false;
+      const galleryMessage = img.closest?.('[data-chatgpt-search-message-ids]');
+      return Boolean(img.closest?.('[data-testid="generated-image-preview"]')
+        || galleryMessage?.querySelector?.('[data-testid="generated-image-preview"]'));
+    }
     if (assistantTurn.getAttribute?.('data-message-author-role') === 'user'
       || assistantTurn.getAttribute?.('data-turn') === 'user'
       || assistantTurn.querySelector?.('[data-message-author-role="user"]')) return false;
@@ -5568,7 +5580,7 @@
       img.getAttribute?.('aria-label'),
       img.getAttribute?.('data-testid'),
     ].filter(Boolean).join(' ');
-    return Boolean(generatedShell || /generated image|image generated|已生成图片|生成的图片/i.test(label));
+    return Boolean(generatedShell || /generated image|image generated|已生成图片|已生成图像|生成的图片/i.test(label));
   }
 
   function imageGroupsOnPage() {
@@ -5943,7 +5955,7 @@
   // belong to the same downloadable group, so visibility must not decide
   // whether they are counted or downloaded.
   function groupImageElements(scope = document) {
-    const root = scope === document ? (document.querySelector('main') || document.body) : scope;
+    const root = scope === document ? document : scope;
     return [...root.querySelectorAll('img')].filter((img) => {
       if (img.closest?.(`#${APP_ID}, #${MENU_ID}, .${IMAGE_DOWNLOAD_SLOT_CLASS}, .${TEXT_DOWNLOAD_SLOT_CLASS}`)) return false;
       if (img.closest?.('#history, nav, aside, [role="navigation"]')) return false;
@@ -6380,7 +6392,8 @@
     // one native action row.  Treat the outer conversation turn as the only
     // production-image group, otherwise every carousel/action row injects its
     // own copy of "download / package" controls.
-    const turn = generatedImages[0]?.closest?.('[data-testid^="conversation-turn"]');
+    const turn = generatedImages[0]?.closest?.('[data-chatgpt-search-message-ids]')
+      || generatedImages[0]?.closest?.('[data-testid^="conversation-turn"]');
     if (turn) {
       container = turn;
       preferredActionRow = findImageActionRow(turn);
@@ -6495,13 +6508,14 @@
     // older slot may briefly survive while a replacement row is mounted. Keep
     // exactly one slot per generated assistant turn.
     try {
-      const main = document.querySelector('main') || document.body;
+      const main = document;
       main.querySelectorAll(
         `[data-testid="image-gen-overlay-right-actions"] .${IMAGE_DOWNLOAD_SLOT_CLASS}, [data-testid*="image-gen-overlay"] .${IMAGE_DOWNLOAD_SLOT_CLASS}`
       ).forEach((slot) => slot.remove());
       const slotsByTurn = new Map();
       [...main.querySelectorAll(`.${IMAGE_DOWNLOAD_SLOT_CLASS}`)].forEach((slot) => {
-        const turn = slot.closest?.('[data-testid^="conversation-turn"]');
+        const turn = slot.closest?.('[data-chatgpt-search-message-ids]')
+          || slot.closest?.('[data-testid^="conversation-turn"]');
         if (!turn) return;
         const slots = slotsByTurn.get(turn) || [];
         slots.push(slot);
@@ -6691,7 +6705,7 @@
           contentType,
           data: imageBufferToBase64(await imageResponse.arrayBuffer()),
           sourceUrl: url,
-          downloadRoot: ''
+          downloadRoot: localStorage.getItem('tb-manual-download-root') || ''
         })
       });
       const result = await saveResponse.json().catch(() => ({}));

@@ -108,7 +108,7 @@ const DEFAULT_PAGE_SETTINGS = Object.freeze({
     continuousWorkHoursEnabled: true,
     continuousWorkStart: "07:00",
     continuousWorkEnd: "02:00",
-    accounts: [{ id: "account-1", name: "账号 1", uploadLimit: 80, generationLimit: 45, windowHours: 3 }]
+    accounts: [{ id: "account-1", name: "账号 1", uploadLimit: 80, generationLimit: 50, windowHours: 3 }]
   }
 });
 
@@ -300,7 +300,7 @@ function normalizePageSettings(value = {}) {
           id: String(account.id),
           name: String(account.name || `账号 ${index + 1}`).trim().slice(0, 24),
           uploadLimit: clampInteger(account.uploadLimit, 80, 1, 1000),
-          generationLimit: clampInteger(account.generationLimit, 45, 1, 1000),
+          generationLimit: clampInteger(account.generationLimit, 50, 1, 1000),
           windowHours: clampInteger(account.windowHours, 3, 1, 24)
         }))
     }

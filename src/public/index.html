@@ -4,13 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>内容生产</title>
-  <link rel="stylesheet" href="/styles.css?v=0.1.0" />
+  <link rel="stylesheet" href="/styles.css?v=2.6.38-dev" />
   <link rel="stylesheet" href="/template-migration.css?v=0.1.0" />
   <script>
     (function() {
       if (window.location.search.includes('embedded=1') || window.self !== window.top) {
         document.documentElement.classList.add('embedded-mode');
       }
+      // 无论独立窗口还是内嵌，统一默认激活“内容制作”主视口，彻底杜绝跳回素材库
+      window.addEventListener('DOMContentLoaded', () => {
+        try {
+          const btn = document.querySelector('.rail-tab-test') || document.querySelector('[data-tab="gptProductionTest"]');
+          if (btn && typeof btn.click === 'function') {
+            btn.click();
+          }
+        } catch (_) {}
+      });
     })();
   </script>
   </head>
@@ -32,11 +41,11 @@
             <span>素材库 · 采集 · 预览 · 整理</span>
           </div>
         </div>
-        <button class="tab rail-tab rail-tab-material-library active" data-tab="materialLibrary" type="button" title="素材库：采集、预览、整理和维护本地图文素材" aria-label="素材库">
+        <button class="tab rail-tab rail-tab-material-library" data-tab="materialLibrary" type="button" title="素材库：采集、预览、整理和维护本地图文素材" aria-label="素材库">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5v-11Z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11"/><path d="M8 5.25 16 8.75"/></svg>
           <span>素材库</span>
         </button>
-        <button class="tab rail-tab rail-tab-test" data-tab="gptProductionTest" type="button" title="内容制作" aria-label="内容制作">
+        <button class="tab rail-tab rail-tab-test active" data-tab="gptProductionTest" type="button" title="内容制作" aria-label="内容制作">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 4v-14Z"/><path d="m10 8 1 2.6 2.6 1-2.6 1L10 15l-1-2.4-2.6-1 2.6-1L10 8Z"/><path d="M15 8h2M15 11h2"/></svg>
           <span>内容制作</span>
         </button>
@@ -98,7 +107,7 @@
         </section>
       </header>
 
-      <section class="view active" id="materialLibraryView" aria-labelledby="materialLibraryTitle">
+      <section class="view" id="materialLibraryView" aria-labelledby="materialLibraryTitle">
         <section class="material-library-shell">
           <header class="material-library-heading">
             <div>
@@ -240,7 +249,7 @@
                   <section id="workbenchPlanPanel" class="production-plan-panel" hidden></section>
                   <div class="workbench-primary-actions">
                     <button id="workbenchEditPlanBtn" type="button" hidden>返回调整</button>
-                    <button id="workbenchStartProductionBtn" class="primary-button workbench-start-button" type="button">开始生产</button>
+                    <button id="workbenchStartProductionBtn" class="primary-button workbench-start-button" type="button">生成生产计划</button>
                   </div>
                   <section class="workbench-production-feedback" aria-live="polite">
                     <div class="workbench-progress-head">
@@ -310,11 +319,11 @@
           </div>
           <label class="production-prompt-field"><span>额外要求（可以不填）</span><textarea id="productionPrompt" rows="3" placeholder="例如：本次标题更克制；不要出现篝火。模板规则、事实锁、页数和文案规则已经自动加入，不需要自己写提示词。"></textarea></label>
           <div class="production-actions primary-production-actions">
-            <button id="createProductionPlanBtn" class="primary-button production-main-button" type="button">开始生产</button>
+            <button id="createProductionPlanBtn" class="primary-button production-main-button" type="button">生成生产计划</button>
             <button id="cancelProductionPlanBtn" type="button" hidden>重新选择</button>
           </div>
           <section class="production-plan-panel" id="productionPlanPanel" hidden></section>
-          <div class="production-live-status" id="productionLiveStatus">先选择一个或多个素材文件夹和一个模板，再点击“开始生产”。</div>
+          <div class="production-live-status" id="productionLiveStatus">先选择一个或多个素材文件夹和一个模板，再点击“生成生产计划”；核对后才会开始生图。</div>
           <div class="production-output-grid" id="productionOutputGrid"></div>
         </section>
         <div class="three-pane" id="threePane">
@@ -436,23 +445,24 @@
 
       <section class="view active" id="gptProductionTestView">
         <section class="gpt-production-test-shell">
-          <header class="gpt-production-test-heading">
+          <!-- 顶层旧产线3Tab已废弃（应由容器总控，独立模块彻底隐藏） -->
+          <header class="gpt-production-test-heading" style="display: none !important;">
             <div class="prod-lines-master-header">
-              <div class="prod-lines-tabs" id="prodLinesTabs" role="tablist">
-                <button class="prod-line-tab active" data-prod-line="cdp" type="button" title="GPT CDP 产线 (在线网页实操)">
+              <div class="prod-lines-tabs" id="prodLinesTabs" role="tablist" aria-label="选择产线">
+                <button class="prod-line-tab active" data-prod-line="cdp" type="button" title="在线模式：通过 GPT 网页版/CDP 操作">
                   <span class="prod-line-dot"></span>
-                  <span class="prod-line-name">GPT CDP 产线</span>
-                  <span class="prod-line-tag">在线实操</span>
+                  <span class="prod-line-name">在线模式（GPT 网页/CDP）</span>
+                  <span class="prod-line-tag">实例 A / B</span>
                 </button>
-                <button class="prod-line-tab" data-prod-line="gemini" type="button" title="Gemini 视觉产线大盘 (8820 看板)">
-                  <span class="prod-line-dot gemini"></span>
-                  <span class="prod-line-name">Gemini 视觉大盘</span>
-                  <span class="prod-line-tag">8820监控</span>
-                </button>
-                <button class="prod-line-tab" data-prod-line="codex" type="button" title="Codex API 产线 (选料母版直接自动化排产)">
+                <button class="prod-line-tab" data-prod-line="codex" type="button" title="本地模式：Codex 客户端对话生产；工作台仅登记请求">
                   <span class="prod-line-dot codex"></span>
-                  <span class="prod-line-name">Codex API 产线</span>
-                  <span class="prod-line-tag">自动化直出</span>
+                  <span class="prod-line-name">本地模式（Codex 客户端）</span>
+                  <span class="prod-line-tag">当前客户端</span>
+                </button>
+                <button class="prod-line-tab" data-prod-line="gemini" type="button" title="Gemini 团建生产已停用；只读查看历史记录">
+                  <span class="prod-line-dot gemini"></span>
+                  <span class="prod-line-name">历史记录（Gemini 已停用）</span>
+                  <span class="prod-line-tag">只读</span>
                 </button>
               </div>
             </div>
@@ -462,237 +472,437 @@
             </div>
           </header>
 
-          <div class="gpt-production-test-grid">
-            <aside class="gpt-production-test-library">
-              <section class="workbench-card gpt-test-material-card" data-help-module="true" data-help-id="materialPicker" data-help-title="选择素材：先核对素材，再进入生产" data-tooltip="素材区读取项目01-素材库。江湖工具箱只负责下载；江湖素材整理技能扫描下载区，将完整图文帖子按20个可见字符规范评论和点赞、同步标签并整包移入素材库。整理完成后点击刷新即可筛选使用；不完整视频或TXT残留不会自动删除。">
-                <header class="workbench-card-head gpt-library-panel-head" title="江湖工具箱下载后，由素材整理技能维护这里">
-                  <div><span class="workbench-step">01</span><strong>素材区</strong><small id="gptTestMaterialCount">0 个已选</small></div>
-                  <div class="workbench-card-actions">
-                    <span class="gpt-library-auto-restore-hint" data-gpt-library-restore-hint="material" hidden>10 秒无操作自动收起</span>
-                    <button id="gptTestMaterialRefreshBtn" class="icon-button" type="button" title="刷新本地素材" aria-label="刷新本地素材">↻</button>
-                    <button class="workbench-expand-button" type="button" data-gpt-library-expand="material" aria-expanded="false" aria-label="展开素材区" title="展开素材区，10 秒无操作自动收起">
-                      <svg class="workbench-expand-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-                        <path class="expand-corner expand-corner-tl" d="M8 4H4v4M4 4l5 5" />
-                        <path class="expand-corner expand-corner-br" d="M12 16h4v-4m0 4-5-5" />
-                      </svg>
-                    </button>
-                  </div>
-                </header>
-                <input id="gptTestMaterialSearch" class="workbench-search" type="search" placeholder="搜索帖子文件夹" />
-                <div id="gptMaterialTagFilters" class="tag-filter-bar" aria-label="素材标签筛选"></div>
-                <nav id="gptTestMaterialFolders" class="workbench-folder-list gpt-test-folder-list" aria-label="GPT测试素材区"></nav>
-              </section>
-
-              <section class="workbench-card gpt-test-template-card" data-help-module="true" data-help-id="templatePicker" data-tooltip="选择模板：先锁定母版，再替换素材">
-                <header class="workbench-card-head gpt-library-panel-head">
-                  <div><span class="workbench-step">02</span><strong>模板区</strong><small id="gptTestTemplateName">请选择模板</small></div>
-                  <div class="workbench-card-actions">
-                    <span class="gpt-library-auto-restore-hint" data-gpt-library-restore-hint="template" hidden>10 秒无操作自动收起</span>
-                    <button class="workbench-expand-button" type="button" data-gpt-library-expand="template" aria-expanded="false" aria-label="展开模板区" title="展开模板区，10 秒无操作自动收起">
-                      <svg class="workbench-expand-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-                        <path class="expand-corner expand-corner-tl" d="M8 4H4v4M4 4l5 5" />
-                        <path class="expand-corner expand-corner-br" d="M12 16h4v-4m0 4-5-5" />
-                      </svg>
-                    </button>
-                  </div>
-                </header>
-                <div class="gpt-template-category-filter">
-                  <label for="gptTemplateCategoryFilter">模板分类</label>
-                  <select id="gptTemplateCategoryFilter" aria-label="筛选模板分类">
-                    <option value="all">全部模板</option>
-                    <option value="conversion">转化模板</option>
-                    <option value="game">游戏模板</option>
-                    <option value="unclassified">未分类模板</option>
-                  </select>
+            <!-- 极简高能顶栏：实例标识、模式徽章、自动/手动切换开关、抽屉折叠控制、独立窗口按钮 -->
+            <header class="prod-unified-topbar" id="prodUnifiedTopbar">
+              <div class="topbar-left">
+                <div class="prod-app-brand-badge" id="topbarAppBrandBadge" title="内容制作 · 多账号统一单核心中枢">
+                  <span class="app-brand-icon">🎬</span>
+                  <span class="app-brand-title">内容制作</span>
                 </div>
-                <div id="gptOnlineTemplateForm" class="gpt-online-template-form">
-                  <input id="gptOnlineTemplateName" type="text" placeholder="模板名称" aria-label="模板名称" />
-                  <input id="gptOnlineTemplateUrl" type="url" placeholder="粘贴 ChatGPT 会话/分享链接" aria-label="模板链接" />
-                  <select id="gptOnlineTemplateAccount" aria-label="绑定生产账号" title="把这个原始会话绑定到哪个生产账号窗口">
-                    <option value="">不绑定账号</option>
-                  </select>
-                  <button id="gptSaveOnlineTemplateBtn" type="button" title="保存模板名称、链接和账号绑定；只更新本地模板登记，不会自动发送或生产">上传模板</button>
-                  <small id="gptOnlineTemplateFile">链接模板.txt</small>
+                <!-- 核心多账号 ABCD 实时切换胶囊组 + 添加账号 -->
+                <div class="prod-topbar-abcd-group" id="prodTopbarAbcdGroup">
+                  <button type="button" class="abcd-pill-btn active" data-account="account-1" data-inst="A" title="【A 账号】点击即刻切换"><span class="subline-dot online"></span><span>A</span></button>
+                  <button type="button" class="abcd-pill-btn" data-account="account-2" data-inst="B" title="【B 账号】点击即刻切换"><span class="subline-dot"></span><span>B</span></button>
+                  <button type="button" class="abcd-pill-btn" data-account="account-3" data-inst="C" title="【C 账号】点击即刻切换"><span class="subline-dot online"></span><span>C</span></button>
+                  <button type="button" class="abcd-pill-btn" data-account="account-4" data-inst="D" title="【D 账号】点击即刻切换"><span class="subline-dot"></span><span>D</span></button>
+                  <button type="button" class="abcd-add-inst-btn" id="btnContentProdAddInst" title="➕ 添加新生产槽位 (E、F...)">➕</button>
+                  <button type="button" class="abcd-add-acc-btn" id="btnContentProdAddAccount" title="➕ 添加 / 绑定新的 ChatGPT 账号"><span>➕ 添加账号</span></button>
                 </div>
-                <nav id="gptTestTemplateList" class="workbench-folder-list gpt-test-template-list" aria-label="GPT测试模板区"></nav>
-              </section>
-
-              <section class="workbench-card gpt-test-send-dock" data-help-module="true" data-help-id="productionDialog" data-tooltip="生产规则与提示词：核对本次生成的输入和边界">
-                <header class="workbench-card-head">
-                  <div><span class="workbench-step">03</span><strong>发送区</strong><small id="gptTestSendHint">选好素材和模板后开始生产</small></div>
-                </header>
-                <div class="gpt-test-send-body">
-                  <div class="gpt-mode-action-row">
-                    <div class="gpt-mode-row">
-                      <select id="gptProductionMode" aria-label="生产模式" title="右键打开当前生产模式设置">
-                        <option value="replicate" selected>V6.0 单窗口直出复刻模式（外部中控主力）</option>
-                        <option value="single">全自动持续生产（主力）</option>
-                        <option value="automatic">选好后跑完这批</option>
-                        <option value="manual">纯手动模式</option>
-                        <option value="scheduled">定时全自动跑（早7-晚2）</option>
-                        <option value="patrol">多对话巡检</option>
-                        <option value="semi-auto" hidden>半自动（兼容）</option>
-                      </select>
-                      <span class="gpt-current-account-chip" title="当前窗口"> <strong id="gptCockpitAccount">未选择</strong></span>
-                    </div>
-                    <div class="gpt-workflow-variant-row">
-                      <select id="gptWorkflowVariant" aria-label="当前窗口流水线版本" title="每个账号窗口独立保存；切换只影响该窗口后续创建的作品">
-                        <option value="fresh-session-fixed-template" selected>每套新开独立对话</option>
-                        <option value="legacy-v1">接着当前对话做 (已停用)</option>
-                      </select>
-                      <small id="gptWorkflowVariantHint">按当前账号窗口独立保存</small>
-                    </div>
-                    <div class="gpt-action-row">
-                      <button id="gptTestSendBtn" class="primary-button" type="button" title="按当前生产模式启动；自动模式会从保存的队列和检查点继续，人工模式只上传当前选中的素材" disabled hidden>开始自动生产</button>
-                      <button id="gptManualNextBtn" class="secondary-button" type="button" title="人工模式：确认当前作品已处理完，再上传队列中的下一套；不会自动跳过未确认的作品" hidden>完成当前，上传下一套</button>
-                      <button id="gptSemiAutoResumeBtn" class="secondary-button" type="button" title="半自动模式：确认当前计划后继续当前作品的生图阶段，不会重新上传素材" hidden>确认继续出图</button>
-                    </div>
-                  </div>
-                  <p class="gpt-mode-hint" id="gptModeHint" aria-live="polite"></p>
-                  <div class="gpt-queue-actions">
-                    <button id="gptPauseQueueBtn" type="button" title="暂停当前窗口：停在安全检查点；已完成文件、登录状态和队列都会保留" hidden>暂停</button>
-                    <button id="gptStopQueueBtn" type="button" class="danger-text-button" data-tooltip="停止本窗口：让当前窗口安全收尾并暂停队列，已完成文件和登录状态会保留" hidden>停止本窗口</button>
-                    <button id="gptRetryTaskBtn" type="button" data-tooltip="重试当前步骤：只重新执行当前作品刚才失败的阶段，不重新生成已经完成的内容" hidden>重试当前步骤</button>
-                    <button id="gptSkipTaskBtn" type="button" data-tooltip="跳过此作品并继续队列：当前作品记为跳过，不下载、不归档；原素材不会登记为已完成" hidden>跳过作品</button>
-                    <details id="gptMoreRecovery" class="gpt-recovery-more" hidden>
-                      <summary title="高级恢复：重开当前网页或从头重做当前作品；不会删除本地素材">恢复工具</summary>
-                      <div class="gpt-recovery-more-actions">
-                        <button id="gptReopenWindowBtn" type="button" data-tooltip="重开当前窗口：刷新或重新连接当前账号网页，然后从保存的检查点继续；不会清除登录状态或临时生产记录" hidden>重开当前窗口</button>
-                        <button id="gptResetTaskBtn" type="button" data-tooltip="重做此作品：确认网页没有正在生成后，清理当前作品检查点，从上传素材和生成计划重新开始；不会删除本地文件" hidden>重做此作品</button>
-                      </div>
-                    </details>
-                  </div>
-                  <div class="gpt-auto-progress" aria-label="自动生产进度" hidden>
-                    <span id="gptAutoProgressBar"></span>
-                  </div>
-                  <div id="gptProgressDetail" class="gpt-progress-detail" hidden aria-live="polite">
-                    <div class="gpt-progress-detail-row">
-                      <strong id="gptCurrentTaskProgress">当前作品：准备中</strong>
-                      <span id="gptCurrentStageProgress">当前阶段：准备会话 · 0%</span>
-                    </div>
-                    <div class="gpt-progress-detail-row gpt-progress-detail-muted">
-                      <span id="gptCurrentProgressEvidence">等待生产证据</span>
-                      <span id="gptBatchProgressSummary">当前批次：已完成 0 · 处理中 0 · 暂缓 0 · 失败 0 · 剩余 0</span>
-                    </div>
-                  </div>
-                  <div class="gpt-status-bar" id="gptStatusBar" aria-live="polite">
-                    <span class="gpt-status-badge" id="gptStatusBadge">待机</span>
-                    <span class="gpt-status-msg" id="gptTestQueueStatus">请至少选择一个素材文件夹；模板可以不选</span>
-                    <span class="gpt-status-next-action" id="gptStatusNextAction" hidden></span>
-                  </div>
-                  <details class="gpt-extra-prompt-fold">
-                    <summary>补充要求（可留空）</summary>
-                    <textarea id="gptTestExtraPrompt" rows="3" placeholder="本次额外要求会追加到模板规则之后；不填则仅使用模板自带规则和素材 TXT"></textarea>
-                  </details>
-                </div>
-              </section>
-            </aside>
-
-            <section class="gpt-production-browser-panel">
-              <header class="gpt-browser-toolbar">
-                <div class="gpt-browser-nav" aria-label="网页导航">
-                  <button id="gptBrowserBackBtn" type="button" title="后退" aria-label="后退">←</button>
-                  <button id="gptBrowserForwardBtn" type="button" title="前进" aria-label="前进">→</button>
-                  <button id="gptBrowserReloadBtn" type="button" title="刷新" aria-label="刷新">↻</button>
-                  <button id="gptBrowserHomeBtn" type="button" title="打开 ChatGPT 首页" aria-label="打开 ChatGPT 首页">⌂</button>
-                </div>
-                <nav id="gptAccountTabs" class="gpt-account-tabs" aria-label="账号窗口切换"></nav>
-                <div class="gpt-toolbar-right-actions" style="display: flex; gap: 8px; align-items: center; margin-left: auto;">
-                  <button id="gptPopoutBtn" class="secondary-button cdp-popout-btn" type="button" title="独立弹出桌面窗口（支持双屏/拖拽操作）">◳ 独立窗口</button>
-                  <button id="gptAddAccountBtn" class="gpt-add-account" type="button" title="添加账号窗口" aria-label="添加账号窗口">＋ 添加账号窗口</button>
-                </div>
-              </header>
-              <div id="gptEmbeddedHost" class="gpt-embedded-host" aria-label="当前账号窗口网页">
-                <div id="cdpLiveViewport" class="cdp-live-viewport">
-                  <div class="cdp-canvas-wrapper" id="cdpCanvasWrapper">
-                    <img id="cdpLiveImg" class="cdp-live-screen" alt="ChatGPT 实时操作画面"  />
-                    <div id="cdpFrameError" role="status" style="padding:24px;display:none"></div>
-                    <div id="cdpClickFeedback" class="cdp-click-indicator"></div>
-                  </div>
+                <div class="mode-indicator-pill" id="topbarModeIndicator">
+                  <span class="mode-icon">🎲</span>
+                  <span class="mode-text">2·随机母版 (推荐)</span>
                 </div>
               </div>
-              <footer class="gpt-browser-addressbar" aria-label="当前账号窗口地址" style="display: none !important;">
-                <span id="gptBrowserLoadingProgress" class="gpt-browser-loading-progress" role="progressbar" aria-label="网页加载进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="网页加载中" hidden><span id="gptBrowserLoadingBar"></span></span>
-                <label class="sr-only" for="gptBrowserAddressInput">网页地址</label>
-                <input id="gptBrowserAddressInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="默认 ChatGPT，可输入其他网址，按回车访问" aria-label="默认 ChatGPT，可输入其他网址，按回车访问" />
-                <button id="gptBrowserGoBtn" class="secondary-button gpt-browser-go-button" type="button" title="访问当前网址" aria-label="访问当前网址">→</button>
-              </footer>
-            </section>
-          </div>
 
-          <!-- 产线 2 · Gemini 视觉产线监控大盘 -->
+              <div class="topbar-center">
+                <!-- 自动生产 vs 手动干预 极简二元控制开关 -->
+                <div class="prod-auto-manual-switch" id="prodAutoManualSwitch">
+                  <button type="button" class="switch-btn active" id="btnSwitchAuto" data-state="auto" title="开启全自动持续生产">
+                    <span class="dot-indicator running"></span>
+                    <span>🟢 自动持续生产</span>
+                  </button>
+                  <button type="button" class="switch-btn" id="btnSwitchManual" data-state="manual" title="暂停当前步骤，允许人工介入在画面中点击/打字">
+                    <span class="dot-indicator paused"></span>
+                    <span>⏸️ 手动干预/暂停</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="topbar-right">
+                <button id="gptBrowserReloadBtn" class="topbar-icon-btn" type="button" title="刷新 ChatGPT 网页">↻</button>
+                <button id="btnToggleProdDrawer" class="topbar-drawer-btn" type="button" title="点击展开/折叠右侧制作抽屉">
+                  <span class="drawer-icon">🎛️</span>
+                  <span class="drawer-label">制作抽屉</span>
+                  <span class="drawer-arrow">◀</span>
+                </button>
+                <button id="gptPopoutBtn" class="topbar-popout-btn" type="button" title="独立弹出桌面窗口（支持多屏/拖拽操作）">◳ 独立窗口</button>
+              </div>
+            </header>
+
+            <!-- 主工作区：左侧中央 100% 纯净大视口 + 右侧原生可折叠制作抽屉 -->
+            <div class="gpt-production-test-grid" id="gptProductionMainGrid">
+              
+              <!-- 中央/左侧纯净视口 (占满空间，无挤压) -->
+              <section class="gpt-production-browser-panel" id="gptProductionBrowserPanel">
+                                <!-- 简易浏览器导航中控条：后退、前进、刷新、主页、当前账号独立配置地址栏、前往 -->
+                <div class="gpt-browser-toolbar" id="gptBrowserToolbar">
+                  <div class="browser-nav-buttons">
+                    <button id="gptBrowserBackBtn" class="browser-btn" type="button" title="后退 (Alt+Left)">◀</button>
+                    <button id="gptBrowserForwardBtn" class="browser-btn" type="button" title="前进 (Alt+Right)">▶</button>
+                    <button id="gptBrowserReloadBtn" class="browser-btn" type="button" title="刷新页面 (F5)">🔄</button>
+                    <button id="gptBrowserHomeBtn" class="browser-btn" type="button" title="返回 ChatGPT 主页">🏠</button>
+                  </div>
+                  
+                  <div class="browser-account-tag" id="browserActiveAccountTag" title="当前账号独立浏览器会话 (Profile)，Cookie与指纹完全隔离">
+                    <span class="account-tag-dot"></span>
+                    <span class="account-tag-text" id="browserActiveAccountLabel">A·账号 1</span>
+                  </div>
+
+                  <div class="browser-address-box">
+                    <span class="address-lock-icon">🔒</span>
+                    <input type="text" id="gptBrowserAddressInput" class="browser-address-input" placeholder="输入网址访问（例如 https://www.xiaohongshu.com 或回车直接打开）..." spellcheck="false" autocomplete="off" />
+                    <button id="gptBrowserGoBtn" class="browser-go-btn" type="button" title="前往网址">前往 ➔</button>
+                  </div>
+
+                  <div class="browser-right-actions">
+                    <span class="browser-sleep-badge" id="browserSleepBadge" title="长时间未操作的后台账号会自动节能休眠，点击切换时秒级热唤醒">⚡ 运行就绪</span>
+                  </div>
+                </div>
+
+                <div id="gptEmbeddedHost" class="gpt-embedded-host" aria-label="当前账号窗口网页">
+                  <div id="cdpLiveViewport" class="cdp-live-viewport">
+                    <div class="cdp-canvas-wrapper" id="cdpCanvasWrapper">
+                      <img id="cdpLiveImg" class="cdp-live-screen" alt="ChatGPT 实时操作画面" />
+                      <div id="cdpFrameError" role="status" style="padding:24px;display:none"></div>
+                      <div id="cdpClickFeedback" class="cdp-click-indicator"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 右侧原生折叠制作抽屉 (统一全功能) -->
+              <aside class="prod-template-sidebar" id="prodTemplateSidebar" aria-label="核心生产与母版控制台">
+                <div class="pts-header">
+                  <div class="pts-header-main">
+                    <span class="pts-icon">🎨</span>
+                    <span class="pts-title">制作抽屉与模板</span>
+                  </div>
+                  <button class="pts-collapse-btn" id="btnCloseProdDrawer" type="button" title="收起制作抽屉">▶</button>
+                </div>
+
+                <div class="pts-body-scrollable">
+                  <!-- 01. 核心生产模式切换 (3 大模式) -->
+                  <div class="pts-section pts-mode-sec" id="ptsModeSection">
+                    <div class="pts-sec-label">
+                      <span>01</span> <strong>核心生产模式</strong>
+                    </div>
+                    <div class="pts-mode-cards" id="ptsModeCards">
+                      <button type="button" class="pts-mode-card" data-mode="1_replica_shuffle" title="模式1：原图复刻打乱重组，保留原贴图文结构，无需外部母版">
+                        <span class="pts-mode-icon">🔀</span>
+                        <div class="pts-mode-text">
+                          <strong>1. 复刻重组 (原版)</strong>
+                          <small>原素材直接复刻 · 微机位重绘与洗牌</small>
+                        </div>
+                      </button>
+                      <button type="button" class="pts-mode-card active" data-mode="2_random_template" title="模式2：从高质量母版库中全自动随机精选高分母版">
+                        <span class="pts-mode-icon">🎲</span>
+                        <div class="pts-mode-text">
+                          <strong>2. 随机母版 (推荐)</strong>
+                          <small>全库 89 套母版全自动优选轮换</small>
+                        </div>
+                      </button>
+                      <button type="button" class="pts-mode-card" data-mode="3_fixed_template" title="模式3：锁定本套固定母版，并在下方列表自由选定">
+                        <span class="pts-mode-icon">📌</span>
+                        <div class="pts-mode-text">
+                          <strong>3. 固定母版</strong>
+                          <small>全批次锁定单一特定母版风格</small>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 02. 模式动态感知与联动区 (随模式 1 / 2 / 3 智能质变) -->
+                  <div class="pts-section pts-dynamic-sec" id="ptsDynamicSection">
+                    
+                    <!-- 模式 1 独占：原素材图集与复刻说明 -->
+                    <div class="pts-dynamic-panel" id="panelMode1Replica" style="display: none;">
+                      <div class="pts-banner mode1-banner">
+                        <span class="banner-icon">🎨</span>
+                        <div class="banner-text">
+                          <strong>原素材直接复刻重组</strong>
+                          <p>V6单窗口图文混排 · 微机位重绘与人物替换 · 保留原贴真实结构，无需外部母版</p>
+                        </div>
+                      </div>
+                      <div class="pts-raw-material-preview">
+                        <div class="raw-preview-head">
+                          <span>📷 原素材图集</span>
+                          <span class="raw-count-tag" id="rawMaterialCountTag">0 张照片</span>
+                        </div>
+                        <div class="raw-thumbs-grid" id="rawMaterialThumbsGrid">
+                          <!-- 动态渲染原素材缩略图 -->
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 模式 2 独占：随机精选池说明与动态 -->
+                    <div class="pts-dynamic-panel" id="panelMode2Random">
+                      <div class="pts-banner mode2-banner">
+                        <span class="banner-icon">🎲</span>
+                        <div class="banner-text">
+                          <strong>全自动随机精选母版</strong>
+                          <p>每批次从 89 套优质母版中全自动轮巡优选高分母版，无需手动锁定，规避重复</p>
+                        </div>
+                      </div>
+                      <div class="pts-random-pool-box">
+                        <div class="random-pool-stat">
+                          <span class="pool-badge">89 套母版池</span>
+                          <span class="pool-detail">78 套精准团建 + 11 套泛流攻略</span>
+                        </div>
+                        <div class="random-pool-status">
+                          <span class="status-dot"></span>
+                          <span id="randomPoolRecentText">随机轮巡已就绪 · 每套作品自动派选高分母版</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 模式 3 独占：当前锁定母版双图预览 + 89 套母版切换列表 -->
+                    <div class="pts-dynamic-panel" id="panelMode3Fixed" style="display: none;">
+                      <div class="pts-banner mode3-banner">
+                        <span class="banner-icon">📌</span>
+                        <div class="banner-text">
+                          <strong>锁定固定母版出图</strong>
+                          <p id="fixedTemplateNameText">当前锁定：加载中...</p>
+                        </div>
+                      </div>
+
+                      <!-- P1 + P2 双图预览 (点击放大) -->
+                      <div class="pts-dual-preview">
+                        <div class="pts-preview-box" id="ptsPreviewBoxP1" title="点击放大查看 P1 封面母版">
+                          <img id="ptsPreviewImgP1" src="" alt="P1 封面预览" />
+                          <span class="pts-preview-tag">P1 封面 (点击放大)</span>
+                        </div>
+                        <div class="pts-preview-box" id="ptsPreviewBoxP2" title="点击放大查看 P2 内页母版">
+                          <img id="ptsPreviewImgP2" src="" alt="P2 内页预览" />
+                          <span class="pts-preview-tag">P2 内页 (点击放大)</span>
+                        </div>
+                      </div>
+
+                      <!-- 模板搜索、分类筛选与卡片列表 -->
+                      <div class="pts-template-selector-box">
+                        <div class="pts-filter-row">
+                          <input type="search" class="pts-search-input" id="ptsTemplateSearchInput" placeholder="搜编号(T51)或关键词(九宫格/航拍)..." />
+                          <select class="pts-cat-select" id="ptsTemplateCatSelect" aria-label="母版分类">
+                            <option value="all">🌟 全部母版 (90套)</option>
+                            <option value="精准流量·团建方案">🎯 精准团建方案 (78套)</option>
+                            <option value="泛流量·个人攻略">🗺️ 泛流个人攻略 (11套)</option>
+                            <option value="互动破冰·小游戏">🎮 互动破冰游戏 (1套)</option>
+                          </select>
+                        </div>
+                        <div class="pts-template-list" id="ptsTemplateList">
+                          <!-- JS 动态渲染母版卡片 -->
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 03. 素材选择与当前作品 -->
+                  <div class="pts-section pts-material-sec" id="ptsMaterialSection">
+                    <div class="pts-sec-label">
+                      <span>03</span> <strong>素材选择与当前作品</strong>
+                      <span class="pts-material-badge" id="ptsMaterialCountBadge">0 张素材</span>
+                    </div>
+                    <div class="pts-material-card" id="ptsMaterialCard">
+                      <div class="pts-material-title-row">
+                        <span class="pts-material-name" id="ptsSelectedMaterialName">加载素材中...</span>
+                        <span class="pts-material-state-tag" id="ptsMaterialStateTag">就绪</span>
+                      </div>
+                      <div class="pts-material-path" id="ptsSelectedMaterialPath" title="">加载路径中...</div>
+                      <div class="pts-material-actions">
+                        <button type="button" class="pts-material-btn" id="btnSidebarPickMaterial">📂 打开素材库目录</button>
+                        <button type="button" class="pts-material-btn" id="btnSidebarRandomMaterial">🎲 换一套素材</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 04. 制作与发送控制台 -->
+                  <div class="pts-section pts-send-sec" id="ptsSendSection">
+                    <div class="pts-sec-label">
+                      <span>04</span> <strong>流水线状态与控制</strong>
+                      <span class="pts-send-badge" id="ptsSendStatusBadge">● 自动运转中</span>
+                    </div>
+                    <div class="pts-send-info-row">
+                      <span id="ptsSendHintText">流水线源源不断自动跑；点击顶部暂停可直接在画面中操作</span>
+                    </div>
+                    <div class="pts-secondary-actions-row">
+                      <button type="button" class="pts-sub-action-btn" id="btnSidebarRetryStep" title="遇到页面交互卡顿时，重新执行当前步骤">↺ 重试当前步</button>
+                      <button type="button" class="pts-sub-action-btn" id="btnSidebarSkipWork" title="当前作品异常或需跳过时，进入下一套">⏭ 跳过此作品</button>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <!-- 全局图片放大模态框 (Lightbox) -->
+            <div class="pts-lightbox-modal" id="ptsLightboxModal" style="display: none;">
+              <div class="lightbox-backdrop" id="ptsLightboxBackdrop"></div>
+              <div class="lightbox-content">
+                <img id="ptsLightboxImg" src="" alt="放大预览" />
+                <button class="lightbox-close-btn" id="ptsLightboxCloseBtn" type="button">✕</button>
+              </div>
+            </div>
+
+            <!-- 兼容性隐藏层：保留旧 ID 引用，防止老旧代码脚本报错 -->
+            <div class="legacy-compatibility-sink" style="display: none !important;" aria-hidden="true">
+              <select id="gptContentTemplateMode">
+                <option value="1_replica_shuffle">1_replica_shuffle</option>
+                <option value="2_random_template" selected>2_random_template</option>
+                <option value="3_fixed_template">3_fixed_template</option>
+              </select>
+              <select id="gptProductionMode"><option value="single" selected>single</option></select>
+              <select id="cdpProductionTemplates" multiple></select>
+              <span id="gptStatusBadge">待机</span>
+              <span id="gptTestQueueStatus">准备中</span>
+              <div id="cdpPlanList"></div>
+              <button id="gptTestSendBtn" type="button"></button>
+              <button id="gptPauseQueueBtn" type="button"></button>
+              <button id="gptStopQueueBtn" type="button"></button>
+              <button id="gptRetryTaskBtn" type="button"></button>
+              <button id="gptSkipTaskBtn" type="button"></button>
+              <textarea id="gptTestMaterialSearch"></textarea>
+              <textarea id="gptTestExtraPrompt"></textarea>
+              <nav id="gptAccountTabs"></nav>
+              <button id="btnToggleSideLibrary" type="button"></button>
+            </div>
+
+          <!-- Gemini 只读历史面板；生产已停用 -->
           <div class="prod-line-panel" id="geminiProductionPanel" hidden>
             <div class="gemini-dash-card codex-studio-card" style="height: 100%;">
               <div class="codex-studio-card-head">
-                <h3><span>⚡</span> Gemini 视觉高并发产线 · 8820 实时大盘</h3>
-                <div style="display: flex; gap: 8px;">
-                  <button class="secondary-button" id="geminiRefreshBtn" type="button">🔄 刷新数据</button>
-                  <button class="primary-button" id="geminiOpenGateBtn" type="button">🌐 独立窗口打开</button>
-                </div>
+                <h3><span>⏸️</span> Gemini 团建生产已停用</h3>
               </div>
-              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 8px;">
-                <div style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
-                  <div style="font-size: 11px; color: #94a3b8;">账号矩阵</div>
-                  <div style="font-size: 18px; font-weight: bold; color: #38bdf8;">6 大 Chrome Pro 账号</div>
+              <div class="gemini-state-explainer" role="note">这是按你的要求停用的生产线：不会接收新素材、创建请求、领取旧请求或继续生成。旧请求和旧作品保留为只读记录；如需重新启用，请明确告诉我。</div>
+              <section class="gemini-request-preparation" hidden aria-hidden="true" aria-labelledby="geminiPrepareHeading">
+                <div class="codex-studio-card-head">
+                  <div><p class="codex-card-kicker">准备一套 Gemini 请求</p><h4 id="geminiPrepareHeading">选中的素材和母版会随请求保存</h4></div>
+                  <span class="codex-card-index">只登记，不生图</span>
                 </div>
-                <div style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
-                  <div style="font-size: 11px; color: #94a3b8;">可用总算力</div>
-                  <div style="font-size: 18px; font-weight: bold; color: #10b981;">290,304 点</div>
+                <div class="codex-selection-grid">
+                  <div class="codex-selection-tile">
+                    <span>📂 当前素材</span>
+                    <strong id="geminiSelectedMaterial">尚未选择</strong>
+                    <small id="geminiSelectedMaterialMeta">从素材库选择一个完整作品文件夹</small>
+                  </div>
+                  <div class="codex-selection-tile codex-selection-template">
+                    <span>🎨 当前母版</span>
+                    <strong id="geminiSelectedTemplate">尚未选择</strong>
+                    <small id="geminiTemplateDesc">固定模式选一个；随机模式至少选两个候选</small>
+                  </div>
                 </div>
-                <div style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
-                  <div style="font-size: 11px; color: #94a3b8;">网关端口</div>
-                  <div style="font-size: 18px; font-weight: bold; color: #a855f7;">127.0.0.1:8792</div>
-                </div>
-                <div style="background: rgba(255,255,255,0.04); padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);">
-                  <div style="font-size: 11px; color: #94a3b8;">飞书自动入表</div>
-                  <div style="font-size: 18px; font-weight: bold; color: #f59e0b;">已接入 (双向同频)</div>
-                </div>
-              </div>
-              <iframe id="geminiDashFrame" src="http://127.0.0.1:8820" style="flex: 1; width: 100%; border: none; border-radius: 10px; background: #0b1320; min-height: 480px;"></iframe>
+                <label class="content-template-mode codex-content-template-mode" for="geminiContentTemplateMode">本套内容套版模式
+                  <select id="geminiContentTemplateMode" aria-label="Gemini 内容套版模式">
+                    <option value="1_replica_shuffle">1 · 复刻重组</option>
+                    <option value="2_random_template">2 · 随机模板</option>
+                    <option value="3_fixed_template" selected>3 · 固定模板</option>
+                  </select>
+                  <small id="geminiContentTemplateModeHint">读取中…</small>
+                  <small id="geminiModeExecutionCapability" class="production-capability-note" aria-live="polite">正在读取后端能力…</small>
+                </label>
+                <label class="production-template-picker" for="geminiProductionTemplates">本套母版（服务端已核验）
+                  <select id="geminiProductionTemplates" aria-label="Gemini 后端核验母版" size="3"></select>
+                  <small>只显示服务端核验有效 P1/P2 的母版；随机模式可按住 Ctrl 多选。</small>
+                </label>
+                <button id="geminiPrepareRequestBtn" class="secondary-button" type="button" disabled>登记 Gemini 制作请求</button>
+                <small id="geminiPrepareRequestStatus" class="codex-inline-status" aria-live="polite">状态未读取；暂不能登记。</small>
+              </section>
+              <div id="geminiCapabilityMatrix" class="production-capability-matrix" aria-label="Gemini 只读历史停用状态" aria-live="polite"></div>
+              <section class="gemini-request-ledger" aria-labelledby="geminiRequestLedgerHeading">
+                <div class="codex-studio-card-head"><div><p class="codex-card-kicker">请求台账</p><h4 id="geminiRequestLedgerHeading">已登记的 Gemini 请求</h4></div></div>
+                <p id="geminiRequestLedgerStatus" class="codex-inline-status" aria-live="polite">等待统一后端状态回读。</p>
+                <div id="geminiRequestList" class="codex-request-list"></div>
+              </section>
             </div>
           </div>
 
-          <!-- 产线 3 · Codex API 自动化排产台 -->
+          <!-- 本地模式 · Codex 客户端制作请求登记台 -->
           <div class="prod-line-panel" id="codexProductionPanel" hidden>
-            <div class="codex-studio-shell">
-              <div class="codex-studio-card">
-                <div class="codex-studio-card-head">
-                  <h3><span>🤖</span> Codex API 排产工单 (选料 + 模板装配)</h3>
-                  <span class="prod-line-tag" id="codexJobStatus">待机 / 随时就绪</span>
-                </div>
-                <div style="display: flex; flex-direction: column; gap: 12px; flex: 1;">
-                  <div style="background: rgba(255,255,255,0.04); padding: 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.07);">
-                    <div style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">📂 选定素材包 (第1站素材库)</div>
-                    <div id="codexSelectedMaterial" style="font-size: 15px; font-weight: 600; color: #fff;">未选素材（可从第1站选料直通或在此选取）</div>
-                  </div>
-                  <div style="background: rgba(255,255,255,0.04); padding: 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.07);">
-                    <div style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">🎨 选定母版 (第2站模板库)</div>
-                    <div id="codexSelectedTemplate" style="font-size: 15px; font-weight: 600; color: #38bdf8;">未选母版（在第2站点击“🚀 套入制作”自动注入）</div>
-                    <div id="codexTemplateDesc" style="font-size: 12px; color: #cbd5e1; margin-top: 6px; line-height: 1.5;">暂无母版详细信息</div>
-                  </div>
-                  <div style="flex: 1; display: flex; flex-direction: column;">
-                    <div style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">📝 本地生成 Prompt 骨架与参数</div>
-                    <textarea id="codexPromptPreview" style="flex: 1; width: 100%; border-radius: 10px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); color: #e2e8f0; padding: 10px; font-family: monospace; font-size: 12px; resize: none; min-height: 120px;" placeholder="母版 Prompt 将在此处动态呈现..."></textarea>
-                  </div>
-                </div>
-                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px;">
-                  <button class="secondary-button" id="codexCopyPromptBtn" type="button">📋 复制Prompt</button>
-                  <button class="primary-button" id="codexStartProductionBtn" type="button" style="background: linear-gradient(135deg, #a855f7, #6366f1); font-weight: 600;">🚀 一键 Codex API 自动化批跑</button>
-                </div>
+            <header class="codex-line-hero">
+              <div>
+                <p class="codex-line-eyebrow">CODEX 客户端 · 一套一闭环</p>
+                <h2>一份完整素材，做成一套完整作品</h2>
+                <p>每次只登记一个素材文件夹和一个真实母版。原素材不混套；整套页面、质检和入库全部有证据后才算交付。</p>
               </div>
+              <div class="codex-line-hero-state">
+                <span class="codex-state-dot" aria-hidden="true"></span>
+                <span id="codexJobStatus">可登记请求 · 生图执行器未连接</span>
+              </div>
+            </header>
 
-              <div class="codex-studio-card">
+            <ol class="codex-workflow-map" aria-label="本地模式（Codex 客户端）单套制作流程">
+              <li data-codex-stage="material"><span>01</span><strong>选完整素材</strong><small>一个文件夹</small></li>
+                  <li data-codex-stage="template"><span>02</span><strong>选母版或候选池</strong><small>核对真实目录</small></li>
+              <li data-codex-stage="request"><span>03</span><strong>登记并回读</strong><small>请求有编号</small></li>
+              <li data-codex-stage="production"><span>04</span><strong>逐页生成质检</strong><small>等待执行器</small></li>
+              <li data-codex-stage="delivery"><span>05</span><strong>整套入库</strong><small>全部验收后完成</small></li>
+            </ol>
+
+            <div class="codex-studio-shell">
+              <section class="codex-studio-card codex-request-card" aria-labelledby="codexRequestHeading">
                 <div class="codex-studio-card-head">
-                  <h3><span>📊</span> 产出流水与成品直达</h3>
-                  <span class="prod-line-tag">自动推入第4站</span>
+                  <div><p class="codex-card-kicker">提交新作品</p><h3 id="codexRequestHeading">这次要制作什么？</h3></div>
+                  <span class="codex-card-index">单套</span>
                 </div>
-                <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; text-align: center; color: #94a3b8; padding: 20px;">
-                  <div style="font-size: 40px;">🏭</div>
-                  <div style="font-weight: 600; color: #f1f5f9; font-size: 15px;">全自动 Codex API 交付流水线</div>
-                  <div style="font-size: 13px; line-height: 1.6; max-width: 320px;">选料与母版装配完成后，点击自动化批跑，脚本将在后台自动生成成套 3:4 竖版大片，质检后无缝入库至【第4站 成品库】并自动完成台账登记。</div>
-                  <div id="codexLiveOutputLog" style="width: 100%; height: 160px; background: rgba(0,0,0,0.4); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); padding: 8px 12px; text-align: left; font-family: monospace; font-size: 11px; overflow-y: auto; color: #4ade80;">[就绪] Codex API 自动化生产流水线待机中...</div>
+                <div class="codex-selection-grid">
+                  <div class="codex-selection-tile">
+                    <span>📂 完整素材文件夹</span>
+                    <strong id="codexSelectedMaterial">尚未选择</strong>
+                    <small id="codexSelectedMaterialMeta">请从素材库选择一个作品文件夹</small>
+                  </div>
+                  <div class="codex-selection-tile codex-selection-template">
+                    <span>🎨 本套使用的母版</span>
+                    <strong id="codexSelectedTemplate">等待读取已保存模式</strong>
+                    <small id="codexTemplateDesc">打开工作台后会读取本地 Codex 技能保存的模式</small>
+                  </div>
                 </div>
-              </div>
+                <label class="content-template-mode codex-content-template-mode" for="codexContentTemplateMode">本套内容套版模式
+                  <select id="codexContentTemplateMode" aria-label="Codex 内容套版模式">
+                    <option value="1_replica_shuffle" selected>1 · 复刻重组</option>
+                    <option value="2_random_template">2 · 随机模板</option>
+                    <option value="3_fixed_template">3 · 固定模板</option>
+                  </select>
+                  <small id="codexContentTemplateModeHint">正在读取技能保存的制作模式…</small>
+                  <small id="codexModeExecutionCapability" class="production-capability-note" aria-live="polite">正在读取后端执行能力…</small>
+                </label>
+                <label class="production-template-picker" for="codexProductionTemplates">本套母版（服务端已核验）
+                  <select id="codexProductionTemplates" aria-label="Codex 后端核验母版" size="3"></select>
+                  <small>只显示服务端核验有效 P1/P2 的母版；随机模式可按住 Ctrl 多选。</small>
+                </label>
+                <div id="codexCapabilityMatrix" class="production-capability-matrix" aria-label="本地模式（Codex 客户端）三种制作方式的后端状态" aria-live="polite"></div>
+                <div class="codex-template-route" role="note">
+                  <strong>当前本地模式的操作边界</strong>
+                  <span>工作台目前只登记请求，不会自动把文件送进 Codex 对话。若要“先发一次母版、后续逐套发素材”，可用下面的手动对话操作包；它只复制指令，不会替你新建对话、附文件或启动生图。</span>
+                </div>
+                <section class="codex-session-kit" aria-labelledby="codexSessionKitHeading">
+                  <div class="codex-session-kit-head">
+                    <div><p class="codex-card-kicker">固定模板对话操作包</p><h3 id="codexSessionKitHeading">先附母版，再一套一套发素材</h3></div>
+                    <span class="codex-card-index">手动发送</span>
+                  </div>
+                  <p class="codex-session-kit-note">在新 Codex 对话先选“首次设置母版”并附真实 P1/P2；收到确认后留在同一对话，每次选“本套素材”并附一个完整文件夹。换新对话要重新附母版。</p>
+                  <div class="codex-session-kit-tabs" role="group" aria-label="选择要复制的对话指令">
+                    <button class="secondary-button active" type="button" data-codex-manual-prompt-mode="setup" aria-pressed="true">① 首次设置母版</button>
+                    <button class="secondary-button" type="button" data-codex-manual-prompt-mode="material" aria-pressed="false">② 制作本套素材</button>
+                  </div>
+                  <textarea id="codexManualPromptPreview" rows="9" readonly aria-label="固定模板对话指令预览">请从模板库选择一个真实母版。</textarea>
+                  <div class="codex-session-kit-actions">
+                    <button class="primary-button" id="codexCopyManualPromptBtn" type="button" disabled>复制当前对话指令</button>
+                    <p id="codexManualPromptStatus" class="codex-inline-status" role="status" aria-live="polite">请选择一个真实母版；制作本套时再选一个完整素材文件夹。</p>
+                  </div>
+                </section>
+                <details class="codex-prompt-details">
+                  <summary>查看或微调本套提示词</summary>
+                  <textarea id="codexPromptPreview" placeholder="选择母版后显示提示词骨架…" aria-label="本套提示词骨架"></textarea>
+                </details>
+                <div class="codex-request-actions">
+                  <button class="secondary-button" id="codexCopyPromptBtn" type="button">复制提示词</button>
+                  <button class="primary-button" id="codexStartProductionBtn" type="button" disabled>登记这套制作请求</button>
+                </div>
+                <p id="codexRequestActionStatus" class="codex-inline-status" role="status" aria-live="polite">登记成功会生成可回读的请求编号；尚未开始生图。</p>
+              </section>
+
+              <section class="codex-studio-card codex-state-card" aria-labelledby="codexStateHeading">
+                <div class="codex-studio-card-head">
+                  <div><p class="codex-card-kicker">请求台账</p><h3 id="codexStateHeading">最近登记的作品</h3></div>
+                  <button class="secondary-button codex-refresh-button" id="codexReadRequestsBtn" type="button">刷新</button>
+                </div>
+                <p id="codexRequestListStatus" class="codex-inline-status" role="status" aria-live="polite">尚未读取请求记录。</p>
+                <div id="codexRequestList" class="codex-request-list" aria-live="polite">
+                  <div class="codex-empty-state"><span>01</span><p>读取后会在这里显示请求进度。</p></div>
+                </div>
+                <details class="codex-execution-boundary">
+                  <summary>生产和交付状态怎么认定？</summary>
+                  <p>此版本已接入请求保存与回读，但自动领取、真实生图、质检、成品入库和飞书登记仍未接通。只有每个页面及整套闭环证据齐全，才计为完成作品。</p>
+                </details>
+                <pre id="codexLiveOutputLog" class="codex-debug-log" role="status" aria-live="polite">暂无操作记录。</pre>
+              </section>
             </div>
           </div>
         </section>
@@ -1289,12 +1499,12 @@
             <div id="gptPatrolConversationList" class="gpt-patrol-conversation-list" aria-live="polite"></div>
           </div>
           <div class="settings-group global-specific-group">
-            <h3>工作时段与额度 <small class="scope-tag">所有模式共享</small></h3>
+            <h3>工作时段与额度 <small class="scope-tag">当前 CDP 账号窗口</small></h3>
             <div class="settings-two-columns">
               <label><span>工作开始时间</span><input id="gptContinuousWorkStart" type="time" value="08:00" /></label>
               <label><span>工作停止时间</span><input id="gptContinuousWorkEnd" type="time" value="02:00" /><small>北京时间，支持跨午夜</small></label>
-              <label><span>3小时上传上限（图）</span><input id="gptUploadLimit" type="number" min="1" max="500" value="80" /></label>
-              <label><span>3小时生图安全线（图）</span><input id="gptGenerationLimit" type="number" min="1" max="500" value="45" /><small>当前作品完整归档后再切换账号</small></label>
+              <label><span>滚动窗口上传附件安全线</span><input id="gptUploadLimit" type="number" min="1" max="500" value="80" /><small>默认 3 小时 80 个附件；含素材图和随套文案文件，按账号窗口分别记录</small></label>
+              <label><span>滚动窗口生图安全线（张）</span><input id="gptGenerationLimit" type="number" min="1" max="500" value="45" /><small>仅为本地保守安全线；当前作品完整归档后再让位</small></label>
               <label><span>滚动窗口（小时）</span><input id="gptQuotaWindowHours" type="number" min="1" max="24" value="3" /></label>
               <label><span>最低完整图片数</span><input id="gptMinimumImageCount" type="number" min="1" max="30" value="4" /><small>低于此数停止本帖</small></label>
             </div>
@@ -1392,15 +1602,19 @@
   <script src="/gpt-history-status.js?v=0.1.0"></script>
   <script src="/gpt-prompt-registry.js?v=0.1.0"></script>
   <script src="/gpt-account-rotation.js?v=0.1.0"></script>
+  <script src="/gpt-quota-view.js?v=1"></script>
   <script src="/gpt-runtime-recovery.js?v=0.1.0"></script>
   <script src="/gpt-window-worker-state.js?v=0.1.0"></script>
   <script src="/gpt-startup-stagger.js?v=0.1.0"></script>
   <script src="/gpt-patrol-scheduler.js?v=0.1.0"></script>
   <script src="/gpt-progress-display.js?v=0.1.0"></script>
   <script src="/template-migration-panel.js?v=0.1.0"></script>
-  <script src="/distribution-ui.js?v=0.1.0"></script>
-  <script src="/material-workspace.js?v=0.1.0"></script>
+  <script src="/distribution-ui.js?v=2.6.38-dev"></script>
+  <script src="/material-workspace.js?v=2.6.38-dev"></script>
   <script src="/moments-publisher-panel.js?v=0.1.0"></script>
-  <script src="/app.js?v=0.1.0"></script>
+  <script src="/fixed-template-session.js?v=1"></script>
+  <script src="/production-request.js?v=2.6.38-dev"></script>
+  <script src="/app.js?v=2.6.38-dev"></script>
+  <script src="/native-production-drawer.js?v=1.0.0" defer></script>
   </body>
 </html>

@@ -879,13 +879,15 @@ ${COPY_FORMAT_V3_HEADER}
   }
 
   async function recordWorkbenchQuota(entry, kind, count) {
-    if (!entry?.externalRequestId || !entry?.accountId || Number(count || 0) < 1) return null;
+    const accountId = String(entry?.accountId || "").trim();
+    const requestId = String(entry?.externalRequestId || entry?.quotaRequestId || "").trim();
+    if (!requestId || !accountId || Number(count || 0) < 1) return null;
     const result = await api("/api/gpt-production/quota-event", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        accountId: entry.accountId,
-        requestId: entry.externalRequestId,
+        accountId,
+        requestId,
         kind,
         count: Number(count)
       })
@@ -896,7 +898,7 @@ ${COPY_FORMAT_V3_HEADER}
     window.postMessage({
       source: "tb-gpt-production-extension",
       type: "tb-workbench-quota-updated",
-      accountId: entry.accountId,
+      accountId,
       quota: result?.quota || null,
       kind,
       count: Number(count)
@@ -3020,6 +3022,18 @@ ${COPY_FORMAT_V3_HEADER}
         title: materialName,
         conversationUrl: currentUrl,
         accountName: localStorage.getItem("tb-workbench-account-id") || "",
+        productionMode: String(options.productionMode || options.mode || "reuse-conversation"),
+        instance: String(options.instance || options.instanceName || ""),
+        templateId: String(options.templateId || ""),
+        templateName: String(options.templateName || ""),
+        templateUrl: String(options.templateUrl || ""),
+        templatePath: String(options.templatePath || ""),
+        templateP1Path: String(options.templateP1Path || ""),
+        templateP1Sha256: String(options.templateP1Sha256 || ""),
+        templateP2Path: String(options.templateP2Path || ""),
+        templateP2Sha256: String(options.templateP2Sha256 || ""),
+        templateSelectionMode: String(options.templateSelectionMode || ""),
+        sourcePageMap: Array.isArray(options.sourcePageMap) ? options.sourcePageMap : [],
         sourceMaterialPath,
         batchId: downloadResult.batchId,
         expectedImageCount: expectedRecoveryImages || downloadResult.count,
@@ -3483,6 +3497,130 @@ ${COPY_FORMAT_V3_HEADER}
     bridge.textContent = JSON.stringify(result);
     document.dispatchEvent(new Event("tb-workbench-task-result"));
     window.postMessage(result, "*");
+  }
+
+  function fixedTemplateContractForEntry(entry) {
+    const contract = globalThis.TBCDPPipelineContract;
+    if (!contract?.hasCanonicalPipelineFields || !contract?.validatePipelineDispatch) {
+      if (Object.keys(entry || {}).some((key) => [
+        "templateSelectionMode", "pipelineConfigRevision", "pipelineConfigMode",
+        "pipelineConfigTemplateId", "pipelineTemplateReferences"
+      ].includes(key))) {
+        throw productionBoundaryError("PIPELINE_CONTRACT_UNAVAILABLE", "固定模板派单校验器未加载；已拒绝旧模式回退");
+      }
+      return { enabled: false };
+    }
+    return contract.validatePipelineDispatch(entry);
+  }
+
+  function assertFixedTemplateAttachments(entry, paths, contract) {
+    if (!contract?.enabled) return;
+    if (entry.nativeUpload !== true) {
+      throw productionBoundaryError("PIPELINE_NATIVE_UPLOAD_REQUIRED", "固定模板模式必须由桌面桥注入经核验的原生附件");
+    }
+    const attachmentPaths = new Set((Array.isArray(paths) ? paths : []).map(normalizeLocalAttachmentPath));
+    const templatePaths = new Set((Array.isArray(entry.templateAttachments) ? entry.templateAttachments : [])
+      .map(normalizeLocalAttachmentPath));
+    for (const reference of contract.references) {
+      const normalized = normalizeLocalAttachmentPath(reference.path);
+      if (!attachmentPaths.has(normalized) || !templatePaths.has(normalized)) {
+        throw productionBoundaryError("PIPELINE_TEMPLATE_ATTACHMENT_MISSING", `${reference.role} 固定模板附件未进入本次上传白名单`);
+      }
+    }
+  }
+
+  function composerAttachmentEvidenceText() {
+    const target = composer();
+    const scope = target?.closest("form") || target?.closest("[data-composer-surface]")
+      || target?.parentElement || document;
+    const attributes = [...scope.querySelectorAll("[aria-label], [title], [data-testid], img[alt]")]
+      .map((node) => `${node.getAttribute("aria-label") || ""} ${node.getAttribute("title") || ""} ${node.getAttribute("data-testid") || ""} ${node.getAttribute("alt") || ""} ${node.textContent || ""}`)
+      .join(" ");
+    return `${scope.innerText || ""} ${attributes}`;
+  }
+
+  async function fixedTemplateConsumptionProof(entry, contract) {
+    if (!contract?.enabled) return null;
+    const inputFiles = [...document.querySelectorAll('input[type="file"]')]
+      .flatMap((input) => [...(input.files || [])]);
+    const observed = [];
+    for (const reference of contract.references) {
+      const expectedName = globalThis.TBCDPPipelineContract.basename(reference.path);
+      const matches = inputFiles.filter((file) => String(file?.name || "") === expectedName);
+      if (matches.length !== 1) {
+        throw productionBoundaryError("PIPELINE_TEMPLATE_FILELIST_MISMATCH", `${reference.role} 在浏览器实际 FileList 中缺失或不唯一`);
+      }
+      const file = matches[0];
+      if (Number(file.size) !== reference.bytes || typeof file.arrayBuffer !== "function"
+        || !globalThis.crypto?.subtle?.digest) {
+        throw productionBoundaryError("PIPELINE_TEMPLATE_FILE_BYTES_UNVERIFIABLE", `${reference.role} 浏览器附件字节数或 SHA-256 无法核验`);
+      }
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+      const sha256 = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+      if (sha256 !== reference.sha256) {
+        throw productionBoundaryError("PIPELINE_TEMPLATE_FILE_HASH_MISMATCH", `${reference.role} 浏览器实际附件 SHA-256 与派单不符`);
+      }
+      observed.push({ role: reference.role, fileName: String(file.name), sha256, bytes: Number(file.size) });
+    }
+    const visibleText = composerAttachmentEvidenceText();
+    const composerAttachmentNames = contract.references
+      .map((reference) => globalThis.TBCDPPipelineContract.basename(reference.path))
+      .filter((name) => visibleText.includes(name));
+    if (composerAttachmentNames.length !== contract.references.length) {
+      throw productionBoundaryError("PIPELINE_TEMPLATE_PREVIEW_MISSING", "GPT 输入框没有显示完整的 P1/P2 附件预览");
+    }
+    return {
+      source: "tb-gpt-production-extension",
+      type: "tb-workbench-pipeline-receipt-ready",
+      status: "REFERENCES_CONSUMED",
+      requestId: String(entry.externalRequestId || entry.requestId || ""),
+      templateSelectionMode: contract.templateSelectionMode,
+      pipelineConfigMode: contract.pipelineConfigMode,
+      pipelineConfigRevision: contract.pipelineConfigRevision,
+      pipelineConfigTemplateId: contract.pipelineConfigTemplateId,
+      nativeFileBytesVerified: true,
+      composerPreviewVerified: true,
+      references: observed,
+      composerAttachmentNames
+    };
+  }
+
+  async function requestDesktopPipelineReceipt(task, proof) {
+    const requestId = String(task?.entry?.externalRequestId || "").trim();
+    if (!requestId || !proof) throw productionBoundaryError("PIPELINE_RECEIPT_INPUT_MISSING", "固定模板回执缺少请求 ID 或浏览器附件证据");
+    const bridge = document.getElementById("tb-workbench-pipeline-receipt");
+    const node = bridge || document.createElement("script");
+    if (!bridge) {
+      node.id = "tb-workbench-pipeline-receipt";
+      node.type = "application/json";
+      document.documentElement.appendChild(node);
+    }
+    node.textContent = JSON.stringify(proof);
+    const ack = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        reject(productionBoundaryError("PIPELINE_RECEIPT_ACK_TIMEOUT", "桌面桥未确认保存固定模板执行回执"));
+      }, 20_000);
+      const onMessage = (event) => {
+        const message = event?.data;
+        if (event.source !== window || message?.source !== "content-production-app-desktop-bridge"
+          || message?.type !== "tb-workbench-pipeline-receipt-ack" || message?.requestId !== requestId) return;
+        clearTimeout(timeout);
+        window.removeEventListener("message", onMessage);
+        if (message.status !== "MATCH" || message.receipt?.status !== "MATCH"
+          || message.receipt?.requestId !== requestId
+          || message.receipt?.phase !== "TEMPLATE_REFERENCES_ATTACHED_BEFORE_MODEL_START") {
+          reject(productionBoundaryError("PIPELINE_RECEIPT_NOT_MATCHED", String(message.detail || "桌面桥未能核验并保存固定模板回执")));
+          return;
+        }
+        resolve(message.receipt);
+      };
+      window.addEventListener("message", onMessage);
+      document.dispatchEvent(new CustomEvent("tb-workbench-pipeline-receipt-ready", { detail: proof }));
+      window.postMessage(proof, "*");
+    });
+    task.entry.pipelineExecutionReceipt = ack;
+    return ack;
   }
 
 const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
@@ -4762,13 +4900,23 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
       return rect.width > 0 && rect.height > 0;
     });
     const message = visibleAlerts.map((node) => String(node.innerText || node.textContent || "")).join("\n");
-    if (/too many requests|rate limit|usage limit|try again later|请求过多|达到.*上限|稍后再试/i.test(message)) {
-      return "GPT 当前出现频率或额度限制，队列已暂停";
+    if (isExplicitPlatformQuotaLimit(message)) {
+      return "GPT 账号额度已明确触顶，当前账号窗口暂停";
+    }
+    if (/too many requests|rate limit|HTTP\s*429|请求过多|请求频率|临时限流/i.test(message)) {
+      return "GPT 请求暂时被频率限制，当前请求暂停；未判定账号额度触顶";
     }
     if (/verify you are human|security check|验证码|安全验证|完成验证/i.test(message)) {
       return "GPT 需要完成登录或安全验证，队列已暂停";
     }
     return "";
+  }
+
+  function isExplicitPlatformQuotaLimit(message = "") {
+    const text = String(message || "");
+    if (/(?:未|无法|不能)判定.{0,16}(?:额度|配额|触顶|上限|限制)|(?:不是|不属于).{0,12}(?:额度|配额|触顶|上限|限制)/i.test(text)) return false;
+    return /(?:额度|配额|usage\s+limit|quota\s+(?:reached|exhausted)|individual\s+quota\s+reached|resource_exhausted|upload\s+limit|generation\s+limit|image generation\s+limit|上传.{0,8}上限|生图.{0,8}上限|图片生成.{0,10}上限)/i.test(text)
+      && /(?:达到|已达|超出|用尽|不足|上限|触顶|exhaust(?:ed)?|reached|limit|resource_exhausted)/i.test(text);
   }
 
   function sendButton() {
@@ -5162,8 +5310,22 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
     )
   );
 
+  function extractPackagedCopy(raw) {
+    const text = String(raw || "").trim();
+    if (!text.includes("<<<COPY_FORMAT:MULTI>>>")) return text;
+    const blocks = [...text.matchAll(/<<<VERSION_START:([^>]+)>>>\s*([\s\S]*?)\s*<<<VERSION_END>>>/g)];
+    if (blocks.length !== 3 || new Set(blocks.map(m => m[1].trim())).size !== 3
+        || blocks.some(m => !m[2].trim() || m[2].includes("<<<VERSION_"))) {
+      throw new Error("三版文案标记不完整，请复制完整文案代码块后再打包");
+    }
+    // Only the marked copy belongs in 文案.txt; discard surrounding narration/fences.
+    return "<<<COPY_FORMAT:MULTI>>>\n" + blocks.map(m =>
+      `<<<VERSION_START:${m[1].trim()}>>>\n${m[2].trim()}\n<<<VERSION_END>>>`
+    ).join("\n\n");
+  }
+
   async function packageDownloadedReply(options = {}) {
-    const clipboardText = String(options.clipboardText || "").trim();
+    const clipboardText = extractPackagedCopy(options.clipboardText);
     if (!clipboardText) throw new Error("请先复制或下载本轮文案 TXT，再执行下载并打包");
     const result = await api("/api/extension/work-package", {
       method: "POST",
@@ -5174,6 +5336,18 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
         conversationUrl: String(options.conversationUrl || location.href),
         accountName: String(options.accountName || localStorage.getItem("tb-workbench-account-id") || ""),
         sourceMaterialPath: String(options.sourceMaterialPath || ""),
+        productionMode: String(options.productionMode || "reuse-conversation"),
+        instance: String(options.instance || options.instanceName || ""),
+        templateId: String(options.templateId || options.template?.id || ""),
+        templateName: String(options.templateName || options.template?.name || ""),
+        templateUrl: String(options.templateUrl || options.template?.url || ""),
+        templatePath: String(options.templatePath || options.template?.rootPath || options.template?.path || ""),
+        templateP1Path: String(options.templateP1Path || options.template?.p1Path || ""),
+        templateP1Sha256: String(options.templateP1Sha256 || options.template?.p1Sha256 || ""),
+        templateP2Path: String(options.templateP2Path || options.template?.p2Path || ""),
+        templateP2Sha256: String(options.templateP2Sha256 || options.template?.p2Sha256 || ""),
+        templateSelectionMode: String(options.templateSelectionMode || options.templateSelection?.mode || ""),
+        sourcePageMap: Array.isArray(options.sourcePageMap) ? options.sourcePageMap : [],
         batchId: String(options.batchId || ""),
         expectedImageCount: Math.max(0, Number(options.expectedImageCount || 0)),
         downloadRoot: String(options.downloadRoot || ""),
@@ -7120,8 +7294,19 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
         title: task.entry.name,
         conversationUrl: location.href,
         accountName: localStorage.getItem("tb-workbench-account-id") || "",
-             sourceMaterialPath: String(task.entry.materialPath || task.entry.path || ""),
-            productionMode: String(options.mode || task.entry.productionMode || ""),
+        sourceMaterialPath: String(task.entry.materialPath || task.entry.path || ""),
+        productionMode: String(options.mode || task.entry.productionMode || "reuse-conversation"),
+        instance: String(task.entry.instance || task.entry.instanceName || options.instance || ""),
+        templateId: String(task.entry.templateId || options.templateId || ""),
+        templateName: String(task.entry.templateName || options.templateName || ""),
+        templateUrl: String(task.entry.templateUrl || options.templateUrl || ""),
+        templatePath: String(task.entry.templatePath || options.templatePath || ""),
+        templateP1Path: String(task.entry.templateP1Path || options.templateP1Path || ""),
+        templateP1Sha256: String(task.entry.templateP1Sha256 || options.templateP1Sha256 || ""),
+        templateP2Path: String(task.entry.templateP2Path || options.templateP2Path || ""),
+        templateP2Sha256: String(task.entry.templateP2Sha256 || options.templateP2Sha256 || ""),
+        templateSelectionMode: String(task.entry.templateSelectionMode || options.templateSelectionMode || ""),
+        sourcePageMap: Array.isArray(task.entry.sourcePageMap) ? task.entry.sourcePageMap : [],
         batchId: downloadResult.batchId,
         expectedImageCount: downloadResult.count,
         downloadRoot: packageDownloadRoot,
@@ -8236,6 +8421,15 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
       return;
     }
     state.uploadSequence += 1;
+    if (!String(entry.accountId || "").trim()) {
+      try { entry.accountId = String(localStorage.getItem("tb-workbench-account-id") || "").trim(); }
+      catch { entry.accountId = ""; }
+    }
+    if (!entry.externalRequestId && !entry.quotaRequestId) {
+      const requestToken = globalThis.crypto?.randomUUID?.()
+        || `${Date.now().toString(36)}-${state.uploadSequence.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      entry.quotaRequestId = `cdp-${requestToken}`;
+    }
     state.uploadTasks.push({
       id: state.uploadSequence,
       entry,
@@ -8264,6 +8458,13 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
     const { entry } = task;
     setBusy(entry, `正在准备“${entry.name}”的文件…`);
     try {
+      const pipelineContract = fixedTemplateContractForEntry(entry);
+      if (pipelineContract.enabled) {
+        task.workflowVariant = pipelineContract.workerWorkflowVariant;
+        task.pipelineConfigMode = pipelineContract.pipelineConfigMode;
+        task.pipelineConfigRevision = pipelineContract.pipelineConfigRevision;
+        task.pipelineConfigTemplateId = pipelineContract.pipelineConfigTemplateId;
+      }
       if (!composer() && !/^\/share\//i.test(location.pathname)) {
         // Normal /c/ conversations are not online templates. GPT can take a
         // moment to mount the composer after a tab switch or wake-up; wait for
@@ -8279,6 +8480,7 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
       }
       const paths = (entry.attachments || []).slice(0, 30);
       const nativeUpload = entry.nativeUpload === true;
+      assertFixedTemplateAttachments(entry, paths, pipelineContract);
       const imagePaths = paths.filter((filePath) => /\.(?:png|jpe?g|webp|gif|bmp|svg)$/i.test(String(filePath || "")));
       const expectedFileNames = (nativeUpload ? (imagePaths.length ? imagePaths : paths) : paths).map((filePath) => fileName(filePath));
       let files = [];
@@ -8477,8 +8679,10 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
         reportWorkbenchProgress(task, "原生附件注入", 11, `等待 GPT 接收 ${expectedFileNames.length} 个原生附件`);
         const nativeInputFileCount = () => Math.max(0, ...[...document.querySelectorAll('input[type="file"]')]
           .map((candidate) => Number(candidate.files?.length || 0)));
-        const nativeUploadSucceeded = () => nativeInputFileCount() >= expectedFileNames.length
-          || attachmentPreviewCount() >= Math.min(expectedFileNames.length, 1);
+        const nativeUploadSucceeded = () => pipelineContract.enabled
+          ? nativeInputFileCount() >= paths.length && attachmentPreviewCount() >= pipelineContract.references.length
+          : nativeInputFileCount() >= expectedFileNames.length
+            || attachmentPreviewCount() >= Math.min(expectedFileNames.length, 1);
         const nativeConfirmed = await waitFor(nativeUploadSucceeded, 30_000);
         if (!nativeConfirmed) {
           throw productionBoundaryError(
@@ -8690,6 +8894,18 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
       }
       }
       task.entry.uploadedAttachments = nativeUpload ? expectedFileNames.length : files.length;
+      if (pipelineContract.enabled) {
+        const proof = await fixedTemplateConsumptionProof(entry, pipelineContract);
+        task.entry.pipelineExecutionReceipt = await requestDesktopPipelineReceipt(task, proof);
+        reportWorkbenchProgress(task, "固定模板已核验", 13,
+          `已核对 ${pipelineContract.references.length} 个固定模板附件的浏览器字节和输入框预览`);
+      }
+      if (pipelineContract.enabled) {
+        throw productionBoundaryError(
+          "PIPELINE_WORKER_UNAVAILABLE",
+          "P1/P2 附件已核验并写入 MATCH 回执；固定模板生产 worker 尚未接通，本任务未开始；未注入生产指令、未启动模型或生成作品"
+        );
+      }
       if (entry.autoRun) {
         // 自动模式需要一条最小控制提示来启动当前会话的计划；流程控制
         // （发送、等待、扣 1、下载、打包）由扩展状态机负责，不写进素材提示词。
@@ -8806,6 +9022,7 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
         task.error = error.message || "未知错误";
         setStatus(task.error, "danger");
         if ([
+          "PIPELINE_WORKER_UNAVAILABLE",
           "COMPOSER_ATTACHMENTS_PENDING",
           "COMPOSER_DRAFT_PENDING",
           "MIXED_POST_ATTACHMENTS",
@@ -9345,6 +9562,24 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
     if (message?.source !== "teambuilding-workbench"
       || message?.type !== "tb-workbench-upload") return;
     const requestId = String(message.requestId || "").trim();
+    let pipelineDispatchContract = { enabled: false };
+    try {
+      pipelineDispatchContract = fixedTemplateContractForEntry({ ...message, requestId });
+      if (pipelineDispatchContract.enabled && (message.resumePlanSubmitted === true
+        || message.workflow?.planSubmitted === true || message.submittedToGpt === true)) {
+        throw productionBoundaryError("PIPELINE_FIXED_TEMPLATE_RESUME_UNSUPPORTED", "固定模板 CDP 模式只接受新会话首次派单；续跑任务未接入，已拒绝执行");
+      }
+    } catch (error) {
+      window.postMessage({
+        source: "tb-gpt-production-extension",
+        type: "tb-workbench-task-result",
+        requestId,
+        status: "failed",
+        errorCode: String(error?.code || "PIPELINE_DISPATCH_REJECTED"),
+        detail: String(error?.message || "固定模板派单校验失败")
+      }, "*");
+      return;
+    }
     if (requestId && state.acceptedWorkbenchRequestIds.has(requestId)) return;
     if (requestId) {
       state.acceptedWorkbenchRequestIds.add(requestId);
@@ -9506,6 +9741,15 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
       retryTask.entry.materialPath = String(message.materialPath || retryTask.entry.materialPath || "");
       retryTask.entry.attachments = attachments;
       retryTask.entry.templateAttachments = templateAttachments;
+      retryTask.entry.pipelineDispatchContract = pipelineDispatchContract.enabled ? pipelineDispatchContract : null;
+      if (pipelineDispatchContract.enabled) {
+        retryTask.entry.templateSelectionMode = pipelineDispatchContract.templateSelectionMode;
+        retryTask.entry.pipelineConfigMode = pipelineDispatchContract.pipelineConfigMode;
+        retryTask.entry.pipelineConfigRevision = pipelineDispatchContract.pipelineConfigRevision;
+        retryTask.entry.pipelineConfigTemplateId = pipelineDispatchContract.pipelineConfigTemplateId;
+        retryTask.entry.pipelineTemplateReferences = pipelineDispatchContract.references;
+        retryTask.entry.workflowVariant = pipelineDispatchContract.workerWorkflowVariant;
+      }
       retryTask.entry.customPrompt = prompt;
       retryTask.entry.expectedImages = clampExpectedImageCount(message.expectedImages || retryTask.entry.expectedImages || 0);
       retryTask.entry.accountId = String(message.quotaAccountId || message.accountId || retryTask.entry.accountId || "");
@@ -9549,6 +9793,15 @@ const GPT_WORKFLOW_PROGRESS_RANGES = Object.freeze([
       accountId: String(message.quotaAccountId || message.accountId || ""),
       taskType: String(message.taskType || "material"),
       templateId: String(message.templateId || ""),
+      ...(pipelineDispatchContract.enabled ? {
+        pipelineDispatchContract,
+        templateSelectionMode: pipelineDispatchContract.templateSelectionMode,
+        pipelineConfigMode: pipelineDispatchContract.pipelineConfigMode,
+        pipelineConfigRevision: pipelineDispatchContract.pipelineConfigRevision,
+        pipelineConfigTemplateId: pipelineDispatchContract.pipelineConfigTemplateId,
+        pipelineTemplateReferences: pipelineDispatchContract.references,
+        workflowVariant: pipelineDispatchContract.workerWorkflowVariant
+      } : {}),
       materialPath: String(message.materialPath || ""),
       autoRun: Boolean(message.autoRun),
       autoOptions: taskOptions,

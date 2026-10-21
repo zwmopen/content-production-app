@@ -16,7 +16,8 @@ const category = { path: "D:\\materials\\Trips", name: "Trips", loaded: true, it
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const request = (folderPath = category.items[0].path) => ({
   type: "LOAD_MATERIAL_FOLDER", requestId: "request-42", folderPath,
-  folderName: "untrusted display label", images: [{ path: "not-in-the-catalog.jpg" }]
+  folderName: "untrusted display label", images: [{ path: "not-in-the-catalog.jpg" }],
+  targetInstanceId: "B", targetLineKey: "cdp-b"
 });
 
 function harness(categories = [clone(category)]) {
@@ -26,8 +27,12 @@ function harness(categories = [clone(category)]) {
     "#codexSelectedMaterial": { textContent: "previous label" }
   };
   const context = vm.createContext({
-    window: {}, dashboard: { materials: { categories } }, nodes,
+    window: {}, dashboard: { appInfo: { instanceId: "B", assignedAccountIds: ["account-1"] }, materials: { categories } }, nodes,
     worker: { autoRunning: false }, renderCount: 0, persistCount: 0,
+    document: {
+      getElementById(id) { return nodes[`#${id}`] || null; },
+      querySelector() { return null; }
+    },
     // Any accidental execution fails the test without contacting a service.
     api() { throw new Error("Network forbidden"); },
     fetch() { throw new Error("Network forbidden"); },
@@ -39,6 +44,7 @@ function harness(categories = [clone(category)]) {
     const gptTestMaterialEntries = new Map([["D:\\\\previous", { item: { path: "D:\\\\previous" } }]]);
     const gptTestExpandedCategories = new Set();
     const gptTestExpandedMaterials = new Set();
+    function selectedGptTestTemplates() { return [{ id: "T79", name: "测试母版" }]; }
     const gptWindowWorkerPromises = new Map();
     let activeGptAccountId = "account-1";
     let gptAutoRunning = false;
@@ -46,6 +52,10 @@ function harness(categories = [clone(category)]) {
     let gptSemiAutoPendingTask = null;
     let gptTestQueue = [{ id: "saved-queue" }];
     let gptTestQueueIndex = 1;
+    function contentInstanceId() { return String(dashboard?.appInfo?.instanceId || ""); }
+    function contentInstanceAccountIds() {
+      return new Set((dashboard?.appInfo?.assignedAccountIds || []).map((value) => String(value).toLowerCase()));
+    }
     function activeGptWindowWorkerState() { return worker; }
     function renderGptTestMaterials() {
       renderCount++;
@@ -93,7 +103,10 @@ test("executeJavaScript bridge returns success only after exact indexed item sel
   const h = harness();
   const payload = request("d:/MATERIALS/Trips/One/");
   const script = `window.receiveContainerHandoff(${JSON.stringify(payload)})`;
-  assert.deepEqual(clone(h.run(script)), { ok: true, requestId: "request-42", stage: "SELECTED_NOT_STARTED" });
+  assert.deepEqual(clone(h.run(script)), {
+    ok: true, requestId: "request-42", stage: "SELECTED_NOT_STARTED",
+    targetLineKey: "cdp-b", targetInstanceId: "B", receiverInstanceId: "B", receiverAccountId: "account-1"
+  });
   assert.deepEqual(h.snapshot().selected, [category.items[0].path]);
   assert.deepEqual(h.snapshot().entries, [category.items[0].path]);
   assert.deepEqual(h.nodes["#gptTestMaterialFolders"].checked, h.context.worker.selectedMaterials);
@@ -106,12 +119,22 @@ test("executeJavaScript bridge returns success only after exact indexed item sel
   assert.deepEqual(h.snapshot().expanded, [category.path]);
 });
 
-test("exact loaded category selects all existing items without fabricating items from images", () => {
+test("receiver refuses a request bound to a different CDP instance before selection changes", () => {
   const h = harness();
-  assert.equal(h.receive(request(category.path)).ok, true);
-  assert.deepEqual(h.snapshot().selected, category.items.map((item) => item.path));
+  expectRefused(h, { ...request(), targetInstanceId: "A", targetLineKey: "cdp-a" }, "TARGET_INSTANCE_MISMATCH");
+  expectRefused(h, { ...request(), targetLineKey: "cdp-a" }, "TARGET_LINE_MISMATCH");
+});
+
+test("receiver refuses to claim delivery when its instance identity is unavailable", () => {
+  const h = harness();
+  h.context.dashboard.appInfo.instanceId = "";
+  expectRefused(h, request(), "RECEIVER_INSTANCE_UNVERIFIED");
+});
+
+test("category folders are refused so one work folder cannot expand into an entire category", () => {
+  const h = harness();
+  expectRefused(h, request(category.path), "SELECT_A_SINGLE_WORK_FOLDER");
   assert.equal(h.context.dashboard.materials.categories[0].items.length, 2);
-  assert.equal(h.nodes["#gptTestMaterialCount"].textContent, "2 个已选");
 });
 
 test("existing renderer emits checked controls for the actual handoff selection", () => {
@@ -169,17 +192,16 @@ test("non-path payloads, relative paths, traversal, URLs and control characters 
   }
 });
 
-test("duplicate normalized item paths, category paths and category/item collisions are ambiguous", () => {
+test("duplicate normalized paths and category/item collisions are ambiguous", () => {
   const duplicate = clone(category);
   duplicate.items[0].path = "d:/materials/trips/one/";
   for (const [categories, folderPath] of [
     [[clone(category), duplicate], category.items[0].path],
-    [[clone(category), duplicate], category.path],
     [[{ ...clone(category), path: category.items[0].path }], category.items[0].path]
   ]) expectRefused(harness(categories), request(folderPath), "AMBIGUOUS_MATERIAL_FOLDER");
   const within = clone(category);
   within.items.push({ ...within.items[0] });
-  expectRefused(harness([within]), request(category.path), "AMBIGUOUS_MATERIAL_FOLDER");
+  expectRefused(harness([within]), request(category.path), "SELECT_A_SINGLE_WORK_FOLDER");
 });
 
 test("running legacy, paused running, independent worker and pending manual tasks reject selection", () => {
@@ -191,20 +213,21 @@ test("running legacy, paused running, independent worker and pending manual task
   }
 });
 
-test("unloaded, empty and malformed catalog or missing UI refuse selection", () => {
-  for (const categories of [null, [null], [{ ...clone(category), items: {} }],
-    [{ ...clone(category), loaded: false }], [{ ...clone(category), items: [] }]]) {
-    expectRefused(harness(categories), request(category.path), "MATERIALS_NOT_READY");
+test("unloaded or malformed material indexes and missing UI refuse selection", () => {
+  for (const categories of [null, [null], [{ ...clone(category), items: {} }]]) {
+    expectRefused(harness(categories), request(category.items[0].path), "MATERIALS_NOT_READY");
   }
+  expectRefused(harness([{ ...clone(category), loaded: false }]), request(category.items[0].path), "MATERIALS_NOT_READY");
+  expectRefused(harness([{ ...clone(category), items: [] }]), request(category.items[0].path), "UNKNOWN_MATERIAL_FOLDER");
   const h = harness();
   delete h.nodes["#gptTestMaterialFolders"];
   expectRefused(h, request(), "MATERIAL_UI_NOT_READY");
 });
 
-test("category with invalid item paths is refused without changing queue or selection", () => {
+test("category paths are refused even when their internal items are malformed", () => {
   const invalid = clone(category);
   invalid.items[0].path = "";
-  expectRefused(harness([invalid]), request(category.path), "INVALID_MATERIAL_ENTRY");
+  expectRefused(harness([invalid]), request(category.path), "SELECT_A_SINGLE_WORK_FOLDER");
 });
 
 test("render, persistence and selection readback failures roll back selection, entries and saved queue", () => {
@@ -228,20 +251,40 @@ test("repeated handoff stays a selection and never accumulates work or reports d
   assert.equal(h.run("gptAutoRunning"), false);
 });
 
-test("Codex start button records honest unstarted instruction with no executor", () => {
+test("Codex button registers a persisted request without claiming generation", async () => {
   const log = { textContent: "existing log", scrollHeight: 40 };
+  const actionStatus = { dataset: {}, textContent: "" };
   let click;
   const button = { addEventListener(type, callback) { assert.equal(type, "click"); click = callback; } };
   const script = source.slice(source.indexOf("  document.getElementById('codexStartProductionBtn')"),
-    source.indexOf("  // Cross-App PostMessage receiver"));
-  vm.runInNewContext(script, { document: { getElementById(id) {
-    return id === "codexStartProductionBtn" ? button : log;
+    source.indexOf("  document.getElementById('codexReadRequestsBtn')"));
+  let sent;
+  vm.runInNewContext(script, { window: { TBProductionRequest: require('../src/public/production-request') },
+    selectedGptTestEntries: () => [{ item: { path: 'D:\\source\\one' } }],
+    selectedGptTestTemplates: () => [{ id: 'T79' }],
+    refreshCodexStudioSelection() {},
+    refreshCodexRequestCards: async () => {},
+    apiWithTimeout: async (path, options) => {
+      sent = { path, payload: JSON.parse(options.body) };
+      return { ok: true, status: 'PREPARED_NOT_GENERATED', completed: false, requestId: 'r1', requestPath: 'D:\\requests\\r1.json', sourceCount: 8, mode: '3_fixed_template', templateId: 'T79' };
+    }, document: { getElementById(id) {
+    if (id === "codexStartProductionBtn") return button;
+    if (id === "codexLiveOutputLog") return log;
+    if (id === "codexRequestActionStatus") return actionStatus;
+    if (id === "codexPromptPreview") return { value: "fixed template prompt" };
+    if (id === "codexContentTemplateMode") return { value: "3_fixed_template" };
+    return null;
   } } });
-  click();
-  assert.match(log.textContent, /制作指令已登记，尚未开始生产/);
-  assert.match(log.textContent, /未接入执行器/);
+  await click({ currentTarget: button });
+  assert.equal(sent.path, '/api/production/requests/prepare');
+  assert.equal(sent.payload.pipeline, 'codex-api');
+  assert.match(log.textContent, /已保存请求 r1/);
+  assert.match(log.textContent, /尚未生成/);
   assert.doesNotMatch(log.textContent, /正在调用|任务已分发|成品将自动/);
+  assert.equal(actionStatus.dataset.state, "success");
+  assert.match(actionStatus.textContent, /尚未开始生图/);
   assert.equal(log.scrollTop, 40);
+  assert.equal(button.disabled, false);
 });
 
 test("legacy name-only material messages no longer alter labels or claim selection", () => {

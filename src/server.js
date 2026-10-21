@@ -81,6 +81,10 @@ const {
   publishTitleFromClipboard
 } = require("./lib/work-package-title");
 const {
+  updateOnlineSourceArchiveMetadata,
+  writeOnlineDeliveryMetadata
+} = require("./lib/production-delivery-metadata");
+const {
   readRuntimeState: readGptRuntimeStateRaw,
   writeRuntimeState: writeGptRuntimeStateRaw,
   writeRuntimeStateAsync: writeGptRuntimeStateAsyncRaw
@@ -1779,6 +1783,7 @@ function archiveMaterialAfterProductionUnlocked(body = {}, options = {}) {
     name: path.basename(finalPath),
     usageCount
   }, { materialRoot, ledgerFile: metadataFile, cacheFile: hashFile, indexFile });
+  let packageMetadataSync = { status: "NOT_PRESENT" };
   if (packagePath && libraryRoot && isPathInside(libraryRoot, packagePath) && exists(packagePath)) {
     const packageRecordFile = exists(path.join(packagePath, "manifest.json"))
       ? path.join(packagePath, "manifest.json")
@@ -1786,14 +1791,54 @@ function archiveMaterialAfterProductionUnlocked(body = {}, options = {}) {
     if (exists(packageRecordFile) && fs.statSync(packageRecordFile).isFile()) {
       try {
         const packageRecord = readJson(packageRecordFile, {});
+        const checkpoint = readGptProductionCheckpoint(body.requestId);
+        const rawMode = String(body.productionMode || checkpoint?.productionMode || packageRecord.productionMode || "reuse-conversation").trim();
+        const modeNameMap = {
+          "1_shuffle": "原图复刻打乱模式",
+          "2_random_template": "随机母版复刻模式",
+          "3_fixed_template": "固定模板迁移模式",
+          "template_migration": "固定模板迁移模式",
+          "reuse-conversation": "会话母版复刻模式"
+        };
+        const modeName = modeNameMap[rawMode] || packageRecord.productionModeName || "会话母版复刻模式";
+        const wfVer = String(body.workflowVersion || checkpoint?.workflowVariantVersion || checkpoint?.workflowVariant || packageRecord.workflowVersion || "gpt-ext-v2.0").trim();
+        const tplId = String(body.templateId || checkpoint?.templateId || packageRecord.templateId || "").trim();
         packageRecord.sourceMaterialPath ||= sourcePath;
         packageRecord.sourceMaterialName ||= path.basename(sourcePath);
         packageRecord.sourceMaterialArchivePath = finalPath;
         packageRecord.sourceMaterialUpdatedAt = new Date().toISOString();
+        packageRecord.pipeline ||= "GPT扩展+本地脚本产线";
+        packageRecord.workflowVersion ||= wfVer;
+        packageRecord.productionMode ||= rawMode;
+        packageRecord.productionModeName ||= modeName;
+        if (tplId) packageRecord.templateId ||= tplId;
+        packageRecord.producedAt ||= packageRecord.completedAt || packageRecord.createdAt || new Date().toISOString();
+        packageRecord.productionTrace = {
+          pipeline: packageRecord.pipeline,
+          workflowVersion: packageRecord.workflowVersion,
+          packagerVersion: packageRecord.packagerVersion || "1.8.4",
+          productionMode: packageRecord.productionMode,
+          productionModeName: packageRecord.productionModeName,
+          templateId: packageRecord.templateId || "会话锁定母版",
+          sessionPolicy: String(checkpoint?.sessionPolicy || packageRecord.sessionPolicy || "reuse-conversation"),
+          accountName: String(packageRecord.accountName || body.accountId || checkpoint?.accountId || ""),
+          conversationUrl: String(packageRecord.conversationUrl || body.conversationUrl || checkpoint?.conversationUrl || ""),
+          producedAt: packageRecord.producedAt
+        };
+        if (Array.isArray(packageRecord.tags)) {
+          for (const tag of [packageRecord.pipeline, packageRecord.productionModeName]) {
+            if (tag && !packageRecord.tags.includes(tag)) packageRecord.tags.push(tag);
+          }
+        }
         writeJson(packageRecordFile, packageRecord);
-      } catch {
-        // Archiving remains successful; the package record can be repaired
-        // later from the append-only archive event.
+        packageMetadataSync = updateOnlineSourceArchiveMetadata({
+          packagePath,
+          originalPath: sourcePath,
+          archivedPath: finalPath,
+          archivedAt: packageRecord.sourceMaterialUpdatedAt
+        });
+      } catch (error) {
+        packageMetadataSync = { status: "PENDING", reason: error.message || String(error) };
       }
     }
   }
@@ -1803,6 +1848,7 @@ function archiveMaterialAfterProductionUnlocked(body = {}, options = {}) {
     templateId: String(body.templateId || ""),
     conversationUrl: String(body.conversationUrl || ""),
     packagePath: String(packagePath || ""),
+    packageMetadataSync,
     from: sourcePath,
     to: finalPath,
     sourceMaterialPath: sourcePath,
@@ -2183,11 +2229,62 @@ function runExtensionWorkPackage(body = {}) {
     throw new Error("本次图片数量无效，已停止打包");
   }
   const normalizedBodyTitle = normalizeWorkPackageTitle(body.title);
+  const savedCheckpoints = readJson(GPT_PRODUCTION_CHECKPOINT_FILE, { version: 1, items: {} });
+  const matchedCheckpoint = (body.requestId && readGptProductionCheckpoint(body.requestId))
+    || Object.values(savedCheckpoints.items || {}).find((item) =>
+      item && (
+        (body.conversationUrl && item.conversationUrl === body.conversationUrl)
+        || (body.sourceMaterialPath && item.sourceMaterialPath === body.sourceMaterialPath)
+      )
+    ) || null;
+  const resolvedMode = String(body.productionMode || matchedCheckpoint?.productionMode || "reuse-conversation").trim();
+  const resolvedModeNameMap = {
+    "1_shuffle": "原图复刻打乱模式",
+    "2_random_template": "随机母版复刻模式",
+    "3_fixed_template": "固定模板迁移模式",
+    "template_migration": "固定模板迁移模式",
+    "reuse-conversation": "会话母版复刻模式"
+  };
+  const resolvedModeName = resolvedModeNameMap[resolvedMode] || "会话母版复刻模式";
+  const resolvedWorkflowVersion = String(
+    body.workflowVersion || matchedCheckpoint?.workflowVariantVersion || matchedCheckpoint?.workflowVariant || "gpt-ext-v2.0"
+  ).trim();
+  const resolvedTemplateId = String(body.templateId || matchedCheckpoint?.templateId || "").trim();
+  const registeredTemplate = (readOnlineTemplates().templates || []).find((entry) =>
+    String(entry.templateId || entry.id || "") === resolvedTemplateId
+  ) || {};
+  const templateTrace = {
+    id: resolvedTemplateId,
+    name: String(body.templateName || matchedCheckpoint?.templateName || registeredTemplate.name || ""),
+    url: String(body.templateUrl || matchedCheckpoint?.templateUrl || registeredTemplate.url || ""),
+    rootPath: String(body.templatePath || matchedCheckpoint?.templatePath || body.template?.rootPath || body.template?.path || ""),
+    p1Path: String(body.templateP1Path || matchedCheckpoint?.templateP1Path || body.template?.p1Path || ""),
+    p1Sha256: String(body.templateP1Sha256 || matchedCheckpoint?.templateP1Sha256 || body.template?.p1Sha256 || ""),
+    p2Path: String(body.templateP2Path || matchedCheckpoint?.templateP2Path || body.template?.p2Path || ""),
+    p2Sha256: String(body.templateP2Sha256 || matchedCheckpoint?.templateP2Sha256 || body.template?.p2Sha256 || ""),
+    selectionMode: String(body.templateSelectionMode || matchedCheckpoint?.templateSelectionMode || body.templateSelection?.mode || "")
+  };
+  const resolvedSessionPolicy = String(body.sessionPolicy || matchedCheckpoint?.sessionPolicy || "reuse-conversation").trim();
   const metadata = JSON.stringify({
-    accountName: String(body.accountName || ""),
-    conversationUrl: String(body.conversationUrl || ""),
+    accountName: String(body.accountName || matchedCheckpoint?.accountId || ""),
+    conversationUrl: String(body.conversationUrl || matchedCheckpoint?.conversationUrl || ""),
     title: normalizedBodyTitle,
-    sourceMaterialPath: String(body.sourceMaterialPath || "")
+    sourceMaterialPath: String(body.sourceMaterialPath || matchedCheckpoint?.sourceMaterialPath || ""),
+    pipeline: "GPT扩展+本地脚本产线",
+    workflowVersion: resolvedWorkflowVersion,
+    productionMode: resolvedMode,
+    productionModeName: resolvedModeName,
+    templateId: resolvedTemplateId,
+    template: templateTrace,
+    templateName: templateTrace.name,
+    templateUrl: templateTrace.url,
+    templatePath: templateTrace.rootPath,
+    templateP1Path: templateTrace.p1Path,
+    templateP1Sha256: templateTrace.p1Sha256,
+    templateP2Path: templateTrace.p2Path,
+    templateP2Sha256: templateTrace.p2Sha256,
+    templateSelectionMode: templateTrace.selectionMode,
+    sessionPolicy: resolvedSessionPolicy
   });
   const args = [
     "-NoProfile",
@@ -2209,9 +2306,25 @@ function runExtensionWorkPackage(body = {}) {
       batchId,
       expectedImageCount,
       copyText: clipboardText,
-      accountName: String(body.accountName || ""),
-      conversationUrl: String(body.conversationUrl || ""),
-      sourceMaterialPath: String(body.sourceMaterialPath || ""),
+      accountName: String(body.accountName || matchedCheckpoint?.accountId || ""),
+      conversationUrl: String(body.conversationUrl || matchedCheckpoint?.conversationUrl || ""),
+      sourceMaterialPath: String(body.sourceMaterialPath || matchedCheckpoint?.sourceMaterialPath || ""),
+      pipeline: "GPT扩展+本地脚本产线",
+      workflowVersion: resolvedWorkflowVersion,
+      productionMode: resolvedMode,
+      productionModeName: resolvedModeName,
+      templateId: resolvedTemplateId || "会话锁定母版",
+      template: templateTrace,
+      templateName: templateTrace.name,
+      templateUrl: templateTrace.url,
+      templatePath: templateTrace.rootPath,
+      templateP1Path: templateTrace.p1Path,
+      templateP1Sha256: templateTrace.p1Sha256,
+      templateP2Path: templateTrace.p2Path,
+      templateP2Sha256: templateTrace.p2Sha256,
+      templateSelectionMode: templateTrace.selectionMode,
+      sourcePageMap: Array.isArray(body.sourcePageMap) ? body.sourcePageMap : [],
+      sessionPolicy: resolvedSessionPolicy,
       // Embedded automation has no trustworthy foreground browser title. A
       // login/security page title such as "验证你的身份 - OpenAI" used to leak
       // into the output folder name. Matching the conversation title to the
@@ -2296,6 +2409,7 @@ function runExtensionWorkPackage(body = {}) {
       }
       let packageImageCount = 0;
       let imageValidation = null;
+      let deliveryMetadataResult = null;
       if (body.preview !== true) {
         if (!packagePath || !exists(packagePath) || !fs.statSync(packagePath).isDirectory()) {
           reject(new Error("打包程序已结束，但没有找到成品文件夹"));
@@ -2327,6 +2441,24 @@ function runExtensionWorkPackage(body = {}) {
           reject(new Error("成品文件夹没有 TXT 文案，已停止后续队列"));
           return;
         }
+        try {
+          deliveryMetadataResult = writeOnlineDeliveryMetadata({
+            packagePath,
+            request: {
+              ...body,
+              batchId,
+              productionMode: resolvedMode,
+              template: templateTrace,
+              templateId: resolvedTemplateId,
+              templateSelectionMode: templateTrace.selectionMode,
+              conversationUrl: String(body.conversationUrl || matchedCheckpoint?.conversationUrl || "")
+            },
+            imageValidation
+          });
+        } catch (error) {
+          reject(new Error(`成品包已生成，但元数据写入或回读失败：${error.message || String(error)}`));
+          return;
+        }
         removeExtensionCopyText(effectiveDownloadRoot, batchId);
       }
       resolve({
@@ -2337,6 +2469,8 @@ function runExtensionWorkPackage(body = {}) {
         batchId,
         expectedImageCount,
         packagePath,
+        metadataPath: deliveryMetadataResult?.metadataPath || "",
+        metadataStatus: deliveryMetadataResult?.metadataStatus || "NOT_APPLICABLE",
         imageCount: body.preview === true
           ? Number(fields.Images || expectedImageCount || 0)
           : packageImageCount,
@@ -7189,16 +7323,23 @@ async function getConversionSnapshot(options = {}) {
 }
 
 function isAllowedExternalTarget(target) {
+  if (typeof target !== "string") return false;
   if (target === "cgpt-workpkg://run" || target === "cgpt-workpkg://configure") return true;
+  if (/^[a-zA-Z]:\\/i.test(target) && fs.existsSync(target)) {
+    const norm = path.normalize(target).toLowerCase();
+    if (norm.startsWith("d:\\aicode") || norm.startsWith("d:\\secondbrain") || norm.startsWith("c:\\users\\z\\desktop")) {
+      return true;
+    }
+  }
   try {
     const parsed = new URL(target);
     return parsed.protocol === "https:"
       && [
         "chatgpt.com",
         "mp.weixin.qq.com",
-      "github.com",
-      "raw.githubusercontent.com",
-      "my.feishu.cn",
+        "github.com",
+        "raw.githubusercontent.com",
+        "my.feishu.cn",
         "creator.douyin.com",
         "x.com",
         "we.ctrip.com"
@@ -9680,6 +9821,59 @@ async function route(req, res) {
         force: parsed.query.refresh === "1"
       })
     });
+  }
+
+  if (pathname === "/api/templates/catalog" && req.method === "GET") {
+    const catalog = require("./lib/production-template-catalog");
+    const force = parsed.query.refresh === "1";
+    const templates = catalog.listProductionTemplates(force);
+    return sendExtensionJson(req, res, { ok: true, templates, total: templates.length });
+  }
+
+  if (pathname === "/api/pipeline-mode-config" && req.method === "GET") {
+    const catalog = require("./lib/production-template-catalog");
+    const clientPort = req.socket.localPort || PORT;
+    const lineId = String(parsed.query.lineId || catalog.resolveLineIdFromPort(clientPort)).trim().toLowerCase();
+    return sendExtensionJson(req, res, catalog.getPipelineModeConfig(lineId));
+  }
+
+  if (pathname === "/api/pipeline-mode-config" && req.method === "POST") {
+    const catalog = require("./lib/production-template-catalog");
+    const body = JSON.parse(await getBody(req, 16_000) || "{}");
+    const clientPort = req.socket.localPort || PORT;
+    const lineId = String(body.lineId || parsed.query.lineId || catalog.resolveLineIdFromPort(clientPort)).trim().toLowerCase();
+    const mode = String(body.mode || "").trim();
+    const fixedTemplateId = String(body.fixedTemplateId || "").trim();
+    try {
+      const result = catalog.savePipelineModeConfig(lineId, mode, fixedTemplateId);
+      return sendExtensionJson(req, res, result);
+    } catch (err) {
+      return sendExtensionJson(req, res, { ok: false, error: err.message }, 400);
+    }
+  }
+
+  if (pathname === "/api/materials/current-detail" && req.method === "GET") {
+    const catalog = require("./lib/production-template-catalog");
+    const pathParam = parsed.query.path ? decodeURIComponent(String(parsed.query.path)) : "";
+    return sendExtensionJson(req, res, catalog.getCurrentMaterialDetail(pathParam));
+  }
+
+  if (pathname === "/api/materials/switch-random" && req.method === "POST") {
+    const catalog = require("./lib/production-template-catalog");
+    return sendExtensionJson(req, res, catalog.pickRandomMaterial());
+  }
+
+  if (pathname === "/api/pipeline/producer-status" && req.method === "GET") {
+    const catalog = require("./lib/production-template-catalog");
+    return sendExtensionJson(req, res, catalog.getProducerStatus());
+  }
+
+  if (pathname === "/api/pipeline/producer-control" && req.method === "POST") {
+    const catalog = require("./lib/production-template-catalog");
+    const body = JSON.parse(await getBody(req, 16_000) || "{}");
+    const action = String(body.action || "").trim();
+    const result = catalog.controlProducer(action);
+    return sendExtensionJson(req, res, result, result.ok ? 200 : 400);
   }
 
   if (pathname === "/api/materials/all") {

@@ -105,6 +105,13 @@ test("inventory selection can read total or an explicitly requested category", (
   assert.equal(selectDeviceInventory({ workCount: null, workCounts: { conversion: null } }, "conversion").value, null);
 });
 
+test("GPT account quota defaults use the 50-image operational estimate", () => {
+  const normalized = normalizePageSettings({ gptAuto: { accounts: [{ id: "account-1" }] } });
+  assert.equal(normalized.gptAuto.accounts[0].generationLimit, 50);
+  assert.equal(normalized.gptAuto.accounts[0].uploadLimit, 80);
+  assert.equal(normalized.gptAuto.accounts[0].windowHours, 3);
+});
+
 test("automatic distribution keeps precise replenishment candidates precise", () => {
   const precise = {
     name: "作品集_070[转]",

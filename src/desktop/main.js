@@ -12,6 +12,7 @@ previewServer.on("error", error => { if (error.code !== "EADDRINUSE") console.wa
 previewServer.listen(PREVIEW_PORT, "127.0.0.1");
 
 const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
@@ -39,7 +40,8 @@ const {
   planTemporaryWebCacheCleanup
 } = require("../lib/temporary-web-cache-schedule");
 const { shouldKeepGptAccountView } = require("../lib/gpt-view-continuity");
-const { readRuntimeState } = require("../lib/gpt-runtime-state");
+const { readRuntimeState, readRuntimeStateAsync, writeRuntimeStateAsync } = require("../lib/gpt-runtime-state");
+const cdpPipelineContract = require("../integrations/gpt-production-extension/cdp-pipeline-contract");
 const {
   defaultAccountId: defaultInstanceAccountId,
   getInstanceConfig,
@@ -58,6 +60,7 @@ const {
   buildWechatWebOpenEditorScript
 } = require("../lib/wechat-web-automation");
 const { resolveElectronProxy } = require("../lib/electron-network-proxy");
+const { getFingerprintProfile } = require("../lib/instance-fingerprint-profile");
 
 // Some Windows machines repeatedly lose the Electron GPU subprocess during
 // startup (exit code -1073741515), which otherwise terminates the whole app.
@@ -66,6 +69,7 @@ const { resolveElectronProxy } = require("../lib/electron-network-proxy");
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch(`disable-gpu`);
 app.commandLine.appendSwitch(`disable-gpu-compositing`);
+app.commandLine.appendSwitch("force-webrtc-ip-handling-policy", "disable_non_proxied_udp");
 
 // Keep external web traffic on the local Clash listener even when Windows
 // WinINET/WinHTTP proxy settings are disabled. Local workbench/API/CDP
@@ -104,10 +108,10 @@ const APP_URL = `http://127.0.0.1:${APP_PORT}/`;
 const GPT_PRE_SUBMIT_DISPATCH_GRACE_MS = 180_000;
 const RUNTIME_ROOT = process.env.TEAMBUILDING_DASHBOARD_RUNTIME || DEFAULT_INSTANCE_RUNTIME;
 const INSTANCE_TITLES = {
-  "A": "🟢【实例 A】账号1 · zwmrpg (端口 4331)",
-  "B": "🔵【实例 B】账号2 · orlando (端口 4332)",
-  "C": "🟣【实例 C】账号3 · z x Plus (端口 4333)",
-  "D": "🟠【实例 D】账号4 · Hazel Plus (端口 4334)"
+  "A": "🎬 内容制作 · 多账号生产中枢 (端口 4331)",
+  "B": "🎬 内容制作 · 多账号生产中枢 (端口 4332)",
+  "C": "🎬 内容制作 · 多账号生产中枢 (端口 4333)",
+  "D": "🎬 内容制作 · 多账号生产中枢 (端口 4334)"
 };
 const IS_DEV_ENV = process.env.CONTENT_ENV === "development" || String(CONTENT_INSTANCE_ID).toUpperCase().startsWith("DEV");
 const APP_TITLE = IS_DEV_ENV
@@ -1251,16 +1255,25 @@ async function ensureOnlinePlatformView(platformId = "wechat") {
   if (!mainWindow) throw new Error("工作台窗口尚未就绪");
   const config = onlinePlatformConfig(id);
   const partition = `${ONLINE_PLATFORM_PARTITION_PREFIX}-${id}`;
-  const platformSession = session.fromPartition(partition);
+  const stealthPreloadPath = path.join(__dirname, "stealth-fingerprint.js");
+  const fingerprintProfile = getFingerprintProfile(CONTENT_INSTANCE_ID);
   const view = new WebContentsView({
     webPreferences: {
       partition,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      preload: stealthPreloadPath,
+      additionalArguments: [
+        `--content-instance-id=${CONTENT_INSTANCE_ID}`,
+        `--fingerprint-config=${encodeURIComponent(JSON.stringify(fingerprintProfile))}`
+      ],
       backgroundThrottling: false
     }
   });
+  const targetUserAgent = fingerprintProfile?.browser?.userAgent
+    || view.webContents.getUserAgent().replace(/Electron\/\S+\s*/g, "").replace(/content-production-app\/\S+\s*/g, "").trim();
+  view.webContents.setUserAgent(targetUserAgent);
   onlinePlatformViews.set(id, view);
   onlinePlatformStates.set(id, {
     loading: true,
@@ -2134,16 +2147,25 @@ async function waitForGptPageReadiness(account, timeoutMs = 30_000, shouldStop =
 async function ensureWechatDraftView() {
   if (wechatDraftView && !wechatDraftView.webContents.isDestroyed()) return wechatDraftView;
   if (!mainWindow) throw new Error("工作台窗口尚未就绪");
-  const draftSession = session.fromPartition(WECHAT_DRAFT_PARTITION);
+  const stealthPreloadPath = path.join(__dirname, "stealth-fingerprint.js");
+  const fingerprintProfile = getFingerprintProfile(CONTENT_INSTANCE_ID);
   const view = new WebContentsView({
     webPreferences: {
       partition: WECHAT_DRAFT_PARTITION,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      preload: stealthPreloadPath,
+      additionalArguments: [
+        `--content-instance-id=${CONTENT_INSTANCE_ID}`,
+        `--fingerprint-config=${encodeURIComponent(JSON.stringify(fingerprintProfile))}`
+      ],
       backgroundThrottling: false
     }
   });
+  const targetUserAgent = fingerprintProfile?.browser?.userAgent
+    || view.webContents.getUserAgent().replace(/Electron\/\S+\s*/g, "").replace(/content-production-app\/\S+\s*/g, "").trim();
+  view.webContents.setUserAgent(targetUserAgent);
   wechatDraftView = view;
   view.setBackgroundColor("#f5f7f8");
   view.setBorderRadius(16);
@@ -2593,20 +2615,59 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
     account.extensionError = error.message;
     appendDesktopLog("gpt-extension-failed", `${id} ${error.stack || error.message}`);
   }
+  // 关键：账号登录状态无损保活与自动还原 (从安全凭证快照原子导入 Cookie Jar，确保账号不掉)
+  try {
+    const backupDir = "D:\\AICode\\运行数据\\江湖有旅人\\内容生产App\\_SAFE_LOGIN_BACKUP_LIVE";
+    const cookieFile = path.join(backupDir, `${id}-full-page-cookies.json`);
+    if (fs.existsSync(cookieFile)) {
+      const existingCookies = await account.session.cookies.get({ domain: "chatgpt.com" });
+      if (existingCookies.length === 0) {
+        const rawCookies = JSON.parse(fs.readFileSync(cookieFile, "utf8"));
+        for (const c of rawCookies) {
+          const url = `https://${c.domain.startsWith(".") ? c.domain.slice(1) : c.domain}${c.path || "/"}`;
+          try {
+            await account.session.cookies.set({
+              url,
+              name: c.name,
+              value: c.value,
+              domain: c.name.startsWith("__Host-") ? undefined : c.domain,
+              path: c.path,
+              secure: c.secure,
+              httpOnly: c.httpOnly,
+              expirationDate: c.expires > 0 ? c.expires : undefined,
+              sameSite: c.sameSite ? (c.sameSite === "None" ? "no_restriction" : c.sameSite.toLowerCase()) : undefined
+            });
+          } catch (_) {}
+        }
+        appendDesktopLog("gpt-cookies-restored", `${id} (${rawCookies.length} cookies)`);
+      }
+    }
+  } catch (err) {
+    appendDesktopLog("gpt-cookies-restore-error", `${id} ${err.message}`);
+  }
+
+  const stealthPreloadPath = path.join(__dirname, "stealth-fingerprint.js");
+  const fingerprintProfile = getFingerprintProfile(id);
   account.view = new WebContentsView({
     webPreferences: {
       partition: account.partition,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      preload: stealthPreloadPath,
+      additionalArguments: [
+        `--content-instance-id=${id}`,
+        `--fingerprint-config=${encodeURIComponent(JSON.stringify(fingerprintProfile))}`
+      ],
       // Automatic production must continue while the workbench is minimized
       // to the tray. Chromium otherwise heavily throttles or suspends timers
       // in this hidden WebContentsView and the workflow appears stuck after 1.
       backgroundThrottling: false
     }
   });
-  const currentUserAgent = account.view.webContents.getUserAgent();
-  account.view.webContents.setUserAgent(`${currentUserAgent} TeambuildingWorkbenchGPT/0.2`);
+  const targetUserAgent = fingerprintProfile?.browser?.userAgent
+    || account.view.webContents.getUserAgent().replace(/Electron\/\S+\s*/g, "").replace(/content-production-app\/\S+\s*/g, "").trim();
+  account.view.webContents.setUserAgent(targetUserAgent);
   account.view.setBackgroundColor(embeddedGptPalette(gptThemeName).main);
   account.view.setBorderRadius(16);
   mainWindow.contentView.addChildView(account.view);
@@ -3100,6 +3161,118 @@ function embeddedGptTaskResultScript(requestId) {
   })()`;
 }
 
+function embeddedGptPipelineReceiptScript(requestId) {
+  return `(() => {
+    try {
+      const data = JSON.parse(document.getElementById("tb-workbench-pipeline-receipt")?.textContent || "null");
+      return data?.source === "tb-gpt-production-extension"
+        && data?.type === "tb-workbench-pipeline-receipt-ready"
+        && data?.requestId === ${JSON.stringify(String(requestId || ""))}
+        ? data
+        : null;
+    } catch (_) {
+      return null;
+    }
+  })()`;
+}
+
+function verifyCdpPipelineTemplateFiles(contract) {
+  if (!contract?.enabled) return [];
+  return contract.references.map((reference) => {
+    if (!path.isAbsolute(reference.path) || !fs.existsSync(reference.path) || !fs.statSync(reference.path).isFile()) {
+      const error = new Error(`${reference.role} 固定模板附件不存在或不是文件`);
+      error.code = "PIPELINE_TEMPLATE_FILE_MISSING";
+      throw error;
+    }
+    const contents = fs.readFileSync(reference.path);
+    const sha256 = crypto.createHash("sha256").update(contents).digest("hex");
+    if (contents.length !== reference.bytes || sha256 !== reference.sha256) {
+      const error = new Error(`${reference.role} 固定模板附件与配置 SHA-256/字节数不匹配`);
+      error.code = "PIPELINE_TEMPLATE_FILE_HASH_MISMATCH";
+      throw error;
+    }
+    return { ...reference };
+  });
+}
+
+async function persistCdpPipelineExecutionReceipt(contract, proof) {
+  cdpPipelineContract.validateWorkerConsumptionProof(contract, proof);
+  const receipt = cdpPipelineContract.createMatchedExecutionReceipt(contract, proof);
+  const current = await readRuntimeStateAsync(GPT_RUNTIME_STATE_FILE);
+  const next = cdpPipelineContract.attachReceiptToRuntimeState(current, contract.requestId, receipt);
+  await writeRuntimeStateAsync(GPT_RUNTIME_STATE_FILE, next);
+  const readback = await readRuntimeStateAsync(GPT_RUNTIME_STATE_FILE);
+  const tasks = Array.isArray(readback?.queue?.tasks) ? readback.queue.tasks : [];
+  const matching = tasks.filter((task) => String(task?.requestId || task?.externalRequestId || "") === contract.requestId);
+  if (matching.length !== 1 || matching[0]?.pipelineDispatchState !== "MATCH"
+    || JSON.stringify(matching[0]?.pipelineExecutionReceipt) !== JSON.stringify(receipt)) {
+    const error = new Error("固定模板回执已写入但未能从原请求队列精确回读；拒绝确认 MATCH");
+    error.code = "PIPELINE_RECEIPT_READBACK_FAILED";
+    throw error;
+  }
+  return receipt;
+}
+
+async function postCdpPipelineReceiptAck(account, requestId, receipt, error = null) {
+  const contents = account?.view?.webContents;
+  if (!contents || contents.isDestroyed()) return { ok: false, error: "GPT 网页视图不可用，无法确认模板回执" };
+  const status = receipt ? "MATCH" : "REJECTED";
+  const message = {
+    source: "content-production-app-desktop-bridge",
+    type: "tb-workbench-pipeline-receipt-ack",
+    requestId: String(requestId || ""),
+    status,
+    receipt: receipt || null,
+    detail: error ? String(error.message || error).slice(0, 500) : ""
+  };
+  return executeGptJavaScriptBounded(contents, `(() => {
+    const message = ${JSON.stringify(message)};
+    window.postMessage(message, "*");
+    document.dispatchEvent(new CustomEvent("tb-workbench-pipeline-receipt-ack", { detail: message }));
+    return { ok: true, requestId: message.requestId, status: message.status };
+  })()`, 3000, { ok: false, requestId, status, error: "固定模板回执确认未送达" }, `receipt-ack:${account.id}`);
+}
+
+async function waitForEmbeddedGptPipelineReceipt(account, contract, aborted, timeoutMs = 35_000) {
+  const contents = account?.view?.webContents;
+  const requestId = contract?.requestId || "";
+  if (!contents || contents.isDestroyed()) {
+    return { ok: false, status: "unavailable", requestId, errorCode: "GPT_PAGE_NOT_READY", error: "GPT 网页视图不可用" };
+  }
+  const deadline = Date.now() + Math.max(5_000, Number(timeoutMs || 0));
+  while (Date.now() < deadline) {
+    const proof = await Promise.race([
+      executeGptJavaScriptBounded(contents, embeddedGptPipelineReceiptScript(requestId), 2500, null,
+        `read:${account.id}:pipeline-receipt`),
+      aborted
+    ]);
+    if (proof?.status === "aborted") return proof;
+    if (proof?.requestId === requestId) {
+      try {
+        const receipt = await persistCdpPipelineExecutionReceipt(contract, proof);
+        const ack = await postCdpPipelineReceiptAck(account, requestId, receipt);
+        if (!ack?.ok) {
+          return { ok: false, status: "receipt-ack-failed", requestId, errorCode: "PIPELINE_RECEIPT_ACK_FAILED", error: ack?.error || "固定模板回执 ACK 未送达" };
+        }
+        return { ok: true, status: "matched", requestId, receipt };
+      } catch (error) {
+        await postCdpPipelineReceiptAck(account, requestId, null, error).catch(() => null);
+        return { ok: false, status: "receipt-rejected", requestId,
+          errorCode: String(error?.code || "PIPELINE_RECEIPT_REJECTED"), error: String(error?.message || error) };
+      }
+    }
+    const remaining = Math.max(0, deadline - Date.now());
+    if (!remaining) break;
+    const waitResult = await Promise.race([
+      new Promise((resolve) => setTimeout(() => resolve(null), Math.min(400, remaining))),
+      aborted
+    ]);
+    if (waitResult?.status === "aborted") return waitResult;
+  }
+  return { ok: false, status: "timeout", requestId, errorCode: "PIPELINE_RECEIPT_TIMEOUT",
+    retryable: true, error: "扩展未提交可核验的 P1/P2 浏览器附件回执；未启动后续模型流程" };
+}
+
 async function waitForEmbeddedGptTaskResult(account, requestId, aborted, timeoutMs = 65 * 60 * 1000) {
   const contents = account?.view?.webContents;
   if (!contents || contents.isDestroyed()) {
@@ -3147,11 +3320,60 @@ async function waitForEmbeddedGptTaskResult(account, requestId, aborted, timeout
 
 async function sendTaskToEmbeddedGpt(task = {}) {
   const accountId = assertAssignedGptAccountId(task.accountId || activeGptAccountId);
+  const requestId = String(task.requestId || task.externalRequestId || `workbench-${Date.now()}`);
+  let pipelineContract = { enabled: false };
+  let verifiedTemplateReferences = [];
+  let attachments = Array.isArray(task.attachments) ? task.attachments.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  let templateAttachments = Array.isArray(task.templateAttachments) ? task.templateAttachments.slice(0, 20) : [];
+  try {
+    pipelineContract = cdpPipelineContract.validatePipelineDispatch({ ...task, requestId });
+    if (pipelineContract.enabled) {
+      if (task._submittedToGpt === true || task.submittedToGpt === true
+        || task.workflow?.planSubmitted === true || task.resumePlanSubmitted === true) {
+        const error = new Error("固定模板 CDP 模式只接受新会话首次派单；续跑任务未接入，已拒绝执行");
+        error.code = "PIPELINE_FIXED_TEMPLATE_RESUME_UNSUPPORTED";
+        throw error;
+      }
+      verifiedTemplateReferences = verifyCdpPipelineTemplateFiles(pipelineContract);
+      if (!attachments.length) {
+        const error = new Error("固定模板派单缺少原素材附件；已拒绝只上传模板");
+        error.code = "PIPELINE_SOURCE_ATTACHMENTS_MISSING";
+        throw error;
+      }
+      const referencePaths = verifiedTemplateReferences.map((reference) => reference.path);
+      const merged = [...new Set([...attachments, ...referencePaths])];
+      if (merged.length > 30) {
+        const error = new Error("原素材与 P1/P2 模板附件总数超过桌面桥上限 30；已拒绝截断派单");
+        error.code = "PIPELINE_ATTACHMENT_LIMIT_EXCEEDED";
+        throw error;
+      }
+      const canonicalPathKey = (value) => path.resolve(String(value || "")).toLowerCase();
+      const referencePathKeys = new Set(referencePaths.map(canonicalPathKey));
+      const referenceNames = new Set(verifiedTemplateReferences.map((reference) => path.basename(reference.path).toLowerCase()));
+      const collidingSource = attachments.find((filePath) => !referencePathKeys.has(canonicalPathKey(filePath))
+        && referenceNames.has(path.basename(filePath).toLowerCase()));
+      if (collidingSource) {
+        const error = new Error("原素材与 P1/P2 模板存在同名文件，浏览器 FileList 无法无歧义回核；已拒绝派单");
+        error.code = "PIPELINE_ATTACHMENT_BASENAME_AMBIGUOUS";
+        throw error;
+      }
+      attachments = merged;
+      templateAttachments = referencePaths;
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: "rejected",
+      requestId,
+      errorCode: String(error?.code || "PIPELINE_DISPATCH_REJECTED"),
+      retryable: false,
+      error: String(error?.message || error).slice(0, 600)
+    };
+  }
   const view = await ensureGptView(accountId);
   const account = gptAccounts.get(accountId);
   if (!account) return { ok: false, status: "unavailable", errorCode: "GPT_PAGE_NOT_READY", error: "GPT 账号窗口不可用" };
   if (account) account.lastUsedAt = Date.now();
-  const requestId = String(task.requestId || `workbench-${Date.now()}`);
   const activeRequest = account.pendingGptTask;
   if (activeRequest) {
     if (String(activeRequest.requestId || "") === requestId && activeRequest.promise) return activeRequest.promise;
@@ -3173,11 +3395,19 @@ async function sendTaskToEmbeddedGpt(task = {}) {
     requestId,
     name: String(task.name || "工作台素材"),
     materialPath: String(task.materialPath || ""),
-    attachments: Array.isArray(task.attachments) ? task.attachments.slice(0, 30) : [],
-    templateAttachments: Array.isArray(task.templateAttachments) ? task.templateAttachments.slice(0, 20) : [],
+    attachments: attachments.slice(0, 30),
+    templateAttachments: templateAttachments.slice(0, 20),
     prompt: String(task.prompt || ""),
     taskType: String(task.taskType || "material"),
-    templateId: String(task.templateId || ""),
+    templateId: String(pipelineContract.enabled ? pipelineContract.pipelineConfigTemplateId : (task.templateId || "")),
+    ...(pipelineContract.enabled ? {
+      templateSelectionMode: pipelineContract.templateSelectionMode,
+      pipelineConfigMode: pipelineContract.pipelineConfigMode,
+      pipelineConfigRevision: pipelineContract.pipelineConfigRevision,
+      pipelineConfigTemplateId: pipelineContract.pipelineConfigTemplateId,
+      pipelineTemplateReferences: verifiedTemplateReferences,
+      workflowVariant: pipelineContract.workerWorkflowVariant
+    } : {}),
     accountId,
     quotaAccountId: String(task.quotaAccountId || accountId),
     autoRun: Boolean(task.autoRun),
@@ -3198,14 +3428,14 @@ async function sendTaskToEmbeddedGpt(task = {}) {
       : {},
     expectedImages: Math.max(0, Number(task.expectedImages || task.expectedImageCount || 0)),
     submittedToGpt: task._submittedToGpt === true,
-    freshConversationBootstrap: task._freshConversationBootstrap === true,
+    freshConversationBootstrap: pipelineContract.enabled || task._freshConversationBootstrap === true,
     // File selection must happen through Electron's exact WebContents. The
     // extension receives this flag and only waits for the native attachment;
     // it must not synthesize a DataTransfer for production uploads.
-    nativeUpload: Array.isArray(task.attachments)
+    nativeUpload: pipelineContract.enabled || (Array.isArray(task.attachments)
       && task.attachments.length > 0
       && (task.forceUpload === true
-        || (task._submittedToGpt !== true && task.workflow?.planSubmitted !== true))
+        || (task._submittedToGpt !== true && task.workflow?.planSubmitted !== true)))
   };
   if (payload.freshConversationBootstrap && !payload.submittedToGpt) {
     payload.conversationUrl = "";
@@ -3317,6 +3547,14 @@ async function sendTaskToEmbeddedGpt(task = {}) {
     // grace window is only for pre-submit readiness/upload; never treat a
     // submitted generation as an unsent bootstrap during recovery.
     pending.submittedToGpt = true;
+    if (pipelineContract.enabled) {
+      const receiptResult = await Promise.race([
+        waitForEmbeddedGptPipelineReceipt(account, pipelineContract, aborted),
+        aborted
+      ]);
+      if (receiptResult?.status === "aborted") return receiptResult;
+      if (!receiptResult?.ok) return receiptResult;
+    }
     return waitForEmbeddedGptTaskResult(account, requestId, aborted);
   })();
   pending.promise = requestPromise;
@@ -4365,7 +4603,7 @@ ipcMain.handle("desktop:gpt-login-recovery-restore", async (_event, accountId = 
 if (!app.isPackaged || process.env.TB_DESKTOP_SMOKE === "1") {
   app.commandLine.appendSwitch(
     "remote-debugging-port",
-    String(process.env.TB_REMOTE_DEBUGGING_PORT || (CONTENT_ONLY_MODE ? DEFAULT_REMOTE_DEBUGGING_PORT : "9333"))
+    String(process.env.TB_REMOTE_DEBUGGING_PORT || DEFAULT_REMOTE_DEBUGGING_PORT || "9431")
   );
 }
 
@@ -4716,15 +4954,18 @@ if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.on("second-instance", (_event, commandLine) => {
-    if (!mainWindow) return;
-    const forceShow = Array.isArray(commandLine) && commandLine.some(arg => arg === "--show" || arg === "--restore");
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const forceRestore = Array.isArray(commandLine) && commandLine.some(arg => arg === "--restore" || arg === "--force-restore");
+    // 用户最小化时，坚决不打扰用户，保持最小化状态（彻底杜绝后台反复弹窗骚扰）
+    if (mainWindow.isMinimized() && !forceRestore) {
+      appendDesktopLog("second-instance-ignored-minimized", `args=${(commandLine || []).join(" ")}`);
+      return;
+    }
+    const forceShow = forceRestore || (Array.isArray(commandLine) && commandLine.some(arg => arg === "--show"));
     if (IS_DESKTOP_HIDDEN && !forceShow) {
       appendDesktopLog("second-instance-ignored-in-hidden-mode", `args=${(commandLine || []).join(" ")}`);
       return;
     }
-    // [2026-09-25 修] second-instance 唤醒一律不夺焦点：恢复可见但不置顶，
-    // 根治守护重启风暴期间窗口反复弹到最前的问题。用户要前台请走托盘菜单。
-    if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.showInactive();
   });
   app.whenReady().then(() => {

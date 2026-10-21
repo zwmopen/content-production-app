@@ -26,6 +26,7 @@
         "gm-shim.js",
         "patrol-stage.js",
         "gpt-automation-core.js",
+        "cdp-pipeline-contract.js",
         "sidebar.js",
         "vendor/chatgpt-conversation-tree.user.js"
       ],

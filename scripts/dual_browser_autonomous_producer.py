@@ -15,8 +15,10 @@ import csv
 import tempfile
 import hashlib
 import io
+import uuid
 from PIL import Image
 from pathlib import Path
+from attachment_batch_gate import is_complete_attachment_batch
 try:
     import pillow_heif
     pillow_heif.register_heif_opener()
@@ -24,7 +26,11 @@ except Exception:
     pass
 import websockets
 
-sys.stdout.reconfigure(encoding='utf-8')
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
 # 引入统一飞书通知中枢 (NotificationCenter)
 NOTIFICATION_CENTER_DIR = r"D:\AICode\tools\notification-center"
@@ -32,9 +38,13 @@ if NOTIFICATION_CENTER_DIR not in sys.path:
     sys.path.insert(0, NOTIFICATION_CENTER_DIR)
 
 try:
-    from notification_center import get_notification_manager, Severity, EventStatus, EventType
+    from notification_center import (
+        get_notification_manager, Severity, EventStatus, EventType,
+        render_production_anomaly_context,
+    )
     NOTIFIER_READY = True
 except Exception:
+    render_production_anomaly_context = None
     NOTIFIER_READY = False
 
 def calc_dhash_bits(im, size=8):
@@ -85,9 +95,8 @@ AUTUMN_C_PROGRESS_FILE = (
 # `[aria-label*="移除"]` 有 11 个，而四条旧判据全部返回 0 ——
 # 于是「上传 10 张 → 判 0 张 → 空发送闸门拦下 → 整套判失败 → 素材被物理隔离」，
 # 一套接一套地把好素材搬进隔离区，产线永远出不了图。
-# 新判据：①form 内真图（按 src 长度与类型剔除 icon）；②各 file input 的 files 总数；
-# ③附件 tile；④任何"移除/Remove/删除文件"类 aria-label（只作有无佐证，不参与取大，
-# 避免把 11 个无关按钮当成 11 张图）。
+# 新判据：只统计 form 内真图、附件 tile、file input 的 FileList；
+# 移除按钮只供清理，不能证明附件数量，避免把无关按钮误计成图片。
 _JS_COUNT_ATTACH = """(() => {
     const imgs = Array.from(document.querySelectorAll('form img')).filter(i => {
         const s = i.getAttribute('src') || '';
@@ -98,10 +107,8 @@ _JS_COUNT_ATTACH = """(() => {
     const tiles = document.querySelectorAll('form [role="group"][aria-label*="."]');
     const inps = Array.from(document.querySelectorAll('input[type="file"]'));
     const fileCount = inps.reduce((a, i) => a + (i.files ? i.files.length : 0), 0);
-    const removeLike = document.querySelectorAll(
-        '[aria-label*="移除文件"], [aria-label*="Remove file"], [aria-label*="移除"], [aria-label*="Remove"]');
     const raw = Math.max(imgs.length, tiles.length, fileCount);
-    return raw > 0 ? raw : (removeLike.length > 0 ? 1 : 0);
+    return raw;
 })()"""
 
 # 飞书配置
@@ -190,6 +197,16 @@ class QuotaLimitException(Exception):
         self.resume_dt = resume_dt
 
 
+class LocalUploadQuotaException(Exception):
+    """Local rolling upload safety budget reached; not an official provider limit."""
+    def __init__(self, message, wait_seconds, resume_dt, stats, requires_split=False):
+        super().__init__(message)
+        self.requires_split = bool(requires_split)
+        self.wait_seconds = 1 if self.requires_split else max(1, int(wait_seconds or 1))
+        self.resume_dt = resume_dt
+        self.stats = stats or {}
+
+
 class ModelDegradedException(QuotaLimitException):
     """【2026-09-27 新增·模型产出降级/错乱】
 
@@ -214,7 +231,6 @@ class ModelDegradedException(QuotaLimitException):
 
 
 # 产出质量反向识别阈值（可由用户按实际观感调整）
-DEGRADE_MIN_RATIO = 0.6      # 出图数 / 计划数 低于此比例 → 判定模型产出能力降级
 DEGRADE_COOLDOWN_SEC = 1800  # 判定降级后实例休息时长（默认 30 分钟）
 TALKATIVE_TEXT_LIMIT = 2500  # 出图阶段模型"话痨"字数上限：超过即判定错乱
 
@@ -457,7 +473,7 @@ def read_halt_flag():
         if not os.path.exists(HALT_FLAG_FILE):
             return False, "", ""
         with open(HALT_FLAG_FILE, "r", encoding="utf-8", errors="ignore") as f:
-            txt = f.read()
+            txt = f.read().lstrip('\ufeff')
         kv = {}
         for ln in txt.splitlines():
             if "=" in ln:
@@ -479,7 +495,13 @@ def read_halt_flag():
 def log(msg, instance="SYSTEM"):
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] [{instance}] {msg}"
-    print(line, flush=True)
+    try:
+        print(line, flush=True)
+    except Exception:
+        try:
+            print(line.encode('gbk', errors='replace').decode('gbk'), flush=True)
+        except Exception:
+            pass
     try:
         os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -603,6 +625,51 @@ def get_template_catalog(template_root=TEMPLATE_POOL_ROOT):
 PIPELINE_CONFIG_FILE = r"D:\AICode\运行数据\江湖有旅人\内容生产App\pipeline_mode_template_config.json"
 
 
+def planned_page_count_from_task(mat_info, mat_dir):
+    """Read the page count already approved in the local production plan."""
+    plan_path = (mat_info or {}).get("planPath")
+    if plan_path:
+        try:
+            plan_text = Path(plan_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError(f"生产计划不可读，禁止进入生图: {plan_path}") from exc
+        match = re.search(r"计划输出[:：]\s*(\d+)\s*页", plan_text)
+        if not match:
+            raise RuntimeError(f"生产计划缺少明确的计划页数，禁止进入生图: {plan_path}")
+        planned = int(match.group(1))
+    else:
+        image_exts = {".jpg", ".jpeg", ".png", ".webp"}
+        source_count = sum(
+            1 for name in os.listdir(mat_dir)
+            if os.path.isfile(os.path.join(mat_dir, name))
+            and os.path.splitext(name)[1].lower() in image_exts
+        )
+        planned = min(source_count, 10)
+    if planned < 1 or planned > 10:
+        raise RuntimeError(f"生产计划页数超出画册规格: {planned}")
+    return planned
+
+
+def write_rework_manifest(package_dir, expected_count, accepted_count, reason, material_name=""):
+    """Leave a staged, explicitly incomplete record when page or QA gates fail."""
+    if not package_dir or not os.path.isdir(package_dir):
+        return
+    payload = {
+        "title": material_name,
+        "expectedPageCount": int(expected_count),
+        "acceptedPageCount": int(accepted_count),
+        "isComplete": False,
+        "lifecycleStatus": "REWORK_REQUIRED",
+        "status": "REWORK_REQUIRED",
+        "reworkReason": str(reason),
+        "updatedAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    temp_path = os.path.join(package_dir, "manifest.json.tmp")
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    os.replace(temp_path, os.path.join(package_dir, "manifest.json"))
+
+
 def get_instance_pipeline_config(instance_id=None):
     """动态读取团队工作台内容制作左侧面板配置的各产线独立生产模式与固定模板"""
     mode = PRODUCTION_MODE
@@ -627,35 +694,73 @@ def get_instance_pipeline_config(instance_id=None):
 
 
 try:
-    from material_template_router import detect_material_category, pick_template_for_material, CATEGORY_LABELS
+    from material_template_router import (detect_material_category, pick_template_for_material,
+                                          is_template_random_eligible, CATEGORY_LABELS)
 except ImportError:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from material_template_router import detect_material_category, pick_template_for_material, CATEGORY_LABELS
+    from material_template_router import (detect_material_category, pick_template_for_material,
+                                          is_template_random_eligible, CATEGORY_LABELS)
 
 
 def pick_production_template(template_root=TEMPLATE_POOL_ROOT, mode=PRODUCTION_MODE, target_id=TARGET_TEMPLATE_ID, material_path=None):
-    """根据生产模式挑选模板：优先通过素材类型识别器自动匹配专属分类子库抽选"""
-    if material_path:
-        try:
-            tpl, detected_cat = pick_template_for_material(material_path, template_root=template_root, mode=mode, fixed_id=target_id)
-            if tpl:
-                return tpl
-        except Exception as e:
-            log(f"⚠️ 智能素材路由器处理异常: {e}，回退至通用池")
-
+    """Pick a random-eligible template or honor one explicit fixed-template ID."""
     pool = get_template_catalog(template_root)
     if not pool:
         log(f"⚠️ 模板库未找到任何合格的 P1/P2 模板！路径: {template_root}")
         return None
 
-    if mode == "3_fixed_template" and target_id:
+    if mode == "3_fixed_template":
+        if not target_id:
+            log("⚠️ 固定模板模式缺少指定模板 ID，拒绝回退到随机模板")
+            return None
         tgt = target_id.strip().upper()
         for t in pool:
             if t["id"] == tgt or tgt in t["name"].upper():
                 return t
-        log(f"⚠️ 未找到指定的固定模板 [{target_id}]，平滑回退到随机抽选模式")
+        log(f"⚠️ 未找到指定的固定模板 [{target_id}]，拒绝回退到其他生产模式")
+        return None
 
-    return random.choice(pool)
+    if mode == "2_random_template":
+        if material_path:
+            try:
+                tpl, detected_cat = pick_template_for_material(
+                    material_path, template_root=template_root, mode=mode, fixed_id=target_id)
+            except Exception as e:
+                log(f"⚠️ 随机模板资格/分类校验异常，拒绝进入生产: {e}")
+                return None
+            if not tpl or not is_template_random_eligible(tpl):
+                log("⚠️ 素材分类路由没有返回当前仍合格的随机模板，拒绝回退到未核验候选")
+                return None
+            return tpl
+
+        eligible_pool = [t for t in pool if is_template_random_eligible(t)]
+        if len(eligible_pool) < 2:
+            log(f"⚠️ 随机模板合格候选仅 {len(eligible_pool)} 个，拒绝伪随机选择")
+            return None
+        return random.choice(eligible_pool)
+
+    log(f"⚠️ 未知模板生产模式 {mode!r}，拒绝通用随机回退")
+    return None
+
+
+def template_selection_record(template, mode):
+    if not isinstance(template, dict):
+        return {"mode": mode, "selectedTemplateId": None}
+    folder = Path(str(template.get("folder") or ""))
+    metadata_path = next((folder / name for name in ("template.json", "metadata.json")
+                          if (folder / name).is_file()), None)
+    metadata_sha = None
+    if metadata_path:
+        metadata_sha = hashlib.sha256(metadata_path.read_bytes()).hexdigest()
+    return {
+        "mode": mode,
+        "selectedTemplateId": template.get("id"),
+        "selectedTemplatePath": str(folder.resolve()) if folder.exists() else str(folder),
+        "randomEligibilityPassed": is_template_random_eligible(template) if mode == "2_random_template" else None,
+        "eligibilityMetadataPath": str(metadata_path.resolve()) if metadata_path else None,
+        "eligibilityMetadataSha256": metadata_sha,
+        "eligibilitySource": "template_metadata" if metadata_path else "candidate_pool_without_metadata",
+    }
 
 
 def build_mode2_template_migration_prompt(template, material_img_count, plan_excerpt, context_block):
@@ -707,25 +812,10 @@ def build_mode2_template_migration_prompt(template, material_img_count, plan_exc
         "   - 标题文字避让人脸核心区域，严禁火星文乱码假字，严禁“私信、加微信、扫码”等敏感导流词。\n"
         "7. 【内页真实行程时间线严格顺承】：\n"
         "   - 严格按照文案与素材真实行程（P1封面，P2第一天上午，P3第一天下午...），时间流向严密顺承，绝对禁止颠倒行程先后顺序！\n"
-        "8. 【全量直接出图与标准高转化多版本文案交付】：\n"
+        "8. 【全量直接出图】：\n"
         "   - 每页均输出 3:4 竖版大图（1086x1448），直接一次性全量出图，不等待确认；\n"
-        "   - 在成图回复最末尾，随附符合手机复制排版的小红书与抖音全套发布文案（包含以下三大标准版本块）：\n"
-        "   - 【文案禁令】：严禁出现“我劝你别排太满/我最怕赶场/如果是我来排”等模板化消极开头！严禁把版本名写进标题！标题首尾严禁包裹【】！\n"
-        "   - 【文案风格】：以真实生活博主自用视角，季节景致直入，动静结合，感官画面感强（太湖晚风/私汤白汽/星空篝火/围炉热茶），嵌入小红书大拟态官方表情代码（[种草R]、[打卡R]、[自拍R]、[露营灯R]、[一R]、[二R]），结尾附HR抄作业备忘与评论区暗号！\n\n"
-        "<<<VERSION_START:红书种草>>>\n"
-        "[纯文本单标题：地点+季节/核心亮点+让人想点进来的痛点]\n\n"
-        "[正文：季节景致或松弛感直接定调 -> 动与静分开排 -> 动线清单参考([一R]DAY1... [二R]DAY2...) -> 贴心Tips -> 适合人群与HR抄作业备忘]\n\n"
-        "[7~10个热门标签同一行]\n"
-        "<<<VERSION_END>>>\n\n"
-        "<<<VERSION_START:红书大纲>>>\n"
-        "[纯文本单标题：地点+天数+完整方案速查]\n\n"
-        "[正文：适合团队结论 -> 📍基础信息 -> 动线拆解 -> 💡HR怎么选 -> ⚠️出发前确认]\n\n"
-        "[7~10个热门标签同一行]\n"
-        "<<<VERSION_END>>>\n\n"
-        "<<<VERSION_START:抖音攻略>>>\n"
-        "[精炼纯自驾/生活避坑短卡片或B2B主理人全案概括+5个生活话题]\n"
-        "<<<VERSION_END>>>\n\n"
-        "请立即依据前 2 张母版规则，将后续素材全量迁移直接生成全部 3:4 独立大图及文末多版本文案！"
+        "   - 本轮仅专注直接出图，绝对禁止输出任何文字解释与客套话，直接出图！\n\n"
+        "请立即依据前 2 张母版规则，将后续素材全量迁移直接生成全部 3:4 独立大图！"
     )
     return prompt
 
@@ -766,13 +856,13 @@ def build_mode1_replica_shuffle_prompt(material_img_count, plan_excerpt, context
         "   - 原图中提及的具体公司名，强制置换为“某头部互联网大厂”、“某知名独角兽”等大厂背书代称；\n"
         "   - 团队起接人数统一写“10人起接”或“10人起订/定制方案”，严禁带入竞品限制；\n"
         "   - 严禁私信/加微信/扫码等违禁导流词。\n"
-        "7. 【全量直接出图与标准高转化多版本文案交付】：\n"
-        "   - 严格按页序输出 3:4 竖版大图（1086x1448），不等待确认；\n"
-        "   - 文末随附符合手机复制排版的小红书与抖音全套文案（包含 <<<VERSION_START:红书种草>>>、<<<VERSION_START:红书大纲>>> 与 <<<VERSION_START:抖音攻略>>>）；\n"
-        "   - 严禁“我劝你别排太满/我最怕赶场”等模板化消极开头，单标题严禁裹【】，融入真实场景细节与小红书官方大拟态表情，文末附HR抄作业备忘与评论区暗号！\n\n"
-        "请立即开足马力全量输出全部 3:4 独立成品大图及末尾多版本文案！"
+        "7. 【全量直接出图】：\n"
+        "   - 严格按页序输出 3:4 竖版大图（1086x1448），直接一次性全量直接出图，不等待确认；\n"
+        "   - 本轮仅专注直接出图，绝对禁止输出任何文字解释与客套话，直接出图！\n\n"
+        "请立即开足马力全量输出全部 3:4 独立成品大图！"
     )
     return prompt
+
 
 
 # ================= 产线停机信号（2026-09-26 新增） =================
@@ -871,8 +961,11 @@ def mem_guard_log(msg):
         pass
     log(f"🧠 {msg}", "MEM")
 
+# 全局活跃工作实例映射表：避免内存守护开二次连接踢断活跃会话
+ACTIVE_WORKERS = {}
+
 async def _cdp_force_gc(ws_url, tag):
-    """对单个页面强制 GC（HeapProfiler.collectGarbage）：不重载、不掉登录态"""
+    """对单个页面强制 GC（HeapProfiler.collectGarbage）：不重载、不掉登录态（仅用于离线/无活动连接时）"""
     try:
         async with websockets.connect(ws_url, max_size=10 * 1024 * 1024, open_timeout=8) as ws:
             await ws.send(json.dumps({"id": 1, "method": "HeapProfiler.enable"}))
@@ -883,7 +976,7 @@ async def _cdp_force_gc(ws_url, tag):
                 if json.loads(raw).get("id") == 2:
                     return True
     except Exception as e:
-        mem_guard_log(f"    · {tag} GC 失败：{str(e)[:60]}")
+        mem_guard_log(f"    · {tag} 独立连接 GC 失败：{str(e)[:60]}")
         return False
     return False
 
@@ -911,6 +1004,26 @@ async def _cdp_close_extra_pages(browser_ws_url, keep_keyword="chatgpt.com"):
         mem_guard_log(f"    · 关闭多余页面异常：{str(e)[:60]}")
     return closed
 
+async def _safe_instance_gc(inst, port):
+    """安全 GC 调度器：优先借用活跃 worker 自身 WebSocket，绝不踢断主生产通道"""
+    worker = ACTIVE_WORKERS.get(inst)
+    if worker and worker.ws and not getattr(worker.ws, 'closed', False):
+        ok = await worker.force_gc()
+        mem_guard_log(f"    · 实例{inst} 原生会话 GC {'完成' if ok else '未响应'}")
+        return ok
+    # 实例当前无活跃连接，才安全通过独立 CDP WebSocket 发送
+    try:
+        op = _urllib_opener()
+        res = json.loads(op.open(f"http://127.0.0.1:{port}/json/list", timeout=5).read().decode())
+        for t in res:
+            if t.get("type") == "page" and "chatgpt.com" in (t.get("url") or ""):
+                ok = await _cdp_force_gc(t["webSocketDebuggerUrl"], f"实例{inst}")
+                mem_guard_log(f"    · 实例{inst} 独立连接 GC {'完成' if ok else '未响应'}")
+                return ok
+    except Exception as e:
+        mem_guard_log(f"    · 实例{inst} GC 跳过（{str(e)[:50]}）")
+    return False
+
 async def memory_guard_loop(ports=(("A", 9431), ("B", 9432))):
     """常驻协程：每 60 秒巡检一次，按可用内存分级自动释放"""
     mem_guard_log(f"🟢 内存守护已启动｜档位：安全≥{MEM_L1_MB}MB可用 / 注意{MEM_L2_MB}~{MEM_L1_MB}MB / "
@@ -929,54 +1042,25 @@ async def memory_guard_loop(ports=(("A", 9431), ("B", 9432))):
             elif avail_mb >= MEM_L2_MB:
                 mem_guard_log(f"🟡 注意（可用 <{MEM_L1_MB}MB）：{snap} → 对 ChatGPT 页面强制 GC｜ Top: {top}")
                 for inst, port in ports:
-                    try:
-                        import urllib.request as _u
-                        op = _urllib_opener()
-                        res = json.loads(op.open(f"http://127.0.0.1:{port}/json/list", timeout=5).read().decode())
-                        for t in res:
-                            if t.get("type") == "page" and "chatgpt.com" in (t.get("url") or ""):
-                                ok = await _cdp_force_gc(t["webSocketDebuggerUrl"], f"实例{inst}")
-                                mem_guard_log(f"    · 实例{inst} GC {'完成' if ok else '未响应'}")
-                    except Exception as e:
-                        mem_guard_log(f"    · 实例{inst} GC 跳过（{str(e)[:50]}）")
+                    await _safe_instance_gc(inst, port)
                 await asyncio.sleep(20)
                 u2, a2, l2 = mem_free_mb()
                 mem_guard_log(f"    · GC 后复测：{mem_fmt(u2, a2, l2)}")
             elif avail_mb >= MEM_L3_MB:
                 mem_guard_log(f"🔴 危险（可用 <{MEM_L2_MB}MB）：{snap} → 强制 GC｜ Top: {top}")
-                # 【2026-09-26 事故后废弃·绝不关页面】
-                # 早期版本在这里会关闭"多余页面"，实测把产线实例自己的 UI 宿主页和
-                # ChatGPT 页一起关没了（9431/9432 页面列表变 []，Target.createTarget 直接
-                # Not supported，实例彻底空壳，只能重启 Electron）。
-                # 教训：内存守护**只做 GC**，绝不关页面。腾内存的责任不在脚本。
                 for inst, port in ports:
-                    try:
-                        op = _urllib_opener()
-                        res = json.loads(op.open(f"http://127.0.0.1:{port}/json/list", timeout=8).read().decode())
-                        for t in res:
-                            if t.get("type") == "page" and "chatgpt.com" in (t.get("url") or ""):
-                                await _cdp_force_gc(t["webSocketDebuggerUrl"], f"实例{inst}")
-                    except Exception as e:
-                        mem_guard_log(f"    · 实例{inst} GC 跳过（{str(e)[:50]}）")
+                    await _safe_instance_gc(inst, port)
                 await asyncio.sleep(20)
                 u2, a2, l2 = mem_free_mb()
                 mem_guard_log(f"    · 处置后复测：{mem_fmt(u2, a2, l2)}")
             else:
-                # 【极危档也必须动手】可用 < 600MB 时 ChatGPT 渲染进程连 WebSocket 握手都会超时，
-                # 只告警不释放等于坐视产线全废。这里把 GC + 关多余页面照做一遍，做完再告警。
                 mem_guard_log(f"🚨 极危（可用 <{MEM_L3_MB}MB）：{snap} → 强制 GC + 告警｜ Top: {top}")
                 for inst, port in ports:
-                    try:
-                        op = _urllib_opener()
-                        res = json.loads(op.open(f"http://127.0.0.1:{port}/json/list", timeout=8).read().decode())
-                        for t in res:
-                            if t.get("type") == "page" and "chatgpt.com" in (t.get("url") or ""):
-                                await _cdp_force_gc(t["webSocketDebuggerUrl"], f"实例{inst}")
-                    except Exception as e:
-                        mem_guard_log(f"    · 实例{inst} 极危处置跳过（{str(e)[:50]}）")
+                    await _safe_instance_gc(inst, port)
                 await asyncio.sleep(15)
                 u2, a2, l2 = mem_free_mb()
                 mem_guard_log(f"    · 极危处置后复测：{mem_fmt(u2, a2, l2)}")
+
                 if time.time() - MEM_LAST_FEISHU["ts"] > 1800:
                     MEM_LAST_FEISHU["ts"] = time.time()
                     try:
@@ -1032,6 +1116,8 @@ def check_generation_quota(instance_id):
     单套冲刺放行原则：开工前未达上限即放行，跑完本套落地后入账并停下。
     返回: (is_allowed: bool, reason: str, wait_seconds: int, stats: dict)
     """
+    from production_quota_policy import assess_generation_budget, read_workbench_quota
+
     limit_3h = max_3h_limit_for(instance_id)
     limit_today = daily_limit_for(instance_id)
     ledger = load_generation_ledger()
@@ -1040,11 +1126,17 @@ def check_generation_quota(instance_id):
     today_str = datetime.datetime.now().strftime("%Y-%m-%d")
 
     records = ledger.get("records", [])
-    records_3h = [
-        r for r in records
-        if r.get("instance_id") == instance_id and r.get("epoch", 0) >= three_hours_ago
-    ]
-    gen_3h = sum(r.get("generated_count", 0) for r in records_3h)
+    quota_snapshot = read_workbench_quota(instance_id, timeout=0.75)
+    generation_budget = assess_generation_budget(
+        records,
+        instance_id,
+        1,
+        now_epoch=now_epoch,
+        workbench_quota=quota_snapshot,
+        default_limit=limit_3h,
+    )
+    limit_3h = generation_budget["generationLimit"]
+    gen_3h = generation_budget["usedGenerations"]
 
     records_today = [
         r for r in records
@@ -1060,8 +1152,7 @@ def check_generation_quota(instance_id):
     }
 
     if gen_3h >= limit_3h:
-        earliest_epoch = min((r.get("epoch", now_epoch) for r in records_3h), default=now_epoch)
-        wait_seconds = max(10, int((earliest_epoch + 3 * 3600) - now_epoch))
+        wait_seconds = max(10, int(generation_budget.get("waitSeconds") or 0))
         return False, f"近 3 小时已生成 {gen_3h} 张大图（达该实例安全上限 {limit_3h} 张）", wait_seconds, stats
 
     if gen_today >= limit_today:
@@ -1071,7 +1162,7 @@ def check_generation_quota(instance_id):
 
     return True, "放行开工", 0, stats
 
-def record_generation_success(instance_id, gen_count, upload_count, mat_name):
+def record_generation_success(instance_id, gen_count, upload_count, mat_name, request_id=None):
     """记录一次成功的完整作品落地"""
     ledger = load_generation_ledger()
     now_dt = datetime.datetime.now()
@@ -1081,12 +1172,92 @@ def record_generation_success(instance_id, gen_count, upload_count, mat_name):
         "epoch": time.time(),
         "generated_count": gen_count,
         "uploaded_count": upload_count,
+        "request_id": str(request_id or ""),
         "material_name": mat_name
     })
     two_days_ago = time.time() - (48 * 3600)
     ledger["records"] = [r for r in ledger["records"] if r.get("epoch", 0) >= two_days_ago]
     save_generation_ledger(ledger)
-    log(f"📊【配额记账】实例 {instance_id} 成功落地 {gen_count} 张大图（上传 {upload_count} 张），已同步双重配额账本！", instance_id)
+    log(f"📊【生图记账】实例 {instance_id} 本地账本新增 {gen_count} 张已验收大图（关联请求 {request_id or 'legacy'}）。", instance_id)
+
+
+def check_upload_quota(instance_id, planned_uploads):
+    """Preflight the complete set against the local 3h/80 attachment safety line."""
+    from production_quota_policy import assess_upload_budget, read_workbench_quota
+
+    snapshot = read_workbench_quota(instance_id, timeout=0.75)
+    decision = assess_upload_budget(
+        load_generation_ledger().get("records", []),
+        instance_id,
+        planned_uploads,
+        workbench_quota=snapshot,
+    )
+    decision["quotaSnapshot"] = snapshot
+    if not decision["allowed"]:
+        if decision.get("impossibleBatch"):
+            decision["requiresSplit"] = True
+            decision["resumeAt"] = None
+            log(
+                f"🛡️【本地产线上传安全线】实例 {instance_id} 这套需要 {decision['plannedUploads']} 个附件，"
+                f"超过当前单窗口上限 {decision['uploadLimit']}；标记为待拆分并继续其他素材。",
+                instance_id,
+            )
+            return decision
+        wait_seconds = max(1, int(decision.get("waitSeconds") or 1))
+        resume_dt = datetime.datetime.now() + datetime.timedelta(seconds=wait_seconds)
+        decision["resumeAt"] = resume_dt.strftime("%Y-%m-%d %H:%M:%S")
+        log(
+            f"🛡️【本地产线上传安全线】实例 {instance_id} 这套需要 {decision['plannedUploads']} 个附件，"
+            f"近 3 小时已记 {decision['usedUploads']}/{decision['uploadLimit']}，让出任务约 {wait_seconds} 秒；"
+            f"这不是官方额度/429 判定。",
+            instance_id,
+        )
+    return decision
+
+
+def record_upload_success(instance_id, upload_count, mat_name, request_id, quota_snapshot=None):
+    """Record confirmed mounted attachments before prompt submission is attempted."""
+    from production_quota_policy import record_workbench_quota_event
+
+    count = max(0, int(upload_count or 0))
+    if not count:
+        return
+    ledger = load_generation_ledger()
+    now_dt = datetime.datetime.now()
+    ledger.setdefault("records", []).append({
+        "instance_id": instance_id,
+        "timestamp": now_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "epoch": time.time(),
+        "generated_count": 0,
+        "uploaded_count": count,
+        "request_id": request_id,
+        "material_name": mat_name,
+    })
+    two_days_ago = time.time() - (48 * 3600)
+    ledger["records"] = [r for r in ledger["records"] if r.get("epoch", 0) >= two_days_ago]
+    save_generation_ledger(ledger)
+    mirrored = record_workbench_quota_event(
+        instance_id, request_id, "uploaded", count,
+        quota_snapshot=quota_snapshot, timeout=0.75,
+    )
+    log(
+        f"📊【上传额度记账】实例 {instance_id} 已提交 {count} 个附件；"
+        f"工作台账号镜像={'成功' if mirrored else '暂不可用，保留本地账本'}。",
+        instance_id,
+    )
+
+
+def record_generation_quota_success(instance_id, gen_count, mat_name, request_id, quota_snapshot=None):
+    """Record completed generated images separately from attachment uploads."""
+    from production_quota_policy import record_workbench_quota_event
+
+    record_generation_success(instance_id, gen_count, 0, mat_name, request_id=request_id)
+    mirrored = record_workbench_quota_event(
+        instance_id, request_id, "generated", gen_count,
+        quota_snapshot=quota_snapshot, timeout=0.75,
+    )
+    if not mirrored:
+        log(f"📊【生图额度镜像】实例 {instance_id} 工作台暂不可用，生图记录保留在本地账本。", instance_id)
 
 def keep_window_background(port):
     """Keep CDP production independent from desktop focus and z-order.
@@ -1100,20 +1271,56 @@ def keep_window_background(port):
     return False
 
 def load_autumn_c_paths():
-    """Return the exact AUTUMN-C source-path allowlist; fail closed on missing/invalid input."""
+    """返回当前秋季待产批次白名单：涵盖紧急插队池、AUTUMN-C、AUTUMN-D 及秋季智能分类素材库。"""
+    paths = set()
     try:
-        with open(AUTUMN_C_TASKS_FILE, 'r', encoding='utf-8') as f:
-            payload = json.load(f)
-        tasks = payload.get("tasks", []) if isinstance(payload, dict) else payload
-        paths = set()
-        for task in tasks:
-            source_path = task.get("path") or task.get("sourcePath")
-            if source_path:
-                paths.add(os.path.normcase(os.path.normpath(source_path)).rstrip("\\/"))
-        return paths
+        emergency_file = os.path.join(OUTPUT_BASE, "_内部台账与历史数据", "_生产计划与排产参考", "AUTUMN_EMERGENCY_TASKS.json")
+        if not os.path.exists(emergency_file):
+            emergency_file = os.path.join(OUTPUT_BASE, "_生产计划与排产参考", "AUTUMN_EMERGENCY_TASKS.json")
+        if os.path.exists(emergency_file):
+            with open(emergency_file, 'r', encoding='utf-8') as ef:
+                em_payload = json.load(ef)
+            for t in em_payload.get("tasks", []):
+                p = t.get("path") or t.get("sourcePath")
+                if p:
+                    paths.add(os.path.normcase(os.path.normpath(p)).rstrip("\\/"))
+    except Exception as e_em:
+        log(f"紧急排产白名单读取提示: {e_em}")
+
+    try:
+        if os.path.exists(AUTUMN_C_TASKS_FILE):
+            with open(AUTUMN_C_TASKS_FILE, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+            tasks = payload.get("tasks", []) if isinstance(payload, dict) else payload
+            for task in tasks:
+                source_path = task.get("path") or task.get("sourcePath")
+                if source_path:
+                    paths.add(os.path.normcase(os.path.normpath(source_path)).rstrip("\\/"))
     except Exception as e:
-        log(f"AUTUMN-C 任务白名单读取失败，安全停止跨批次扫描: {e}")
-        return set()
+        log(f"AUTUMN-C 任务白名单读取提示: {e}")
+
+    try:
+        autumn_d_file = os.path.join(os.path.dirname(AUTUMN_C_TASKS_FILE), "AUTUMN-D_tasks.json")
+        if os.path.exists(autumn_d_file):
+            with open(autumn_d_file, 'r', encoding='utf-8') as f_d:
+                payload_d = json.load(f_d)
+            tasks_d = payload_d.get("tasks", []) if isinstance(payload_d, dict) else payload_d
+            for task in tasks_d:
+                source_path = task.get("path") or task.get("sourcePath")
+                if source_path:
+                    paths.add(os.path.normcase(os.path.normpath(source_path)).rstrip("\\/"))
+    except Exception as e_d:
+        log(f"AUTUMN-D 任务白名单读取提示: {e_d}")
+
+    try:
+        if os.path.exists(MATERIAL_DIR):
+            for root, dirs, files in os.walk(MATERIAL_DIR):
+                if ".tags.json" in files:
+                    paths.add(os.path.normcase(os.path.normpath(root)).rstrip("\\/"))
+    except Exception as e_mat:
+        log(f"秋季素材库路径扩展提示: {e_mat}")
+
+    return paths
 
 def update_autumn_c_progress(task, status, output_path=None, image_count=0, error=None):
     """Update only the AUTUMN-C independent ledger after a real client outcome."""
@@ -1130,7 +1337,6 @@ def update_autumn_c_progress(task, status, output_path=None, image_count=0, erro
                 target = item
                 break
         if target is None:
-            # 允许首次处理清单内的新任务落账，但仍拒绝清单外的未知路径。
             task_meta = None
             try:
                 with open(AUTUMN_C_TASKS_FILE, 'r', encoding='utf-8') as tf:
@@ -1145,8 +1351,28 @@ def update_autumn_c_progress(task, status, output_path=None, image_count=0, erro
             except Exception as meta_error:
                 log(f"AUTUMN-C 清单元数据读取失败: {meta_error}")
             if task_meta is None:
-                log(f"AUTUMN-C 独立账本未找到任务，拒绝新增未知记录: {source_path}")
-                return False
+                autumn_d_file = os.path.join(os.path.dirname(AUTUMN_C_TASKS_FILE), "AUTUMN-D_tasks.json")
+                if os.path.exists(autumn_d_file):
+                    try:
+                        with open(autumn_d_file, 'r', encoding='utf-8') as tf_d:
+                            task_d_payload = json.load(tf_d)
+                        task_d_list = task_d_payload.get("tasks", []) if isinstance(task_d_payload, dict) else task_d_payload
+                        for pos, candidate_task in enumerate(task_d_list, 1):
+                            candidate_path = candidate_task.get("path") or candidate_task.get("sourcePath")
+                            if candidate_path and os.path.normcase(os.path.normpath(candidate_path)).rstrip("\\/") == norm_source:
+                                task_meta = candidate_task
+                                task_meta.setdefault("index", pos)
+                                break
+                    except Exception:
+                        pass
+            if task_meta is None:
+                task_meta = {
+                    "index": len(items) + 1,
+                    "name": task.get("name", os.path.basename(source_path)),
+                    "path": source_path,
+                    "destination": task.get("subcategory", task.get("destination", "秋季分类")),
+                    "traffic_type": task.get("category", task.get("traffic_type", "精准流量"))
+                }
             existing_indices = [
                 int(item.get("index")) for item in items
                 if str(item.get("index", "")).isdigit()
@@ -1343,11 +1569,36 @@ def reconcile_success_output_integrity():
             if not actual_path or not os.path.isdir(actual_path):
                 problems.append("output_missing")
             else:
+                manifest_path = os.path.join(actual_path, "manifest.json")
+                manifest_data = {}
+                if os.path.isfile(manifest_path):
+                    try:
+                        with open(manifest_path, 'r', encoding='utf-8') as mf:
+                            loaded_manifest = json.load(mf)
+                        manifest_data = loaded_manifest if isinstance(loaded_manifest, dict) else {}
+                    except Exception:
+                        problems.append("manifest_unreadable")
                 image_names = [
                     name for name in os.listdir(actual_path)
                     if name.startswith("P") and name.lower().endswith(".png")
                 ]
-                if len(image_names) < 3:
+                expected_pages = manifest_data.get("expectedPageCount")
+                if isinstance(expected_pages, int) and not isinstance(expected_pages, bool) and expected_pages > 0:
+                    if len(image_names) != expected_pages:
+                        problems.append(f"expected_image_count:{len(image_names)}/{expected_pages}")
+                    if (manifest_data.get("acceptedPageCount") != expected_pages or
+                            manifest_data.get("imageCount") != expected_pages):
+                        problems.append("accepted_page_count_mismatch")
+                    completion = manifest_data.get("completionMeta")
+                    if (manifest_data.get("status") != "PASS" or manifest_data.get("isComplete") is not True or
+                            manifest_data.get("lifecycleStatus") != "COMPLETED" or
+                            not isinstance(completion, dict) or completion.get("verified") is not True):
+                        problems.append("completion_state_mismatch")
+                    page_map = manifest_data.get("sourcePageMap")
+                    if (not isinstance(page_map, list) or len(page_map) != expected_pages or
+                            [row.get("page") for row in page_map if isinstance(row, dict)] != list(range(1, expected_pages + 1))):
+                        problems.append("source_page_map_incomplete")
+                elif len(image_names) < 3:
                     problems.append(f"image_count:{len(image_names)}")
                 for image_name in image_names:
                     try:
@@ -1358,7 +1609,7 @@ def reconcile_success_output_integrity():
                     except Exception:
                         problems.append(f"bad_image:{image_name}")
                         break
-                if not os.path.isfile(os.path.join(actual_path, "manifest.json")):
+                if not os.path.isfile(manifest_path):
                     problems.append("manifest_missing")
                 copy_path = os.path.join(actual_path, "文案.txt")
                 if not os.path.isfile(copy_path):
@@ -1382,6 +1633,48 @@ def reconcile_success_output_integrity():
                 continue
 
             invalidated += 1
+            if actual_path and os.path.isdir(actual_path):
+                manifest_path = os.path.join(actual_path, "manifest.json")
+                try:
+                    with open(manifest_path, 'r', encoding='utf-8') as mf:
+                        manifest_data = json.load(mf)
+                    if isinstance(manifest_data, dict) and manifest_data.get("expectedPageCount"):
+                        manifest_data["isComplete"] = False
+                        manifest_data["lifecycleStatus"] = "REWORK_REQUIRED"
+                        manifest_data["status"] = "REWORK_REQUIRED"
+                        manifest_data["reworkReason"] = "output_reaudit_failed: " + "; ".join(problems)
+                        completion = manifest_data.get("completionMeta")
+                        if not isinstance(completion, dict):
+                            completion = {}
+                        completion["verified"] = False
+                        completion["acceptedPageCount"] = manifest_data.get("acceptedPageCount", 0)
+                        manifest_data["completionMeta"] = completion
+                        temp_manifest = manifest_path + ".tmp"
+                        with open(temp_manifest, 'w', encoding='utf-8') as mf:
+                            json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
+                        os.replace(temp_manifest, manifest_path)
+                        evidence_path = manifest_data.get("evidencePath")
+                        labels_path = os.path.join(evidence_path, "作品标签.json") if evidence_path else ""
+                        if labels_path and os.path.isfile(labels_path):
+                            try:
+                                with open(labels_path, 'r', encoding='utf-8') as lf:
+                                    labels_data = json.load(lf)
+                                if isinstance(labels_data, dict):
+                                    labels_data["isComplete"] = False
+                                    labels_data["lifecycleStatus"] = "REWORK_REQUIRED"
+                                    labels_completion = labels_data.get("completionMeta")
+                                    if not isinstance(labels_completion, dict):
+                                        labels_completion = {}
+                                    labels_completion["verified"] = False
+                                    labels_data["completionMeta"] = labels_completion
+                                    temp_labels = labels_path + ".tmp"
+                                    with open(temp_labels, 'w', encoding='utf-8') as lf:
+                                        json.dump(labels_data, lf, ensure_ascii=False, indent=2)
+                                    os.replace(temp_labels, labels_path)
+                            except Exception as labels_error:
+                                log(f"成品标签复核失败状态回写失败: {labels_path} ({labels_error})")
+                except Exception as manifest_error:
+                    log(f"成品复核失败状态回写失败: {actual_path} ({manifest_error})")
             item.update({
                 "status": "failed",
                 "outputPath": None,
@@ -1663,8 +1956,6 @@ def scan_pending_queue():
                 if not em_path or not os.path.isdir(em_path):
                     continue
                 norm_p = os.path.normcase(os.path.normpath(em_path)).rstrip("\\/")
-                if norm_p not in allowed_paths:
-                    continue
                 if norm_p in seen_paths:
                     continue
 
@@ -2193,12 +2484,21 @@ class InstanceWorker:
         self.id = instance_id
         self.cdp_port = cdp_port
         self.ws = None
+        # Production and memory GC share one socket: serialize the full CDP exchange.
+        self._command_lock = asyncio.Lock()
         # 节拍埋点用：上一次「点发送」的绝对时间戳（算两次发送之间的真实间隔）
         self._last_send_ts = 0.0
         # 本套素材已用掉的页面软重载次数（上限 RELOAD_MAX_PER_ITEM，多了不许再刷）
         self._reload_used = 0
 
     async def connect(self):
+        async with self._command_lock:
+            if self.ws is not None:
+                await self.ws.close()
+                self.ws = None
+            await self._connect_unlocked()
+
+    async def _connect_unlocked(self):
         url = f"http://127.0.0.1:{self.cdp_port}/json"
         req = urllib.request.Request(url, headers={"User-Agent": "AutonomousProducer"})
         res = json.loads(urllib.request.urlopen(req, timeout=5).read().decode('utf-8'))
@@ -2245,9 +2545,26 @@ class InstanceWorker:
 
         ws_url = page['webSocketDebuggerUrl']
         self.ws = await websockets.connect(ws_url, max_size=50*1024*1024)
+        ACTIVE_WORKERS[self.id] = self
         log(f"CDP 已成功连接到端口 {self.cdp_port} ({page['url'][:45]}...)", self.id)
 
+    async def force_gc(self):
+        """利用当前已有 WebSocket 连接安全执行 GC，绝不建立二次连接，绝不踢断主会话"""
+        if not self.ws or getattr(self.ws, 'closed', False):
+            return False
+        try:
+            await self.send_cmd("HeapProfiler.enable", timeout=5)
+            await self.send_cmd("HeapProfiler.collectGarbage", timeout=10)
+            return True
+        except Exception:
+            return False
+
+
     async def send_cmd(self, method, params=None, timeout=60):
+        async with self._command_lock:
+            return await self._send_cmd_unlocked(method, params, timeout)
+
+    async def _send_cmd_unlocked(self, method, params=None, timeout=60):
         if params is None:
             params = {}
         import random
@@ -2258,7 +2575,7 @@ class InstanceWorker:
             try:
                 if self.ws is None or getattr(self.ws, 'closed', False):
                     log(f"WebSocket 处于断开状态，正在连接 CDP 端口 {self.cdp_port}...", self.id)
-                    await self.connect()
+                    await self._connect_unlocked()
 
                 await self.ws.send(json.dumps(msg))
 
@@ -2270,8 +2587,21 @@ class InstanceWorker:
                             return data
 
                 return await asyncio.wait_for(_recv_loop(), timeout=timeout)
+            except asyncio.CancelledError:
+                cancelled_ws, self.ws = self.ws, None
+                if cancelled_ws is not None:
+                    try:
+                        await cancelled_ws.close()
+                    except Exception:
+                        pass
+                raise
             except Exception as se:
-                self.ws = None
+                failed_ws, self.ws = self.ws, None
+                if failed_ws is not None:
+                    try:
+                        await failed_ws.close()
+                    except Exception:
+                        pass
                 if attempt == 0:
                     log(f"CDP 通信抖动 ({method}): {se}，正在重连 CDP 端口 {self.cdp_port} 并重试...", self.id)
                     await asyncio.sleep(1)
@@ -2578,13 +2908,10 @@ class InstanceWorker:
                 log(f"   [图片校验警告] 剔除异常文件 {f}: {ie}", self.id)
 
         self._raw_hashes = set()
-        self._raw_dhashes = []
         for fp in valid_paths:
             try:
                 with open(fp, "rb") as rf:
                     self._raw_hashes.add(hashlib.sha256(rf.read()).hexdigest())
-                with Image.open(fp) as im:
-                    self._raw_dhashes.append(calc_dhash_bits(im))
             except Exception:
                 pass
         log(f"   [防照搬基线] 已登记 {len(self._raw_hashes)} 个原始素材字节指纹与哈希", self.id)
@@ -2744,10 +3071,13 @@ class InstanceWorker:
                 // 「三种注入通道都没能让 EditorState 收到内容」→ 整套作废、换新会话重来。
                 // 一天几百次空转大半由此而来。这里换成与提交一致的完整选择器链。
                 const btn = document.querySelector('button[data-testid="send-button"]')
+                         || document.querySelector('button[type="submit"].size-token-button-composer')
+                         || document.querySelector('button[type="submit"]')
                          || document.querySelector('button[aria-label*="Send"]')
                          || document.querySelector('button[aria-label*="发送"]')
                          || document.querySelector('button.composer-submit-btn');
-                return {ok: true, domLen: domLen, btnFound: !!btn, btnEnabled: btn ? !btn.disabled : null};
+                const isDis = btn ? (btn.disabled || btn.getAttribute('aria-disabled') === 'true') : true;
+                return {ok: true, domLen: domLen, btnFound: !!btn, btnEnabled: btn ? !isDis : null};
             })()""" % (_JS_FIND_COMPOSER,
                         json.dumps(prompt_text, ensure_ascii=False).replace('\u2028', '\\u2028').replace('\u2029', '\\u2029'))
             _r_pe = await self.send_cmd("Runtime.evaluate", {"expression": _js_paste_evt, "returnByValue": True}, timeout=60)
@@ -2882,10 +3212,13 @@ class InstanceWorker:
                 if (!_c) return {found: false};
                 // 同 1920 行的决定性修复：必须认 aria-label*="发送"，只认 testid 会恒判失败
                 const b = document.querySelector('button[data-testid="send-button"]')
+                       || document.querySelector('button[type="submit"].size-token-button-composer')
+                       || document.querySelector('button[type="submit"]')
                        || document.querySelector('button[aria-label*="Send"]')
                        || document.querySelector('button[aria-label*="发送"]')
                        || document.querySelector('button.composer-submit-btn');
-                return {found: true, btnFound: !!b, btnEnabled: b ? !b.disabled : false,
+                const bDis = b ? (b.disabled || b.getAttribute('aria-disabled') === 'true') : true;
+                return {found: true, btnFound: !!b, btnEnabled: b ? !bDis : false,
                         domLen: ((_c.innerText !== undefined ? _c.innerText : _c.value) || '').length};
             })()""" % _JS_FIND_COMPOSER
             try:
@@ -3036,45 +3369,29 @@ class InstanceWorker:
         # 模型零响应 -> 150 秒熔断 -> 3 次重试全烧额度 -> 素材误隔离。
         # 实测影响面：09-25 单日 30 套「文案 0 字空壳」+ 10 套「未获提交确认」全部由此而来；
         # 09-26 上午 A/B 连环「停止生成 0 图（助手消息数=0）」同源。
-        # 修复：①click 前派发 InputEvent 促发框架同步；②确认判据收紧：纯 empty 不再算成功，
-        # 必须 user turn 增长或正在生成；③识别到假提交（empty 且消息未进会话）自动换 Enter 键补发。
         js_submit = """(() => {
             const ta = document.querySelector('#prompt-textarea') || document.querySelector('div[contenteditable="true"][role="textbox"]') || document.querySelector('[role="textbox"]') || document.querySelector('textarea');
-            try {
-                if (ta) {
-                    // execCommand 是注入链同款通道：新版 Lexical 编辑器监听 beforeinput，
-                    // execCommand 触发的合成 beforeinput 能进它的 EditorState（实测注入有效）。
-                    // 提交前补一个空格，把「框架真实持有完整内容」的状态压实，防止 click 按空输入处理。
-                    ta.focus();
-                    // 光标移到内容末尾再插入，避免插到中间
-                    const sel = window.getSelection();
-                    if (sel && ta.lastChild) {
-                        const range = document.createRange();
-                        range.selectNodeContents(ta);
-                        range.collapse(false);
-                        sel.removeAllRanges();
-                        sel.addRange(range);
-                    }
-                    document.execCommand('insertText', false, ' ');
-                    ta.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: ' '}));
-                }
-            } catch (e) {}
-            const btn = document.querySelector('button[data-testid="send-button"]') ||
+            const btn = document.querySelector('button[aria-label*="发送"]') ||
+                        document.querySelector('button[type="submit"].size-token-button-composer') ||
+                        document.querySelector('button[type="submit"]') ||
+                        document.querySelector('button[data-testid="send-button"]') ||
                         document.querySelector('button[aria-label*="Send"]') ||
-                        document.querySelector('button[aria-label*="发送"]') ||
                         document.querySelector('button.composer-submit-btn');
-            if (btn && !btn.disabled) {
+            const isDisabled = btn ? (btn.disabled || btn.getAttribute('aria-disabled') === 'true') : true;
+            if (btn && !isDisabled) {
                 btn.click();
-                return {ok: true, method: 'button.click+inputSync'};
+                return {ok: true, method: 'button.click'};
             }
-            if (btn && btn.disabled) {
-                // 按钮存在但被禁用 = Lexical EditorState 认为编辑框是空的（DOM 有字也不算）。
-                // 此时 requestSubmit/click 只会送出一条空消息：编辑框被清空、消息却进不了对话，
-                // 正是 09-26 晚上「userTurns 始终 0 + 干等出图轮询 180 次」的假提交元凶。宁可不发。
-                return {ok: false, reason: 'send_button_disabled(editorstate_empty)'};
+            const form = ta?.closest('form') || document.querySelector('form');
+            if (form) {
+                try {
+                    form.requestSubmit();
+                    return {ok: true, method: 'form.requestSubmit'};
+                } catch (e) {}
             }
-            const form = ta?.closest('form');
-            if (form) { form.requestSubmit(); return {ok: true, method: 'form.requestSubmit'}; }
+            if (btn && isDisabled) {
+                return {ok: false, reason: 'send_button_disabled'};
+            }
             return {ok: false, reason: 'submit_control_not_found'};
         })()"""
         # Enter 键补发（假提交后使用；走 keydown 管道，绕过按钮点击路径）
@@ -3166,22 +3483,17 @@ class InstanceWorker:
             # 【2026-09-27 修】补第三条确认通道：编辑框已清空 + 指令片段确实出现在会话正文里。
             # 这是同会话内第二条指令（文案指令）唯一可靠的证据 —— 长度增长与 URL 变化在这都用不上。
             # 【2026-10-05 补】生成态（generating）且已有文本流式输出（_growth >= 10）作为可靠提交确认。
-            if _growth >= _need or (_url_now and _url_now != baseline_url and _main_now > 20) \
+            if _growth >= _need or (_url_now and _url_now != baseline_url) \
                     or (confirmed.get("empty", False) and confirmed.get("snippetFound", False)) \
-                    or (confirmed.get("generating", False) and _growth >= 10):
+                    or (confirmed.get("generating", False) and _growth >= 5) \
+                    or (confirmed.get("generating", False) and _url_now != baseline_url):
                 log(f"-> {action_desc}已由网页确认提交（真源：会话正文 {baseline_user_count} → {_main_now}，"
                     f"增长 {_growth} 字；片段命中={confirmed.get('snippetFound', False)}；"
                     f"生成中={confirmed.get('generating', False)}）", self.id)
                 confirmed_ok = True
                 break
-            # 生成态只作参考，不再单独作为成功判据：
-            # 实测存在「闪 1 秒就消失」的假生成态（页面其实是空会话），据此判成功会干等 30 分钟。
-            # 补发仅在「内容还留在编辑框里」时才有意义：那时按 Enter 才有东西可发。
-            # 若编辑框已被清空（消息被前端吞掉），再按 Enter 发出去的是一条空消息，
-            # 永远救不回来 —— 这正是历史上"补发 trusted Enter 后仍失败"的原因。
-            # 那种情况直接判失败，由上层换新会话重来（旧会话是空的，不会造成堆积）。
             _suspect_rounds += 1
-            if _suspect_rounds >= 3 and not _enter_retry_used \
+            if _suspect_rounds >= 7 and not _enter_retry_used \
                     and not confirmed.get("empty", False):
                 _enter_retry_used = True
                 log(f"⚠️ {action_desc}疑似假提交（{_suspect_rounds * 1}s 内 user turn 未出现，编辑框状态 {confirmed}），改发 trusted Enter...", self.id)
@@ -3209,6 +3521,7 @@ class InstanceWorker:
     async def produce_single_set(self, mat_info):
         mat_dir = mat_info["path"]
         mat_name = mat_info["name"]
+        planned_pages = planned_page_count_from_task(mat_info, mat_dir)
         log(f"==================================================", self.id)
         log(f"开始生产: {mat_name}", self.id)
         log(f"原料路径: {mat_dir}", self.id)
@@ -3216,6 +3529,9 @@ class InstanceWorker:
         self._set_t0 = time.time()
         self._reload_used = 0
         self._attached_count = 0   # 每套重置，避免拿上一套的挂载数当本套的凭据
+        self._template_selection_record = None
+        self._quota_request_id = f"cdp:{self.id}:{uuid.uuid4().hex}"
+        self._quota_snapshot = None
         trace(self.id, "set_start", mat=mat_name[:40])
 
         await self.open_fresh_session()
@@ -3229,8 +3545,13 @@ class InstanceWorker:
         if mode in ("2_random_template", "3_fixed_template"):
             selected_template = pick_production_template(TEMPLATE_POOL_ROOT, mode=mode, target_id=target_tpl_id, material_path=mat_dir)
             if not selected_template:
-                log(f"⚠️ 未找到可用母版，平滑回退到模式 1 (原图复刻打乱模式)", self.id)
-                mode = "1_replica_shuffle"
+                if mode == "2_random_template":
+                    raise RuntimeError("随机模板准入失败或合格候选不足，拒绝切换模式并继续生产")
+                raise RuntimeError(f"未找到指定固定模板 [{target_tpl_id}]，拒绝切换模式并继续生产")
+            self._template_selection_record = template_selection_record(selected_template, mode)
+            if (mode == "2_random_template" and
+                    not self._template_selection_record.get("randomEligibilityPassed")):
+                raise RuntimeError("随机模板资格在选中后发生变化，拒绝提交")
 
         self._current_mode = mode
         self._current_template = selected_template
@@ -3238,26 +3559,48 @@ class InstanceWorker:
         if mode in ("2_random_template", "3_fixed_template") and selected_template:
             t_cat = selected_template.get("category", "精准流量团建")
             log(f"🎯 [智能生产] {('随机模板模式' if mode == '2_random_template' else '固定模板模式')} | 分类: [{t_cat}] | 母版: [{selected_template['id']}] {selected_template['name']}", self.id)
-            
-            # 支持双图与多图母版智能组装
-            if selected_template.get("all_images") and len(selected_template["all_images"]) > 2:
-                # 个人攻略等异构全套母版：精选母版前 2~4 张 + 原料图，总量严格限制 10 张
-                t_count = min(4, len(selected_template["all_images"]))
-                template_imgs = selected_template["all_images"][:t_count]
-                remain_slots = max(2, 10 - t_count)
-                material_imgs = self.prepare_material_images(mat_dir, max_imgs=remain_slots)
-            else:
-                template_imgs = [selected_template["p1_path"], selected_template["p2_path"]]
-                material_imgs = self.prepare_material_images(mat_dir, max_imgs=8)
+
+            # 当前模式合同只注入真实 P1/P2 母版；计划中的每张素材都单独上传并对应一页。
+            template_imgs = [selected_template["p1_path"], selected_template["p2_path"]]
+            material_imgs = self.prepare_material_images(mat_dir, max_imgs=planned_pages)
+
+            if len(material_imgs) != planned_pages:
+                raise RuntimeError(
+                    f"素材挂载计划不完整：计划 {planned_pages} 页，当前仅有 {len(material_imgs)} 张有效素材，拒绝提交"
+                )
                 
             img_paths = template_imgs + material_imgs
             log(f"-> 组装完成: {len(template_imgs)} 张 A 类母版 + {len(material_imgs)} 张 B 类原料实拍图 (共 {len(img_paths)} 张)", self.id)
         else:
             log(f"🎯 [生产模式] 模式 1: 原图复刻打乱生产模式 (无外部模板)", self.id)
-            img_paths = self.prepare_material_images(mat_dir, max_imgs=10)
+            img_paths = self.prepare_material_images(mat_dir, max_imgs=planned_pages)
             material_imgs = img_paths
+            if len(material_imgs) != planned_pages:
+                raise RuntimeError(
+                    f"素材挂载计划不完整：计划 {planned_pages} 页，当前仅有 {len(material_imgs)} 张有效素材，拒绝提交"
+                )
             log(f"-> 精选 {len(img_paths)} 张原料图注入对话...", self.id)
         self._current_material_imgs = material_imgs
+
+        # 上传前以整套附件数预检本产线 3 小时 / 80 附件安全线。
+        # 超线时不注入任何文件，任务会被安全退回共享待产池供另一条空闲 CDP 线领取。
+        upload_budget = check_upload_quota(self.id, len(img_paths))
+        self._quota_snapshot = upload_budget.get("quotaSnapshot")
+        if not upload_budget.get("allowed"):
+            requires_split = bool(upload_budget.get("requiresSplit"))
+            resume_dt = (
+                datetime.datetime.now() + datetime.timedelta(seconds=1)
+                if requires_split
+                else datetime.datetime.strptime(upload_budget["resumeAt"], "%Y-%m-%d %H:%M:%S")
+            )
+            raise LocalUploadQuotaException(
+                "本地 3 小时上传安全线单套附件预算不足，需拆分该任务" if requires_split
+                else "本地 3 小时上传安全线已满，整套附件预检未通过",
+                upload_budget.get("waitSeconds"),
+                resume_dt,
+                upload_budget,
+                requires_split=requires_split,
+            )
 
         # 开始制作日志记录（群通知仅在配额周期首次点火/解冻时报备 1 次，连续生产时不重复刷屏）
         log(f"准备注入原料并开始生产: {mat_name}", self.id)
@@ -3474,21 +3817,31 @@ class InstanceWorker:
             except Exception as upload_retry_error:
                 log(f"⚠️ 客户端上传重试异常: {upload_retry_error}", self.id)
 
-        # 【2026-09-24 新增】最低挂载门槛（60%）：低于门槛一律拒绝提交，宁可不做也不产残缺品。
-        # 原逻辑只要 attached_cnt > 0 就往下走，2/10 张也照发，等同于批量制造废品。
+        # Record every confirmed mounted attachment before any later guard can reject the package.
+        # A partial mount below the 60% quality threshold still consumed local upload budget.
+        self._attached_count = max(0, int(attached_cnt or 0))
+        if self._attached_count:
+            record_upload_success(
+                self.id,
+                self._attached_count,
+                mat_name,
+                getattr(self, "_quota_request_id", f"cdp:{self.id}:{uuid.uuid4().hex}"),
+                getattr(self, "_quota_snapshot", None),
+            )
+
+        # 完整输入硬门：输出逐页依赖完整素材文件夹；部分挂载一律不提交。
+        # 60% 下限会让 1/3 这类残缺输入误通过，故必须精确等于预期附件数。
         if img_paths:
-            _min_need = max(1, int(len(img_paths) * 0.6))
-            if attached_cnt == 0:
-                raise RuntimeError(f"客户端附件挂载失败（0/{len(img_paths)}），未提交生图提示词")
-            if attached_cnt < _min_need:
+            _expected_count = len(img_paths)
+            if not is_complete_attachment_batch(self._attached_count, _expected_count):
                 raise RuntimeError(
-                    f"客户端附件仅挂载 {attached_cnt}/{len(img_paths)} 张（低于最低门槛 {_min_need}），"
-                    f"拒绝提交以避免产物残缺"
+                    f"客户端附件仅挂载 {self._attached_count}/{_expected_count} 张（要求全部挂载），"
+                    f"拒绝提交以避免素材缺页或错配"
                 )
 
         log(f"-> 附件处理完毕 (挂载计数: {attached_cnt})，进入提示词注入流程...", self.id)
         # 记下本套「已确认挂载数」，供发送前的空发送闸门在 CDP 抖动时作为可信依据
-        self._attached_count = int(attached_cnt or 0)
+        self._attached_count = int(self._attached_count)
         # 【节拍埋点】上传阶段耗时（从本套开始到附件挂完），用于判断"上传"这一段是否变慢
         try:
             trace(self.id, "upload_done", elapsed_s=round(time.time() - getattr(self, "_set_t0", time.time()), 1),
@@ -3573,7 +3926,7 @@ class InstanceWorker:
         log("指令已发送，正在监控出图进程并开启连环追问驱动...", self.id)
 
         # 4. 动态监控生图进程与多图连环追问驱动
-        expected_count = len(material_imgs) if mode in ("2_random_template", "3_fixed_template") else len(img_paths)
+        expected_count = planned_pages
         stuck_99_count = 0
         last_prompted_for = 0
         idle_after_prompt_ticks = 0
@@ -3594,23 +3947,27 @@ class InstanceWorker:
                     const src = img.src || img.currentSrc || '';
                     const alt = img.alt || '';
                     if (!src) return;
-                    // 【2026-10-08 修复·原图排他铁律】
+                    // 【2026-10-09 升级·原图排他铁律】
                     // 1. 绝不认发指令前已有的任何图片（素材上传缩略图）
                     if (preUrls.has(src)) return;
                     // 2. 绝不认表单/输入框/附件预览区域内的任何图片
                     if (img.closest('form')) return;
-                    // 3. 绝不认用户提问消息气泡内的任何图片
-                    if (img.closest('[data-message-author-role="user"]')) return;
-                    // 4. 绝不认附件卡片容器内的任何图片
-                    if (img.closest('[role="group"]') || img.closest('[aria-label*="文件"]') || img.closest('[aria-label*="file"]')) return;
-                    // 5. 绝不认带有原素材文件扩展名或文件名特征的图片
+                    // 3. 绝不认用户提问气泡内的任何图片（覆盖 Tailwind group/user-message 与 data-message-author-role）
+                    if (img.closest('[class*="user-message"]') || img.closest('[data-message-author-role="user"]')) return;
+                    // 4. 绝不认用户附件/用户上传/文件扩展名特征
+                    if (alt.includes('用户') || alt.includes('附件') || alt.includes('上传') || alt.includes('Uploaded') || alt.includes('User')) return;
                     if (alt.includes('.jpg') || alt.includes('.jpeg') || alt.includes('.png') || alt.includes('.webp')) return;
                     if (alt.includes('个人资料') || alt.includes('profile') || alt.includes('avatar')) return;
+                    if (img.closest('[aria-label*="文件"]') || img.closest('[aria-label*="file"]')) return;
+                    // 5. 必须在生成图像容器内（group/generated-image 或 button）
+                    const isGenContainer = !!(img.closest('[class*="generated-image"]') || img.closest('button'));
+                    if (!isGenContainer) return;
                     const w = img.naturalWidth || img.clientWidth || 0;
                     const h = img.naturalHeight || img.clientHeight || 0;
                     if (w < 300 || h < 300) return;
                     const isGenSrc = src.includes('estuary') || src.includes('oaiusercontent') ||
-                                     src.includes('fileservice') || src.startsWith('blob:');
+                                     src.includes('fileservice') || src.startsWith('blob:') ||
+                                     src.includes('/public_content/enc/');
                     if (!isGenSrc) return;
                     const idMatch = src.match(/id=([^&]+)/) || src.match(/enc\\/([^?&#]+)/);
                     const fileId = idMatch ? idMatch[1] : src;
@@ -3743,32 +4100,41 @@ class InstanceWorker:
                             log(f"🔁 本日第 {hits_after} 次撞限，休眠已叠加 {min(max(0, hits_after-1)*20, 60)} 分钟冗余", self.id)
                         log(f"⏳ 精确预计休眠时长: {wait_h}小时{wait_m}分，预计恢复时间: {resume_str}", self.id)
 
-                        account_alias = get_account_alias(self.id)
-                        backoff_note = (
-                            f"\n🔁 **重复撞限冗余**：本日第 {hits_after} 次撞限，已在官方复位点上叠加 {min(max(0, hits_after-1)*20, 60)} 分钟冗余。"
-                            if hits_after > 1 else ""
+                        quota_context = {
+                            "sourceClientPlatform": "在线模式（GPT 网页 / CDP）",
+                            "instance": f"实例 {self.id}",
+                            "conversationWindow": "本次生产新对话；标题和链接未采集",
+                            "executor": "团队工作台在线生产器",
+                            "task": mat_name,
+                            "problem": f"网页提示生图额度受限：{quota_txt.strip()[:160]}",
+                            "impact": "本次出图已暂停；这套作品尚未完成，不能计作交付",
+                            "attemptedHandling": "读取当前对话提示和额度条，并按页面信息估算等待；没有重复发起生图",
+                            "handlingResult": "已识别到额度提示；任务退回共享队列的处理尚未执行",
+                            "verification": "已读到本次页面提示；任务是否退回队列、实例 B 是否领取均尚未验证",
+                            "currentStatus": "当前实例准备进入等待；作品等待共享队列接手",
+                            "nextStep": "由额度异常处理流程退回共享队列，再核实实例 B 是否领取",
+                            "requiredUserAction": "暂时无需操作；接手结果待确认",
+                        }
+                        quota_sections = (
+                            render_production_anomaly_context(quota_context, mat_name, "生图额度受限")
+                            if callable(render_production_anomaly_context)
+                            else [
+                                "1. 来源：客户端/平台 在线模式（GPT 网页 / CDP） · "
+                                f"实例 实例 {self.id} · 会话窗口 本次生产新对话；标题和链接未采集",
+                                f"2. 执行者与任务：执行者 团队工作台在线生产器 · 任务 {mat_name}",
+                                "3. 问题与影响：网页提示生图额度受限 · "
+                                "影响 本次出图已暂停；作品尚未完成",
+                                "4. 已尝试处理及验证：已读取页面提示并估算等待 · "
+                                "结果任务退回队列尚未执行 · 验证实例 B 是否领取尚未确认",
+                                "5. 当前状态与下一步：作品等待接手 · "
+                                "下一步由异常流程退回队列并核实 B 是否领取 · 暂时无需用户操作",
+                            ]
                         )
-                        parse_note = (
-                            f"📐 **解析依据**：权威时钟 **{dbg['clock'] or '未取到'}**"
-                            f" ／ 官方时长 **{dbg['hour_min'] or '未取到'}**"
-                            f" ／ 基础等待 {int(base_sec)//60} 分钟\n"
-                        )
+                        local_recheck = f"{resume_str}（本机按当前网页提示估算复查时间，非官方保证）"
                         alert_md = (
-                            f"⏳【双浏览器流水线 · 实例 {self.id} 配额熔断自愈休眠】\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"⚙️ **生产实例**：实例 {self.id}（{account_alias} · CDP 端口 {self.cdp_port}）\n"
-                            f"⏱ **触发时刻**：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            f"💬 **官方提示**：{quota_txt.strip()[:160]}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"{parse_note}"
-                            f"⏰ **预计解冻恢复时刻**：**{resume_str}**\n"
-                            f"⌛ **休眠倒计时**：约 {wait_h} 小时 {wait_m} 分钟\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"🛡️ **自愈续接机制已激活**：\n"
-                            f"1. 当前任务锁已安全释放回待生产池，绝不丢单漏单；\n"
-                            f"2. 实例 {self.id} 自动进入低能耗长休眠挂起；\n"
-                            f"3. 到达 **{resume_str}** 准点时刻，系统将**自动在群内推送解冻提醒**，并**自动唤醒续接开工**，全程 100% 免人工值守！"
-                            f"{backoff_note}"
+                            "🟠【在线模式生图额度提醒】\n\n"
+                            + "\n".join(quota_sections)
+                            + f"\n\n本机预计复查时间：{local_recheck}"
                         )
                         send_feishu_markdown(alert_md, FEISHU_OPS_CHAT_ID)
                         raise QuotaLimitException(f"ChatGPT Plus 生图额度上限: {quota_txt[:35]}", wait_seconds=wait_sec, resume_dt=resume_dt)
@@ -3820,70 +4186,52 @@ class InstanceWorker:
             else:
                 stuck_99_count = 0
 
-            # 核心达成判断：小红书标准画册单套上限为 10 张大图 (1 封面 + 9 内页)
-            target_limit = min(expected_count, 10)
-            min_album_limit = min(expected_count, 5)
+            # 计划页数是唯一目标；少于计划的任何数量都不能进入文案或归档阶段。
+            target_limit = expected_count
+            if img_count > target_limit:
+                raise RuntimeError(f"出图数量超出计划：计划 {target_limit} 页、页面捕获 {img_count} 张，需人工复核")
 
-            if img_count >= target_limit:
-                log(f"-> 目标大图已全部就绪！捕获到 {img_count}/{target_limit} 张大图（达标准画册上限），整套批量出图完美达成！", self.id)
+            if img_count == target_limit:
+                log(f"-> 计划内大图已全部就绪：{img_count}/{target_limit} 页", self.id)
                 await asyncio.sleep(5)
                 break
 
-            # 模型生成完毕判断：模型已停止生成与思考，且已输出合格的多图画册 (>= 5 张)
-            if not is_gen and not is_thinking:
-                if img_count >= min_album_limit:
-                    # 【2026-09-27 新增·反向识别①：出图数量不足即判定模型降级】
-                    # 旧逻辑只要 >= min_album_limit(5) 就"接受成果"，于是计划 10 张只出 5 张（50%）
-                    # 也能过关进文案 —— 用户判定："只产出几张，明显是模型出问题了，应该直接停止"。
-                    _ratio_now = (img_count / target_limit) if target_limit else 0
-                    if _ratio_now < DEGRADE_MIN_RATIO:
-                        raise ModelDegradedException(
-                            f"出图严重不足：计划 {target_limit} 张、实际仅 {img_count} 张"
-                            f"（达成率 {_ratio_now:.0%} < {DEGRADE_MIN_RATIO:.0%}），判定模型产出能力降级",
-                            wait_seconds=DEGRADE_COOLDOWN_SEC, kind="short_output")
-                    log(f"-> 模型整套画册生成完毕，成功捕获 {img_count} 张超高清大图（符合 {min_album_limit}~10 张画册标准），无需二次追问，直接推进三端文案！", self.id)
-                    await asyncio.sleep(3)
-                    break
-                elif 0 < img_count < min_album_limit:
-                    # 仅在模型中途夭折、图数严重不足（< 5 张且小于原料总数）时，才追发一次补全提示
-                    if img_count > last_prompted_for:
-                        next_page = img_count + 1
-                        log(f"⚠️ 模型提早停下（当前仅 {img_count}/{min_album_limit} 张），追发第 {next_page} 张补齐指令...", self.id)
-                        if mode in ("2_random_template", "3_fixed_template") and selected_template:
-                            rule_label = f"已锁定的母版 [{selected_template['id']}] 规则（图 1 封面母版，图 2 内页母版）"
-                        else:
-                            rule_label = "V6.1 原图轻复刻打乱规则（原图排版骨架、四宫格站位绝对打乱置换、全量换人换物）"
-                        cont_prompt = (
-                            f"很好！前 {img_count} 张大图已生成完毕。\n"
-                            f"请严格按照 {rule_label}，3:4 竖版大图（1086x1448）、国产主流手机自然实拍质感去AI塑料凡士林假面，"
-                            f"立即直接生成下一张大图：第 {next_page} 张大图（严格对应第 {next_page} 页内容）！\n"
-                            f"绝对禁止输出任何文字解释与客套话，直接出图！"
-                        )
-                        sent = await self.send_text_prompt(cont_prompt, f"第 {next_page} 张补齐出图指令")
-                        if sent:
-                            last_prompted_for = img_count
-                            idle_after_prompt_ticks = 0
-                            stuck_retry_count = 0
-                            await asyncio.sleep(5)
+            # 页面停止且当前页数不足时，继续逐页请求；耗尽重试后整套退回，不把部分集当成品。
+            if not is_gen and not is_thinking and 0 < img_count < target_limit:
+                if img_count > last_prompted_for:
+                    next_page = img_count + 1
+                    log(f"⚠️ 当前仅 {img_count}/{target_limit} 页，追发第 {next_page} 页补齐指令...", self.id)
+                    if mode in ("2_random_template", "3_fixed_template") and selected_template:
+                        rule_label = f"已锁定的母版 [{selected_template['id']}] 规则（图 1 封面母版，图 2 内页母版）"
                     else:
-                        idle_after_prompt_ticks += 1
-                        if idle_after_prompt_ticks >= 6:
-                            stuck_retry_count += 1
-                            last_prompted_for = img_count - 1
-                            idle_after_prompt_ticks = 0
-                            if stuck_retry_count >= 2:
-                                # 【2026-09-27 新增·反向识别①（补齐失败后的兜底判定）】
-                                # 旧逻辑 img_count >= 3 就"接受当前成果" —— 计划 10 张只出 3 张（30%）
-                                # 也算过关，正是用户看到的"只产出几张照片"的垃圾来源。
-                                _ratio_end = (img_count / target_limit) if target_limit else 0
-                                if _ratio_end < DEGRADE_MIN_RATIO:
-                                    raise ModelDegradedException(
-                                        f"补齐多次无响应且出图严重不足：计划 {target_limit} 张、实际 {img_count} 张"
-                                        f"（达成率 {_ratio_end:.0%}），判定模型产出能力降级",
-                                        wait_seconds=DEGRADE_COOLDOWN_SEC, kind="short_output")
-                                log(f"⚠️ 补齐多次未响应，当前已有 {img_count}/{target_limit} 张图"
-                                    f"（达成率 {_ratio_end:.0%}），接受当前成果进入文案...", self.id)
-                                break
+                        rule_label = "V6.1 原图轻复刻打乱规则（原图排版骨架、四宫格站位绝对打乱置换、全量换人换物）"
+                    cont_prompt = (
+                        f"前 {img_count} 张大图已生成完毕，计划总页数为 {target_limit} 页。\n"
+                        f"请严格按照 {rule_label}，3:4 竖版大图（1086x1448）、国产主流手机自然实拍质感，"
+                        f"立即生成下一张大图：第 {next_page} 张（严格对应第 {next_page} 页内容），直到完成全部 {target_limit} 页。\n"
+                        f"绝对禁止输出文字解释与客套话，直接出图！"
+                    )
+                    sent = await self.send_text_prompt(cont_prompt, f"第 {next_page} 张补齐出图指令")
+                    if sent:
+                        last_prompted_for = img_count
+                        idle_after_prompt_ticks = 0
+                        stuck_retry_count = 0
+                        await asyncio.sleep(5)
+                else:
+                    idle_after_prompt_ticks += 1
+                    if idle_after_prompt_ticks >= 6:
+                        stuck_retry_count += 1
+                        last_prompted_for = img_count - 1
+                        idle_after_prompt_ticks = 0
+                        if stuck_retry_count >= 2:
+                            raise ModelDegradedException(
+                                f"逐页补齐多次无响应：计划 {target_limit} 页、实际 {img_count} 页，整套退回重做",
+                                wait_seconds=DEGRADE_COOLDOWN_SEC, kind="short_output")
+
+        if img_count != expected_count:
+            raise ModelDegradedException(
+                f"计划页数未完成：计划 {expected_count} 页、实际捕获 {img_count} 页，禁止进入文案和落盘",
+                wait_seconds=DEGRADE_COOLDOWN_SEC, kind="short_output")
 
         # 【2026-09-27 修·别把文案指令撞在"图还没画完"的枪口上】
         # 「9/9 就绪」只是抓到了 9 张大图 URL，模型往往还在继续收尾（实测仍在勾勒草图 55%），
@@ -3899,8 +4247,19 @@ class InstanceWorker:
         # 命中即让实例休息，绝不把错乱产出当成品、也绝不隔离素材。
         try:
             _rt = await self.send_cmd("Runtime.evaluate", {"expression": """(() => {
-                const m = document.querySelector('main');
-                const t = m ? (m.innerText || '') : '';
+                const turns = Array.from(document.querySelectorAll('[class*="group/conversation-turn"], [data-testid^="conversation-turn-"], [data-message-author-role="assistant"]'));
+                const asstTurns = turns.filter(t => !t.querySelector('[class*="user-message"]') && !t.querySelector('[data-message-author-role="user"]') && t.getAttribute('data-message-author-role') !== 'user');
+                let t = '';
+                if (asstTurns.length > 0) {
+                    t = asstTurns[asstTurns.length - 1].innerText || '';
+                } else {
+                    const articles = Array.from(document.querySelectorAll('article'));
+                    t = articles.length > 0 ? (articles[articles.length - 1].innerText || '') : '';
+                }
+                // 若匹配到用户发送指令的典型特征，说明并非助手回复，绝对忽略
+                if (t.includes('已上传全部') || t.includes('V6.1 核心增量铁律') || t.includes('小红书团建轮播母版迁移器') || t.includes('母版迁移出图指令') || t.includes('生图指令')) {
+                    return {vs: 0, ve: 0};
+                }
                 return {vs: (t.match(/<<<VERSION_START/g) || []).length,
                         ve: (t.match(/<<<VERSION_END>>>/g) || []).length};
             })()""", "returnByValue": True}, timeout=15)
@@ -4245,53 +4604,53 @@ class InstanceWorker:
         # 6. 提取全部无损图片 URL
         pre_urls_json = json.dumps(list(getattr(self, "_pre_existing_img_srcs", set())))
         js_get_urls = f"""(() => {{
-            // 回收阶段必须和出图轮询使用同一套“全页面生成图”探测。
+            // 回收阶段必须和出图轮询使用同一套“全页面生成图”探测与原图排他铁律。
             const preUrls = new Set({pre_urls_json});
-            const userMsgs = Array.from(document.querySelectorAll('[data-message-author-role="user"]'));
-            const userImgSrcs = new Set();
-            userMsgs.forEach(m => m.querySelectorAll('img').forEach(i => userImgSrcs.add(i.currentSrc || i.src || '')));
             const allImgs = Array.from(document.querySelectorAll('img'));
             const map = new Map();
             allImgs.forEach(img => {{
                 const src = img.currentSrc || img.src || '';
                 const alt = img.alt || '';
                 if (!src) return;
-                // 【2026-10-08 修复·原图排他铁律】
+                // 【2026-10-09 升级·原图排他铁律】
                 if (preUrls.has(src)) return;
                 if (img.closest('form')) return;
-                if (img.closest('[data-message-author-role="user"]')) return;
-                if (img.closest('[role="group"]') || img.closest('[aria-label*="文件"]') || img.closest('[aria-label*="file"]')) return;
+                if (img.closest('[class*="user-message"]') || img.closest('[data-message-author-role="user"]')) return;
+                if (alt.includes('用户') || alt.includes('附件') || alt.includes('上传') || alt.includes('Uploaded') || alt.includes('User')) return;
                 if (alt.includes('.jpg') || alt.includes('.jpeg') || alt.includes('.png') || alt.includes('.webp')) return;
-                const isAvatar = alt.includes('个人资料') || alt.includes('profile') || alt.includes('avatar');
-                const isRawUpload = userImgSrcs.has(src);
+                if (alt.includes('个人资料') || alt.includes('profile') || alt.includes('avatar')) return;
+                if (img.closest('[aria-label*="文件"]') || img.closest('[aria-label*="file"]')) return;
+                const isGenContainer = !!(img.closest('[class*="generated-image"]') || img.closest('button'));
+                if (!isGenContainer) return;
                 const w = img.naturalWidth || img.width || 0;
                 const h = img.naturalHeight || img.height || 0;
-                const isTiny = w > 0 && h > 0 && w < 300 && h < 300;
-                // 生成图可能已被缩放展示，但仍然是 public_content/enc 资源；
-                // 不以助手节点或固定尺寸作硬依赖。
-                const isGeneratedResource = src.includes('/backend-api/estuary/') &&
-                    !isAvatar && !isRawUpload && !isTiny &&
-                    (w >= 500 || h >= 500 || src.includes('/public_content/enc/'));
-                if (isGeneratedResource) {{
-                    const idMatch = src.match(/id=([^&]+)/) || src.match(/enc\\/([^?&#]+)/);
-                    const fileId = idMatch ? idMatch[1] : src;
-                    if (!map.has(fileId)) map.set(fileId, src);
-                }}
+                if (w < 300 || h < 300) return;
+                const isGenSrc = src.includes('estuary') || src.includes('oaiusercontent') ||
+                                 src.includes('fileservice') || src.startsWith('blob:') ||
+                                 src.includes('/public_content/enc/');
+                if (!isGenSrc) return;
+                const idMatch = src.match(/id=([^&]+)/) || src.match(/enc\\/([^?&#]+)/);
+                const fileId = idMatch ? idMatch[1] : src;
+                if (!map.has(fileId)) map.set(fileId, src);
             }});
             return Array.from(map.values());
         }})()"""
         r_urls = await self.send_cmd("Runtime.evaluate", {"expression": js_get_urls, "returnByValue": True})
         img_urls = r_urls.get("result", {}).get("result", {}).get("value", [])
-        if len(img_urls) < min(4, expected_count):
+        if len(img_urls) != expected_count:
             # 页面图片懒加载/文案回复切换期间再读一次，避免把客户端已完成的图误判为失败。
             await asyncio.sleep(3)
             r_urls_retry = await self.send_cmd("Runtime.evaluate", {"expression": js_get_urls, "returnByValue": True})
             img_urls_retry = r_urls_retry.get("result", {}).get("result", {}).get("value", [])
-            if len(img_urls_retry) > len(img_urls):
+            if len(img_urls_retry) == expected_count or len(img_urls_retry) > len(img_urls):
                 img_urls = img_urls_retry
         if len(pre_copy_img_urls) > len(img_urls):
             log(f"回收阶段页面节点已收缩，采用出图轮询阶段保存的 {len(pre_copy_img_urls)} 张 URL 快照", self.id)
             img_urls = pre_copy_img_urls
+        if len(img_urls) != expected_count:
+            raise RuntimeError(
+                f"拉取大图 URL 数量不足：计划 {expected_count} 页，当前仅 {len(img_urls)} 张，拒绝落盘"
+            )
         log(f"已捕获 {len(img_urls)} 张大图 URL，开始无损拉取...", self.id)
 
         # 7. 创建规范临时目录：在图文未完整通过质检前，存放在带下划线的对应产线文件夹中（不被手机端相册识别）
@@ -4318,6 +4677,7 @@ class InstanceWorker:
         })"""
 
         saved_images = []
+        generated_hashes = set()
         for idx, u in enumerate(img_urls[:expected_count]):
             fname = "P1_封面.png" if idx == 0 else f"P{idx+1}_内页.png"
             dest = os.path.join(target_pkg_dir, fname)
@@ -4332,26 +4692,26 @@ class InstanceWorker:
 
                 # 【2026-10-08 修复·硬防照搬双重质检】
                 byte_hash = hashlib.sha256(raw_bytes).hexdigest()
+                if byte_hash in generated_hashes:
+                    write_rework_manifest(target_pkg_dir, expected_count, len(saved_images),
+                                          f"重复生成页:{fname}", mat_name)
+                    raise RuntimeError(f"生成页重复：{fname} 与此前页面字节完全相同，退回复核")
                 if byte_hash in getattr(self, "_raw_hashes", set()):
                     log(f"🚨【致命拦截】下载到的 {fname} 与原始上传素材 100% 字节相同！严禁照搬入库！", self.id)
                     raise RuntimeError(f"CDP 下载到原素材底图而非 AI 生成图 ({fname})，触发防照搬硬熔断！")
-                try:
-                    with Image.open(io.BytesIO(raw_bytes)) as dl_im:
-                        dl_bits = calc_dhash_bits(dl_im)
-                        for s_bits in getattr(self, "_raw_dhashes", []):
-                            sim = calc_dhash_sim(dl_bits, s_bits)
-                            if sim >= 0.85:
-                                log(f"🚨【致命拦截】下载到的 {fname} 与原始上传素材高度相似 (sim={sim:.2%}) >= 85%！严禁照搬入库！", self.id)
-                                raise RuntimeError(f"CDP 下载到与原素材相似度过高图片 ({fname}, sim={sim:.2%})，触发防搬运硬熔断！")
-                except RuntimeError:
-                    raise
-                except Exception as e_im_check:
-                    log(f"⚠️ 图片哈希质检容错: {e_im_check}", self.id)
-
+                dl_bits = None
                 with open(dest, "wb") as f:
                     f.write(raw_bytes)
+                generated_hashes.add(byte_hash)
                 saved_images.append(dest)
                 log(f"  [√] 保存成功: {fname} ({len(raw_bytes)/1024/1024:.2f} MB)", self.id)
+
+        if len(saved_images) != expected_count:
+            write_rework_manifest(target_pkg_dir, expected_count, len(saved_images),
+                                  "大图下载未覆盖全部计划页", mat_name)
+            raise RuntimeError(
+                f"大图下载未覆盖全部计划页：计划 {expected_count} 页、成功下载 {len(saved_images)} 页"
+            )
 
         # 9. 保存多版本/三端文案（支持 V4.5 11大排版指纹版本与 Format 3 向上兼容）
         # 剥离 UI 尾部免责声明与异常前缀
@@ -4548,7 +4908,7 @@ class InstanceWorker:
         valid_cnt = pixel_valid_cnt
         log(f"-> 质检通过率: {valid_cnt}/{len(saved_images)} (大图已完整无损落盘入库)", self.id)
 
-        # 若检出业务待复检单图：落盘诊断清单供后续一键精修，绝不删除图片或阻断下载
+        # 若检出业务待复检单图：保留候选页与诊断清单，但不能继续进入正式货架。
         if biz_failed_items:
             failed_review_dir = os.path.join(target_pkg_dir, "_failed_review")
             os.makedirs(failed_review_dir, exist_ok=True)
@@ -4562,16 +4922,18 @@ class InstanceWorker:
                     "review_needed": biz_failed_items,
                     "action_suggestion": "可用 redo_failed_page.py 一键无痕覆盖为10人起接贴纸"
                 }, df, ensure_ascii=False, indent=2)
-            log(f"📝 已记录 {len(biz_failed_items)} 处业务待复检项至: {diagnostic_file}（已放行下载入库）", self.id)
+            log(f"📝 已记录 {len(biz_failed_items)} 处业务待复检项至: {diagnostic_file}", self.id)
 
-        # 仅在物理大图严重缺失时阻断重试
-        min_required = min(4, len(img_paths)) if len(img_paths) >= 2 else 1
-        if valid_cnt < min_required:
-            log(f"🚨【物理大图残缺】当前套有效出图仅 {valid_cnt} 张（要求至少 {min_required} 张多图画册），废弃残缺产出并重做！", self.id)
-            if os.path.exists(target_pkg_dir):
-                import shutil
-                shutil.rmtree(target_pkg_dir, ignore_errors=True)
-            raise RuntimeError(f"有效大图不足（仅 {valid_cnt}/{min_required} 张），废弃残缺产出并重做")
+        if len(saved_images) != expected_count or valid_cnt != expected_count:
+            reason = f"计划 {expected_count} 页，下载 {len(saved_images)} 页，像素校验通过 {valid_cnt} 页"
+            write_rework_manifest(target_pkg_dir, expected_count, valid_cnt, reason, mat_name)
+            log(f"🚨【整套未通过】{reason}，保留在制作区并退回复核", self.id)
+            raise RuntimeError(f"有效大图不足：{reason}，禁止进入正式货架")
+        if biz_failed_items:
+            reason = f"业务复核未通过 {len(biz_failed_items)} 项"
+            write_rework_manifest(target_pkg_dir, expected_count, valid_cnt, reason, mat_name)
+            log(f"🚨【业务复核未通过】{reason}，保留在制作区并退回复核", self.id)
+            raise RuntimeError(f"业务复检未通过：{reason}，禁止进入正式货架")
 
         # 11. 终稿根据作品标题与原素材路径自动归入对应标准货架（不再散落在 OUTPUT_BASE 根目录）
         shelf_name = resolve_output_shelf(mat_name, mat_dir, full_copy)
@@ -4580,7 +4942,13 @@ class InstanceWorker:
         final_pkg_dir = os.path.join(shelf_dir, pkg_folder)
 
         # 12. 登记生图配额账本（3小时滑动窗口40张 + 全天180张）
-        record_generation_success(self.id, valid_cnt, len(img_paths), mat_name)
+        record_generation_quota_success(
+            self.id,
+            valid_cnt,
+            mat_name,
+            getattr(self, "_quota_request_id", f"cdp:{self.id}:{uuid.uuid4().hex}"),
+            getattr(self, "_quota_snapshot", None),
+        )
 
         # 12. 固化 manifest.json 与 作品标签.json（写入用户要求的齐全作品硬标签 + 季节标签 + 流量类型标签）
         verified_at_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -4588,6 +4956,8 @@ class InstanceWorker:
         completion_meta = {
             "verified": True,
             "imageCount": valid_cnt,
+            "expectedPageCount": expected_count,
+            "acceptedPageCount": valid_cnt,
             "copyReady": True,
             "copyVersionCount": copy_ver_cnt,
             "verifiedAt": verified_at_str,
@@ -4617,19 +4987,56 @@ class InstanceWorker:
         else:
             work_flow_type = "精准流量团建"
 
-        work_tags_list = ["✅图文齐全", "待发送", "小红书可发", "抖音可发", shelf_name, work_season, work_flow_type]
+        cur_mode_code = getattr(self, "_current_mode", PRODUCTION_MODE)
+        cur_mode_name = "随机模板复刻模式" if cur_mode_code == "2_random_template" else ("固定模板模式" if cur_mode_code == "3_fixed_template" else "原图复刻打乱模式")
+        cur_template = getattr(self, "_current_template", None)
+        cur_template_id = cur_template.get("id") if isinstance(cur_template, dict) else (cur_template or "原图自身构图")
+        source_page_map = [
+            {"page": page, "sourceFile": os.path.basename(source_path)}
+            for page, source_path in enumerate(material_imgs, start=1)
+        ]
+        template_reference_files = (
+            [os.path.basename(path) for path in (cur_template.get("p1_path"), cur_template.get("p2_path")) if path]
+            if isinstance(cur_template, dict) else []
+        )
+        wf_version = "cdp-dual-v3.2"
+        work_tags_list = ["✅图文齐全", "待发送", "小红书可发", "抖音可发", shelf_name, work_season, work_flow_type, pipe_info["pipeline"], cur_mode_name]
         manifest_data = {
             "deliveryLayout": "flat-images-manifest-copy-v1",
             "copyPath": os.path.join(target_pkg_dir, "文案.txt"),
             "evidencePath": evidence_dir,
             "title": clean_title,
+            "sourceFolderName": mat_name,
+            "originalSourcePath": os.path.abspath(mat_dir) if mat_dir else None,
+            "currentSourcePath": os.path.abspath(mat_dir) if mat_dir else None,
+            "sourceTitleVerification": "original-platform-title-not-independently-verified",
             "created_at": verified_at_str,
+            "producedAt": verified_at_str,
             "pipeline": pipe_info["pipeline"],
+            "workflowVersion": wf_version,
             "worker": pipe_info["worker"],
             "account": pipe_info["account"],
-            "productionMode": getattr(self, "_current_mode", PRODUCTION_MODE),
-            "productionModeName": "随机模板复刻模式" if getattr(self, "_current_mode", PRODUCTION_MODE) == "2_random_template" else ("固定模板模式" if getattr(self, "_current_mode", PRODUCTION_MODE) == "3_fixed_template" else "原图复刻打乱模式"),
-            "template": getattr(self, "_current_template", None),
+            "accountName": pipe_info["account"],
+            "productionMode": cur_mode_code,
+            "productionModeName": cur_mode_name,
+            "template": cur_template,
+            "templateId": cur_template_id,
+            "templateSelection": getattr(self, "_template_selection_record", None),
+            "templateReferenceFiles": template_reference_files,
+            "expectedPageCount": expected_count,
+            "acceptedPageCount": valid_cnt,
+            "sourcePageMap": source_page_map,
+            "productionPlanPath": mat_info.get("planPath"),
+            "productionTrace": {
+                "pipeline": pipe_info["pipeline"],
+                "workflowVersion": wf_version,
+                "productionMode": cur_mode_code,
+                "productionModeName": cur_mode_name,
+                "templateId": cur_template_id,
+                "worker": pipe_info["worker"],
+                "accountName": pipe_info["account"],
+                "producedAt": verified_at_str
+            },
             "isComplete": True,
             "lifecycleStatus": "COMPLETED",
             "shelf": shelf_name,
@@ -4639,7 +5046,7 @@ class InstanceWorker:
             "tags": work_tags_list,
             "rawMaterialPath": mat_dir,
             "sourceMaterialPath": mat_dir,
-            "sourceImageFiles": [os.path.basename(image) for image in img_paths],
+            "sourceImageFiles": [os.path.basename(image) for image in material_imgs],
             "finishedProductPath": target_pkg_dir,
             "imageCount": valid_cnt,
             "status": "PASS"
@@ -4929,10 +5336,13 @@ class InstanceWorker:
         return target_pkg_dir, valid_cnt
 
     async def close(self):
-        if self.ws:
-            try:
-                await self.ws.close()
-            except Exception: pass
+        async with self._command_lock:
+            socket, self.ws = self.ws, None
+            if socket is not None:
+                try:
+                    await socket.close()
+                except Exception:
+                    pass
 
 def resolve_output_shelf(title: str, mat_dir: str = "", copy_text: str = "") -> str:
     """根据作品标题、原素材路径与文案摘要智能判断所属标准货架目录。"""
@@ -5071,6 +5481,8 @@ async def claim_next_task(worker_id):
                     with open(tags_file, 'r', encoding='utf-8') as f:
                         tdata = json.load(f)
                 state = tdata.get("production", {}).get("lifecycleState", "待生产")
+                if state == "额度待拆分":
+                    continue
                 # 【2026-09-26 修·节奏风控】失败退池的素材带 cooldownUntil 冷却期，
                 # 冷却期内严禁再次领取提交——否则同一套素材 60~90 秒一轮死循环猛刷
                 # （09-26 实测 OC Card 单账号一天 341 次生产启动），直接触发平台风控。
@@ -5096,7 +5508,8 @@ async def claim_next_task(worker_id):
                 continue
     return None
 
-async def release_task_lock(mat_path, error_msg=None, is_quota_wait=False, instance_id=None):
+async def release_task_lock(mat_path, error_msg=None, is_quota_wait=False, is_local_quota_wait=False,
+                            quota_requires_split=False, instance_id=None):
     async with LOCK:
         abnormal_root = os.path.join(MATERIAL_DIR, "..", "_异常素材（脚本失败隔离）")
         os.makedirs(abnormal_root, exist_ok=True)
@@ -5117,6 +5530,9 @@ async def release_task_lock(mat_path, error_msg=None, is_quota_wait=False, insta
                     # 改为前缀模糊匹配，任何变体都归为环境类。
                     "未找到可连接", "未获网页提交确认", "静默未响应", "Timeout",
                     "有效大图不足", "拉取大图 URL 数量不足", "未返回大图", "残缺画册阻断",
+                    "计划页数未完成", "计划页数超出", "计划输出", "素材挂载计划不完整",
+                    "随机模板准入失败", "随机模板资格", "固定模板缺失", "生成页重复",
+                    "业务复检未通过", "整套未通过",
                     "客户端附件挂载失败", "附件挂载失败",
                     "未找到文件上传 DOM 节点",
                     "Cannot connect", "WinError", "closed",
@@ -5138,10 +5554,8 @@ async def release_task_lock(mat_path, error_msg=None, is_quota_wait=False, insta
                 # 判定：附件挂载不足是**页面/上传通道问题**，与素材质量无关，隔离它解决不了任何问题。
                 # 处置：不计入素材重试次数（单独计 clientFailCount），给足 8 次机会后才考虑隔离。
                 _CLIENT_ATTACH_MARKERS = ("客户端附件仅挂载", "客户端附件挂载失败", "附件挂载失败")
-                if is_quota_wait:
-                    # 【2026-09-22 修】官方配额耗尽是账号级临时状态，不是素材缺陷：
-                    # 不计入重试次数、永不隔离（冷却结束后同一素材必然能成功）。
-                    # 实测误伤：舟山素材因 2 次 CDP 抖动 + 第 3 次配额熔断累计到 3 次被隔离。
+                if is_quota_wait or is_local_quota_wait:
+                    # 账号/实例配额是临时状态，不是素材缺陷；立即让出共享队列给其他实例。
                     retry_cnt = prev_retry
                     safe_retry = True
                 elif (not error_text.strip()) or any(_m in error_text for _m in (
@@ -5207,16 +5621,26 @@ async def release_task_lock(mat_path, error_msg=None, is_quota_wait=False, insta
                     log(f"🛑 识别为脚本层异常（非素材缺陷），拒绝物理隔离，改走安全重试: {error_text[:80]}")
                     safe_retry = True
                 if safe_retry:
-                    prod["lifecycleState"] = "待生产"
-                    prod.pop("lockedBy", None)
-                    prod.pop("lockedAt", None)
-                    # 【2026-09-26 修·节奏风控】失败退池一律带 30 分钟冷却：
-                    # 保证"上一套完全落地后才提交下一套"的节奏，杜绝同账号
-                    # 高频重试触发平台风控（OC Card 341 次/天事故）。
-                    prod["cooldownUntil"] = (datetime.datetime.now() + datetime.timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+                    if is_quota_wait or is_local_quota_wait:
+                        # 素材冷却是全局的，会连带阻塞另一账号。额度等待只记录并立即让位。
+                        from production_quota_policy import return_task_to_shared_pool_for_quota
+                        return_task_to_shared_pool_for_quota(
+                            prod,
+                            instance_id,
+                            "official_account_limit" if is_quota_wait else "local_upload_safety_limit",
+                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            requires_split=quota_requires_split,
+                        )
+                    else:
+                        prod["lifecycleState"] = "待生产"
+                        prod.pop("lockedBy", None)
+                        prod.pop("lockedAt", None)
+                        # 普通失败退池仍带 30 分钟节奏冷却，防止相同故障高频重试。
+                        prod["cooldownUntil"] = (datetime.datetime.now() + datetime.timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+                        prod["lastError"] = error_text or "网页客户端/CDP 未返回具体错误"
                     prod["retryCount"] = retry_cnt
-                    prod["lastError"] = error_text or "网页客户端/CDP 未返回具体错误"
-                    prod["lastFailedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    if not (is_quota_wait or is_local_quota_wait):
+                        prod["lastFailedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     with open(tags_file, 'w', encoding='utf-8') as f:
                         json.dump(tdata, f, ensure_ascii=False, indent=2)
                 else:
@@ -5477,6 +5901,47 @@ async def worker_loop(instance_id, cdp_port):
 
             log(f"生产成功，实例 {instance_id} 今日累计已出图 {dq[instance_id]} 张，冷却 15 秒后领取下一套...", instance_id)
             await asyncio.sleep(15)
+
+        except LocalUploadQuotaException as qe:
+            # 本地安全线不是官方额度耗尽：无素材冷却、无撞限计数，立即让另一实例继续。
+            if qe.requires_split:
+                log(
+                    f"🧩 实例 {instance_id} 发现单套附件数超过当前单次预算；"
+                    "该素材标记为‘额度待拆分’，不计生产失败，继续后续素材。",
+                    instance_id,
+                )
+            else:
+                log(
+                    f"🛡️ 实例 {instance_id} 本地上传安全线暂不可用，任务让回共享队列；"
+                    f"预计本实例 {qe.resume_dt.strftime('%Y-%m-%d %H:%M:%S')} 后重试。",
+                    instance_id,
+                )
+            if 'task' in locals() and task:
+                await release_task_lock(
+                    task["path"], error_msg=str(qe), is_local_quota_wait=True,
+                    quota_requires_split=qe.requires_split, instance_id=instance_id,
+                )
+            await worker.close()
+            DAEMON_STATE["instances"][instance_id]["state"] = (
+                "LOCAL_UPLOAD_QUOTA_SPLIT_REQUIRED" if qe.requires_split else "LOCAL_UPLOAD_QUOTA_SLEEPING"
+            )
+            DAEMON_STATE["instances"][instance_id]["current_package"] = None
+            DAEMON_STATE["instances"][instance_id]["resume_at"] = None
+            DAEMON_STATE["instances"][instance_id]["upload_resume_at"] = (
+                None if qe.requires_split else qe.resume_dt.strftime("%Y-%m-%d %H:%M:%S")
+            )
+            DAEMON_STATE["instances"][instance_id]["local_upload_quota"] = {
+                "used": qe.stats.get("usedUploads"),
+                "limit": qe.stats.get("uploadLimit"),
+                "planned": qe.stats.get("plannedUploads"),
+                "ledgerSource": qe.stats.get("ledgerSource"),
+                "requiresSplit": qe.requires_split,
+            }
+            sync_daemon_state()
+            await asyncio.sleep(qe.wait_seconds)
+            DAEMON_STATE["instances"][instance_id]["state"] = "IDLE"
+            DAEMON_STATE["instances"][instance_id]["upload_resume_at"] = None
+            sync_daemon_state()
 
         except QuotaLimitException as qe:
             # 【2026-09-23 修】qe.wait_seconds / qe.resume_dt 已在抛出处按「滚动恢复」递增加码，

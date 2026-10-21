@@ -935,6 +935,9 @@ const GPT_RECOVERY_CHAIN_MIGRATION_KEY = "teambuilding-gpt-recovery-chain-v2";
 const GPT_GENERATION_SAFETY_MIGRATION_KEY = "teambuilding-gpt-generation-safety-45-v1";
 const GPT_ACCOUNT_GENERATION_SAFETY_MIGRATION_KEY = "teambuilding-gpt-account-generation-safety-45-v1";
 const GPT_SERVER_GENERATION_SAFETY_MIGRATION_KEY = "teambuilding-gpt-server-generation-safety-45-v1";
+const GPT_GENERATION_ESTIMATE_50_MIGRATION_KEY = "teambuilding-gpt-generation-estimate-50-v1";
+const GPT_ACCOUNT_GENERATION_ESTIMATE_50_MIGRATION_KEY = "teambuilding-gpt-account-generation-estimate-50-v1";
+const GPT_SERVER_GENERATION_ESTIMATE_50_MIGRATION_KEY = "teambuilding-gpt-server-generation-estimate-50-v1";
 const GPT_MODE_PROFILES_STORAGE_KEY = "teambuilding-gpt-mode-profiles-v1";
 const GPT_PATROL_SETTINGS_STORAGE_KEY = "teambuilding-gpt-patrol-settings-v1";
 const GPT_QUEUE_STORAGE_KEY = "teambuilding-gpt-queue-v1";
@@ -5324,6 +5327,10 @@ function contentInstanceId() {
 }
 
 function contentInstanceAccountIds() {
+  const runtimeRoot = String(dashboard?.appInfo?.runtimeRoot || "");
+  if (runtimeRoot.includes("unified-runtime") || (Array.isArray(dashboard?.appInfo?.assignedAccountIds) && dashboard.appInfo.assignedAccountIds.length === 0)) {
+    return null;
+  }
   const assigned = Array.isArray(dashboard?.appInfo?.assignedAccountIds)
     ? new Set(dashboard.appInfo.assignedAccountIds
       .map((accountId) => String(accountId || "").trim().toLowerCase())
@@ -5404,22 +5411,24 @@ async function hydrateGptBrowserProfiles() {
         settings: assignedSettings,
         defaults: {
           uploadLimit: quotaDefaults.uploadLimit || 80,
-          generationLimit: quotaDefaults.generationLimit || 45,
+          generationLimit: quotaDefaults.generationLimit || 50,
           windowHours: quotaDefaults.windowHours || 3
         }
       });
       let settingsChanged = JSON.stringify(reconciledSettings) !== JSON.stringify(assignedSettings);
-      const migrateAccountSafety = localStorage.getItem(GPT_ACCOUNT_GENERATION_SAFETY_MIGRATION_KEY) !== "done";
+      const restoreAccountEstimate = localStorage.getItem(GPT_ACCOUNT_GENERATION_ESTIMATE_50_MIGRATION_KEY) !== "done"
+        && localStorage.getItem(GPT_ACCOUNT_GENERATION_SAFETY_MIGRATION_KEY) === "done";
       const normalizedSettings = reconciledSettings.map((account, index) => {
         if (!account) return account;
         const nameChanged = /^浏览器\s*\d+$/i.test(String(account.name || ""));
-        const safetyChanged = migrateAccountSafety && Number(account.generationLimit) === 50;
-        if (!nameChanged && !safetyChanged) return account;
+        const estimateChanged = restoreAccountEstimate
+          && Number(account.generationLimit) === 45;
+        if (!nameChanged && !estimateChanged) return account;
         settingsChanged = true;
         return {
           ...account,
           ...(nameChanged ? { name: `账号窗口 ${index + 1}` } : {}),
-          ...(safetyChanged ? { generationLimit: 45 } : {})
+          ...(estimateChanged ? { generationLimit: 50 } : {})
         };
       });
       // Keep the live renderer settings in sync with profiles discovered after
@@ -5436,7 +5445,7 @@ async function hydrateGptBrowserProfiles() {
           body: JSON.stringify({ gptAuto: { accounts: normalizedSettings } })
         }).catch(() => {});
       }
-      if (migrateAccountSafety) localStorage.setItem(GPT_ACCOUNT_GENERATION_SAFETY_MIGRATION_KEY, "done");
+      localStorage.setItem(GPT_ACCOUNT_GENERATION_ESTIMATE_50_MIGRATION_KEY, "done");
     }
     // Preserve per-window mode from localStorage when syncing Electron
     // profiles.  The mode is a UI-only field; the native profile store does
@@ -5537,7 +5546,7 @@ function loadGptAutoSettings() {
     // blank or untrained profile.
     multiAccountIds: [],
     uploadLimit: 80,
-    generationLimit: 45,
+    generationLimit: 50,
     windowHours: 3,
     confirmText: "1",
     copyPrompt: GPT_PUBLISH_COPY_PROMPT,
@@ -5574,11 +5583,17 @@ function loadGptAutoSettings() {
         name: /^浏览器\s*\d+$/i.test(String(account?.name || "")) ? `账号窗口 ${index + 1}` : account?.name
       }));
     }
-    if (localStorage.getItem(GPT_GENERATION_SAFETY_MIGRATION_KEY) !== "done") {
-      if (Number(loaded.generationLimit) === 50) loaded.generationLimit = 45;
+    const restoreLegacyEstimate = localStorage.getItem(GPT_GENERATION_ESTIMATE_50_MIGRATION_KEY) !== "done"
+      && localStorage.getItem(GPT_GENERATION_SAFETY_MIGRATION_KEY) === "done";
+    const restoredLimit = TBGptAccountRotation.restoreLegacyGenerationEstimate(loaded.generationLimit, {
+      legacyDowngradeApplied: restoreLegacyEstimate,
+      migrationApplied: localStorage.getItem(GPT_GENERATION_ESTIMATE_50_MIGRATION_KEY) === "done"
+    });
+    if (restoredLimit !== loaded.generationLimit) {
+      loaded.generationLimit = restoredLimit;
       localStorage.setItem(GPT_AUTO_SETTINGS_STORAGE_KEY, JSON.stringify(loaded));
-      localStorage.setItem(GPT_GENERATION_SAFETY_MIGRATION_KEY, "done");
     }
+    localStorage.setItem(GPT_GENERATION_ESTIMATE_50_MIGRATION_KEY, "done");
     loaded.mode = normalizeGptProductionMode(loaded.mode);
     loaded.downloadRoot = normalizeProductionPath(loaded.downloadRoot, defaultDownloadRoot);
     loaded.productRoot = normalizeProductionPath(loaded.productRoot, defaultProductRoot);
@@ -5700,7 +5715,7 @@ function saveGptAutoSettings() {
     maximumWorkers: 5,
     multiAccountIds: Array.isArray(gptAutoSettings.multiAccountIds) ? gptAutoSettings.multiAccountIds : [],
     uploadLimit: Math.max(1, Number($("#gptUploadLimit")?.value || 80)),
-    generationLimit: Math.max(1, Number($("#gptGenerationLimit")?.value || 45)),
+    generationLimit: Math.max(1, Number($("#gptGenerationLimit")?.value || 50)),
     windowHours: Math.max(1, Number($("#gptQuotaWindowHours")?.value || 3)),
     confirmText: actualConfirmText,
     copyPrompt: actualCopyPrompt,
@@ -5745,7 +5760,7 @@ function saveGptAutoSettings() {
         id: account.id,
         name: account.name,
         uploadLimit: account.id === activeGptAccountId ? gptAutoSettings.uploadLimit : previous.uploadLimit || 80,
-        generationLimit: account.id === activeGptAccountId ? gptAutoSettings.generationLimit : previous.generationLimit || 45,
+        generationLimit: account.id === activeGptAccountId ? gptAutoSettings.generationLimit : previous.generationLimit || 50,
         windowHours: account.id === activeGptAccountId ? gptAutoSettings.windowHours : previous.windowHours || 3
       });
     });
@@ -5832,15 +5847,18 @@ function renderGptWorkflowVariantControl() {
     hint.hidden = false;
     return;
   }
-  if (variant === "fresh-session-fixed-template") {
-    const template = availableGptTestTemplates().find((item) => item.id === account.selectedTemplateId);
-    hint.textContent = template ? "" : "未选固定模板";
-    hint.hidden = Boolean(template);
-    if (template && select) select.title = `新模式｜固定模板 ${template.id} · ${template.name || template.title || "未命名模板"}`;
-    return;
-  }
-  hint.textContent = "";
-  hint.hidden = true;
+  const template = availableGptTestTemplates().find((item) => item.id === account.selectedTemplateId);
+  const projection = window.TBFixedTemplateSession?.project({
+    pipeline: "cdp", profile: account, template: template || {},
+    bindingReceipt: account.templateBindingReceipt || null
+  });
+  hint.textContent = projection
+    ? `${projection.bindingLabel} · ${projection.steps.join(" → ")}`
+    : variant === "fresh-session-fixed-template"
+      ? "固定母版待核实 · 每套新建对话发送母版，再发送完整素材并验收交付"
+      : "未核实母版会话 · 先发送母版，再逐套发送素材并验收交付";
+  hint.hidden = false;
+  if (select) select.title = projection?.explanation || "固定母版会话逐套制作";
 }
 
 async function apiWithTimeout(path, options, timeoutMs = 2500) {
@@ -6801,18 +6819,19 @@ function getSavedState() {
 
 async function migrateServerGptGenerationSafety(persistedGptAuto) {
   if (!persistedGptAuto || typeof persistedGptAuto !== "object") return persistedGptAuto;
-  if (localStorage.getItem(GPT_SERVER_GENERATION_SAFETY_MIGRATION_KEY) === "done") return persistedGptAuto;
+  if (localStorage.getItem(GPT_SERVER_GENERATION_ESTIMATE_50_MIGRATION_KEY) === "done") return persistedGptAuto;
+  const restoreLegacyEstimate = localStorage.getItem(GPT_SERVER_GENERATION_SAFETY_MIGRATION_KEY) === "done";
   const accounts = Array.isArray(persistedGptAuto.accounts) ? persistedGptAuto.accounts : [];
   const migratedAccounts = accounts.map((account) => (
-    account && Number(account.generationLimit) === 50
-      ? { ...account, generationLimit: 45 }
+    account && restoreLegacyEstimate && Number(account.generationLimit) === 45
+      ? { ...account, generationLimit: 50 }
       : account
   ));
-  const changed = Number(persistedGptAuto.generationLimit) === 50
+  const changed = (restoreLegacyEstimate && Number(persistedGptAuto.generationLimit) === 45)
     || migratedAccounts.some((account, index) => account?.generationLimit !== accounts[index]?.generationLimit);
   const migrated = {
     ...persistedGptAuto,
-    ...(Number(persistedGptAuto.generationLimit) === 50 ? { generationLimit: 45 } : {}),
+    ...(restoreLegacyEstimate && Number(persistedGptAuto.generationLimit) === 45 ? { generationLimit: 50 } : {}),
     accounts: migratedAccounts
   };
   if (changed) {
@@ -6821,10 +6840,10 @@ async function migrateServerGptGenerationSafety(persistedGptAuto) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ gptAuto: migrated })
     });
-    localStorage.setItem(GPT_SERVER_GENERATION_SAFETY_MIGRATION_KEY, "done");
+    localStorage.setItem(GPT_SERVER_GENERATION_ESTIMATE_50_MIGRATION_KEY, "done");
     return result?.settings?.gptAuto || migrated;
   }
-  localStorage.setItem(GPT_SERVER_GENERATION_SAFETY_MIGRATION_KEY, "done");
+  localStorage.setItem(GPT_SERVER_GENERATION_ESTIMATE_50_MIGRATION_KEY, "done");
   return migrated;
 }
 
@@ -7310,7 +7329,7 @@ const WORKBENCH_MODULE_HELP = {
     background: "生产规则、对话要求和模型参数共同决定本次作品如何生成；这里是执行前的可核对控制区。",
     use: "查看或保存长期规则，补充本次要求，选择模型、页数和质量，再启动一次作品生产。",
     what: "它影响当前模板、当前素材批次和本次生产任务，不会修改已经归档的作品。",
-    how: "先确认素材和模板，再核对规则与本次要求，最后点击“开始生产”；计划出现时先检查，再按提示继续。",
+    how: "先确认素材和模板，再核对规则与本次要求；点击“生成生产计划”先查看逐页安排，确认后才会调用生图。",
     running: "流程按上传、计划、生图、文案、下载、校验、打包推进；每阶段都有状态和恢复边界，失败不会静默跳到下一套。",
     why: "把长期规则、本次要求和运行参数分开，既能复用稳定方法，又能安全调整单次任务。"
   },
@@ -8749,6 +8768,72 @@ function selectedGptTestEntries() {
   return [...gptTestSelectedMaterials].map((materialPath) => gptTestMaterialEntries.get(materialPath)).filter(Boolean);
 }
 
+function refreshCodexStudioSelection() {
+  const entries = selectedGptTestEntries();
+  const mode = document.getElementById('codexContentTemplateMode')?.value || '';
+  const usesExternalTemplate = mode !== '1_replica_shuffle';
+  const productionSelector = document.getElementById('codexProductionTemplates');
+  const templates = usesExternalTemplate && productionSelector
+    ? Array.from(productionSelector.selectedOptions || []).filter((option) => option.value)
+      .map((option) => ({ id: option.value, name: option.textContent || option.value }))
+    : usesExternalTemplate ? selectedGptTestTemplates() : [];
+  const materialNode = document.getElementById('codexSelectedMaterial');
+  const materialMetaNode = document.getElementById('codexSelectedMaterialMeta');
+  const templateNode = document.getElementById('codexSelectedTemplate');
+  const templateDescNode = document.getElementById('codexTemplateDesc');
+  const templatePicker = productionSelector?.closest?.('.production-template-picker');
+  if (templatePicker) {
+    templatePicker.hidden = !usesExternalTemplate;
+    templatePicker.style.display = usesExternalTemplate ? '' : 'none';
+  }
+  if (materialNode) {
+    materialNode.textContent = entries.length === 1
+      ? (entries[0].item.name || entries[0].category?.name || '已选择一个素材文件夹')
+      : entries.length > 1 ? `当前选中 ${entries.length} 个素材项` : '尚未选择';
+  }
+  if (materialMetaNode) {
+    materialMetaNode.textContent = entries.length === 1
+      ? '一个完整素材文件夹 · 源图数将在登记回执中核对'
+      : entries.length > 1 ? '一次只允许提交一个完整素材文件夹，请回到素材库调整选择' : '请从素材库选择一个作品文件夹';
+  }
+  if (templateNode) {
+    const template = templates.length === 1 ? templates[0] : null;
+    templateNode.textContent = !usesExternalTemplate
+      ? '按原素材复刻 · 不使用外部模板'
+      : template
+      ? `${template.name || template.title || '已选母版'} · ${template.id}`
+      : templates.length > 1 ? `当前选中 ${templates.length} 个母版` : '尚未选择';
+  }
+  if (templateDescNode && !usesExternalTemplate) {
+    templateDescNode.textContent = '模式 1 使用所选作品自身作参照；T79 等外部模板不参与本套。';
+  } else if (templateDescNode && templates.length !== 1) {
+    templateDescNode.textContent = templates.length > 1
+      ? '一次只允许使用一个母版，请回到模板库调整选择'
+      : '请从模板库选一个真实母版；提交时会核对实际目录';
+  }
+  const selection = {
+    pipeline: 'codex-api',
+    sourcePath: entries.length === 1 ? entries[0].item.path : '',
+    templateId: templates.length === 1 ? templates[0].id : ''
+  };
+  const currentKey = window.TBProductionRequest?.selectionKey?.(selection) || '';
+  const registeredKey = document.getElementById('codexProductionPanel')?.dataset.requestSavedFor || '';
+  const stages = window.TBProductionRequest?.workflowStages?.({
+    folderCount: entries.length,
+    templateCount: templates.length,
+    requestSaved: Boolean(currentKey && registeredKey && currentKey === registeredKey)
+  }) || [];
+  stages.forEach(({ id, state }) => {
+    const node = document.querySelector(`#codexProductionPanel [data-codex-stage="${id}"]`);
+    if (!node) return;
+    node.dataset.state = state;
+    if (state === 'current') node.setAttribute('aria-current', 'step');
+    else node.removeAttribute('aria-current');
+  });
+  window.refreshCodexManualPrompt?.();
+  refreshProductionTemplateModeHints();
+}
+
 // Container executeJavaScript handoff: select indexed material only; never run
 // an uploader, scanner, queue executor or model request from this entry point.
 function receiveContainerHandoff(message) {
@@ -8756,6 +8841,19 @@ function receiveContainerHandoff(message) {
   const fail = (error) => ({ ok: false, requestId, error });
   if (!message || message.type !== "LOAD_MATERIAL_FOLDER") return fail("UNSUPPORTED_HANDOFF");
   if (!requestId.trim()) return fail("INVALID_REQUEST_ID");
+  const targetInstanceId = String(message.targetInstanceId || "").trim().toUpperCase();
+  const targetLineKey = String(message.targetLineKey || "").trim().toLowerCase();
+  const receiverInstanceId = String(contentInstanceId() || "").trim().toUpperCase();
+  if (!/^[A-D]$/.test(targetInstanceId)) return fail("INVALID_TARGET_INSTANCE");
+  if (!receiverInstanceId) return fail("RECEIVER_INSTANCE_UNVERIFIED");
+  if (targetLineKey !== `cdp-${targetInstanceId.toLowerCase()}`) return fail("TARGET_LINE_MISMATCH");
+  if (receiverInstanceId !== targetInstanceId) return fail("TARGET_INSTANCE_MISMATCH");
+  const receiverAccountId = String(activeGptAccountId || "").trim();
+  const assignedAccounts = contentInstanceAccountIds();
+  if (receiverAccountId && assignedAccounts
+    && !assignedAccounts.has(receiverAccountId.toLowerCase())) {
+    return fail("RECEIVER_ACCOUNT_INSTANCE_MISMATCH");
+  }
   const normalize = (value) => {
     if (typeof value !== "string" || /[\x00-\x1f]/.test(value)) return "";
     const path = normalizeGptAttachmentPath(value);
@@ -8779,7 +8877,7 @@ function receiveContainerHandoff(message) {
   const matches = [];
   for (const category of categories) {
     if (normalize(category?.path) === folderPath) {
-      matches.push({ category, entries: (category.items || []).map((item) => ({ item, category })) });
+      matches.push({ category, entries: [], isCategory: true });
     }
     for (const item of category?.items || []) {
       if (normalize(item?.path) === folderPath) matches.push({ category, entries: [{ item, category }] });
@@ -8787,7 +8885,8 @@ function receiveContainerHandoff(message) {
   }
   if (!matches.length) return fail("UNKNOWN_MATERIAL_FOLDER");
   if (matches.length !== 1) return fail("AMBIGUOUS_MATERIAL_FOLDER");
-  const { category, entries } = matches[0];
+  const { category, entries, isCategory } = matches[0];
+  if (isCategory) return fail("SELECT_A_SINGLE_WORK_FOLDER");
   if (category.loaded === false || !entries.length) return fail("MATERIALS_NOT_READY");
   const paths = entries.map(({ item }) => normalize(item?.path));
   if (paths.some((path) => !path)) return fail("INVALID_MATERIAL_ENTRY");
@@ -8826,6 +8925,9 @@ function receiveContainerHandoff(message) {
       throw new Error("Selection readback failed");
     }
     persistActiveGptWindowSelections();
+    if (String(contentInstanceId() || "").trim().toUpperCase() !== receiverInstanceId) {
+      throw new Error("Receiver instance changed during handoff");
+    }
   } catch {
     for (const [target, values] of [
       [gptTestSelectedMaterials, previous.selected], [gptTestMaterialEntries, previous.entries],
@@ -8842,7 +8944,11 @@ function receiveContainerHandoff(message) {
   }
   const label = $("#codexSelectedMaterial");
   if (label) label.textContent = entries.length === 1 ? entries[0].item.name : category.name;
-  return { ok: true, requestId, stage: "SELECTED_NOT_STARTED" };
+  refreshCodexStudioSelection();
+  return {
+    ok: true, requestId, stage: "SELECTED_NOT_STARTED",
+    targetLineKey, targetInstanceId, receiverInstanceId, receiverAccountId
+  };
 }
 
 window.receiveContainerHandoff = receiveContainerHandoff;
@@ -8856,6 +8962,52 @@ function availableGptTestTemplates() {
 
 function selectedGptTestTemplates() {
   return availableGptTestTemplates().filter((template) => gptTestSelectedTemplates.has(template.id));
+}
+
+function refreshProductionTemplateModeHints() {
+  const selectedCount = (id) => document.getElementById(id)?.selectedOptions?.length || 0;
+  const describe = (mode, count) => ({
+    '1_replica_shuffle': '复刻重组：使用所选作品自身作参照，不选外部模板；当前按钮只登记请求。',
+    '2_random_template': count >= 2
+      ? `随机模板：已选 ${count} 套后端核验候选；服务端会按素材哈希稳定抽选。当前按钮只登记请求。`
+      : `随机模板：还需至少两套后端核验候选（当前 ${count} 套）；当前按钮只登记请求。`,
+    '3_fixed_template': '固定模板：选一个后端核验母版；当前按钮只登记请求。'
+  })[mode] || '';
+  const cdpMode = document.getElementById('gptContentTemplateMode')?.value || '';
+  const cdpHint = document.getElementById('gptContentTemplateModeHint');
+  const cdpCount = selectedCount('cdpProductionTemplates');
+  if (cdpHint) cdpHint.textContent = describe(cdpMode, cdpCount);
+  const codexMode = document.getElementById('codexContentTemplateMode')?.value || '';
+  const codexHint = document.getElementById('codexContentTemplateModeHint');
+  const codexCount = selectedCount('codexProductionTemplates');
+  if (codexHint) codexHint.textContent = describe(codexMode, codexCount);
+  const geminiMode = document.getElementById('geminiContentTemplateMode')?.value || '';
+  const geminiHint = document.getElementById('geminiContentTemplateModeHint');
+  const geminiCount = selectedCount('geminiProductionTemplates');
+  if (geminiHint) geminiHint.textContent = `${describe(geminiMode, geminiCount)} Gemini 团建产线已停用，仅保留历史记录。`;
+  const entries = selectedGptTestEntries();
+  const materialName = document.getElementById('geminiSelectedMaterial');
+  const materialMeta = document.getElementById('geminiSelectedMaterialMeta');
+  if (materialName) materialName.textContent = entries.length === 1
+    ? (entries[0].item.name || entries[0].category?.name || '已选择一个素材文件夹')
+    : entries.length > 1 ? `当前选中 ${entries.length} 个素材项` : '尚未选择';
+  if (materialMeta) materialMeta.textContent = entries.length === 1
+    ? `一个完整素材文件夹 · ${entries[0].item.images?.length || entries[0].item.attachments?.length || 0} 张源图`
+    : entries.length > 1 ? '一次只允许登记一个完整素材文件夹' : '从素材库选择一个完整作品文件夹';
+  const productionSelector = document.getElementById('geminiProductionTemplates');
+  const templates = productionSelector
+    ? Array.from(productionSelector.selectedOptions || []).filter((option) => option.value)
+      .map((option) => ({ id: option.value, name: option.textContent || option.value }))
+    : selectedGptTestTemplates();
+  const selectedTemplate = templates.length === 1 ? templates[0] : null;
+  const templateName = document.getElementById('geminiSelectedTemplate');
+  const templateDesc = document.getElementById('geminiTemplateDesc');
+  if (templateName) templateName.textContent = selectedTemplate
+    ? `${selectedTemplate.name || selectedTemplate.title || '已选母版'} · ${selectedTemplate.id}`
+    : templates.length > 1 ? `已选 ${templates.length} 套候选母版` : '尚未选择';
+  if (templateDesc) templateDesc.textContent = geminiMode === '2_random_template'
+    ? `随机模式需要至少两套候选；当前选择 ${templates.length} 套`
+    : templates.length === 1 ? '一个真实母版；提交时由服务端再次核验' : '固定模式需要一个真实母版';
 }
 
 function normalizeGptAttachmentPath(value = "") {
@@ -10566,6 +10718,12 @@ function updateGptAssistantBubble(message = "") {
   const works = gptProductionWorkCount();
   const account = gptAccounts.find((item) => item.id === String(activeGptAccountId));
   const quota = (gptQuotaSnapshots.get(String(activeGptAccountId)) || gptQuotaSnapshot)?.status;
+  const quotaView = window.TBGptQuotaView?.createQuotaViewModel(
+    quota,
+    account?.name || "当前账号窗口",
+    { ...account, enabled: gptAutoSettings.quotaReminderEnabled !== false }
+  );
+  renderGptQuotaSummary(quotaView);
   const runtime = readGptWindowRuntime(activeGptAccountId);
   const productionStatus = resolveCurrentProductionStatus();
   const globalMessage = productionStatus.code === "preview"
@@ -10577,9 +10735,9 @@ function updateGptAssistantBubble(message = "") {
         : "")));
   const setNumber = Number(runtime.currentSetNumber || 0);
   const stage = String(runtime.currentStage || "").trim();
-  const windowMessage = quota
-    ? `${account?.name || "当前账号窗口"}：近${quota.settings?.windowHours || 3}小时上传 ${quota.uploaded || 0} 张、已生图 ${quota.generated || 0} 张`
-    : `${account?.name || "当前账号窗口"}：近3小时用量等待同步`;
+  const windowMessage = quotaView
+    ? `${quotaView.title}：${quotaView.uploadLabel}；${quotaView.generationLabel}`
+    : `${account?.name || "当前账号窗口"}：本地额度用量等待同步`;
   // Continuous mode status: show armed state, next probe time and work window
   let continuousStatus = "";
   if (isContinuousGptMode()) {
@@ -10621,6 +10779,25 @@ function updateGptAssistantBubble(message = "") {
   }
 }
 
+function renderGptQuotaSummary(model = null) {
+  const host = $("#gptQuotaSummary");
+  if (!host) return;
+  const account = gptAccounts.find((item) => item.id === String(activeGptAccountId));
+  const view = model || window.TBGptQuotaView?.createQuotaViewModel(
+    gptQuotaSnapshots.get(String(activeGptAccountId))?.status || null,
+    account?.name || "当前账号窗口",
+    { ...account, enabled: gptAutoSettings.quotaReminderEnabled !== false }
+  );
+  if (!view) return;
+  host.dataset.state = view.state;
+  $("#gptQuotaSummaryTitle").textContent = view.title;
+  $("#gptQuotaSummaryWindow").textContent = `滚动 ${view.windowHours} 小时 · 当前账号窗口`;
+  $("#gptQuotaSummaryUploads").textContent = view.uploadLabel;
+  $("#gptQuotaSummaryGenerations").textContent = view.generationLabel;
+  $("#gptQuotaSummaryExpiry").textContent = view.nextExpiryLabel;
+  $("#gptQuotaSummaryNote").textContent = view.note;
+}
+
 async function refreshGptQuota(accountId = activeGptAccountId, options = {}) {
   const key = String(accountId || activeGptAccountId);
   const syncBrowser = options.syncBrowser !== false;
@@ -10638,6 +10815,7 @@ async function refreshGptQuota(accountId = activeGptAccountId, options = {}) {
     gptQuotaSnapshots.set(key, snapshot);
     if (key === String(activeGptAccountId)) gptQuotaSnapshot = snapshot;
   } catch {
+    gptQuotaSnapshots.delete(key);
     if (key === String(activeGptAccountId)) gptQuotaSnapshot = null;
   }
   if (key === String(activeGptAccountId) && syncBrowser && window.gptWorkbench?.available) {
@@ -10769,10 +10947,7 @@ async function reconcileStaleGptQuotaBoundary(accountId, task, expectedProbeAt) 
 }
 
 function isActualGptLimitMessage(message = "") {
-  const text = String(message || "");
-  if (/(?:未|无法|不能)判定.{0,16}(?:额度|触顶|上限|限制)|(?:不是|不属于).{0,12}(?:额度|触顶|上限|限制)/i.test(text)) return false;
-  return /(达到|已达|超出|没有更多|用完|不足|上限|上传未完整|附件尚未全部就绪|稍后再试|请在.*后|try again later|rate limit|upload limit|generation limit|too many requests)/i.test(text)
-    && /(额度|限制|上传|生成|图片|请求|limit|quota|rate)/i.test(text);
+  return window.TBGptQuotaView?.isExplicitQuotaLimitSignal?.(message) === true;
 }
 
 function isGptRetryLimitSignal(message = "", task = {}) {
@@ -11811,6 +11986,7 @@ async function renameGptAccount(accountId) {
   }
   saveGptAccounts();
   renderGptAccountTabs();
+  if (typeof syncTopbarAbcdActive === 'function') syncTopbarAbcdActive(account.id);
   renderGptBrowserManager();
   showWorkbenchAssistantBubble(`账号窗口已重命名为“${cleanName}”。`);
 }
@@ -12275,11 +12451,20 @@ function getCdpGatewayBase() {
 }
 
 function getCurrentInstanceCdpPort() {
+  if (typeof activeGptAccountId === 'string') {
+    if (activeGptAccountId === 'account-1' || activeGptAccountId.toLowerCase().includes('a')) return 9431;
+    if (activeGptAccountId === 'account-2' || activeGptAccountId.toLowerCase().includes('b')) return 9432;
+    if (activeGptAccountId === 'account-3' || activeGptAccountId.toLowerCase().includes('c')) return 9433;
+    if (activeGptAccountId === 'account-4' || activeGptAccountId.toLowerCase().includes('d')) return 9434;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const paramPort = Number(params.get('cdpPort') || params.get('port'));
+  if ([9431, 9432, 9433, 9434].includes(paramPort)) return paramPort;
   const p = window.location.port;
   if (p === "4331") return 9431;
   if (p === "4333") return 9433;
   if (p === "4334") return 9434;
-  return 9432;
+  return 9431;
 }
 
 async function refreshCdpLiveFrame() {
@@ -12479,31 +12664,47 @@ function bindCdpViewportEvents() {
       } catch (_) {}
     });
 
-    wrapper.addEventListener("wheel", async (e) => {
+    let wheelThrottleTimer = null;
+    let accumulatedDeltaY = 0;
+    let wheelDebounceTimer = null;
+    let lastWheelPoint = null;
+
+    wrapper.addEventListener("wheel", (e) => {
       if (!cdpInteractiveEnabled) return;
       const point = screenPoint(e);
       if (!point) return;
       e.preventDefault();
-      const rect = img.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const clickY = e.clientY - rect.top;
-      const scaleX = (img.naturalWidth || 1280) / rect.width;
-      const scaleY = (img.naturalHeight || 800) / rect.height;
+      lastWheelPoint = point;
+      accumulatedDeltaY += e.deltaY;
 
-      try {
-        await fetch(`${getCdpGatewayBase()}/input`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type: "wheel",
-            x: point.x,
-            y: point.y,
-            deltaY: e.deltaY > 0 ? 120 : -120,
-            port: getCurrentInstanceCdpPort()
-          })
-        });
-        setTimeout(refreshCdpLiveFrame, 350);
-      } catch (_) {}
+      // 毫秒级防抖节流：每 50ms 最多聚合派发一次物理滚轮，彻底终结滚动卡顿
+      if (!wheelThrottleTimer) {
+        wheelThrottleTimer = setTimeout(async () => {
+          wheelThrottleTimer = null;
+          const dy = accumulatedDeltaY;
+          accumulatedDeltaY = 0;
+          if (dy === 0) return;
+          try {
+            await fetch(`${getCdpGatewayBase()}/input`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: "wheel",
+                x: lastWheelPoint.x,
+                y: lastWheelPoint.y,
+                deltaY: dy > 0 ? Math.min(dy, 360) : Math.max(dy, -360),
+                port: getCurrentInstanceCdpPort()
+              })
+            });
+          } catch (_) {}
+        }, 50);
+      }
+
+      // 滚动停顿 120ms 后刷新高清实机画面，滚动过程中杜绝重复图像解码
+      clearTimeout(wheelDebounceTimer);
+      wheelDebounceTimer = setTimeout(() => {
+        refreshCdpLiveFrame();
+      }, 120);
     }, { passive: false });
   }
 }
@@ -12513,8 +12714,12 @@ async function navigateEmbeddedGpt(action, targetUrl = "", accountId = activeGpt
     fetch(`${getCdpGatewayBase()}/action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, port: getCurrentInstanceCdpPort() })
-    }).then(response => { if (!response.ok) throw new Error('网页导航失败'); setTimeout(refreshCdpLiveFrame, 400); }).catch(error => showWorkbenchAssistantBubble(error.message, { tone: 'warning' }));
+      body: JSON.stringify({ action, url: targetUrl, port: getCurrentInstanceCdpPort() })
+    }).then(response => {
+      if (!response.ok) throw new Error('网页导航失败');
+      if (targetUrl) syncGptBrowserAddress(targetUrl);
+      setTimeout(refreshCdpLiveFrame, 500);
+    }).catch(error => showWorkbenchAssistantBubble(error.message, { tone: 'warning' }));
     return;
   }
   const state = $("#gptEmbeddedState");
@@ -17305,8 +17510,8 @@ function selectedProductionMaterials() {
 function renderProductionMode() {
   const inferred = window.MaterialWorkspace.inferSelectionMode(selectedProductionMaterials());
   if (!activeProductionPlan) {
-    if ($("#createProductionPlanBtn")) $("#createProductionPlanBtn").textContent = "开始生产";
-    if ($("#workbenchStartProductionBtn")) $("#workbenchStartProductionBtn").textContent = "开始生产";
+    if ($("#createProductionPlanBtn")) $("#createProductionPlanBtn").textContent = "生成生产计划";
+    if ($("#workbenchStartProductionBtn")) $("#workbenchStartProductionBtn").textContent = "生成生产计划";
   }
   if ($("#workbenchSelectionMode")) $("#workbenchSelectionMode").textContent = inferred.workCount
     ? `已选择 ${inferred.workCount} 个帖子文件夹`
@@ -17326,11 +17531,11 @@ function invalidateProductionPlan() {
   }
   if ($("#workbenchEditPlanBtn")) $("#workbenchEditPlanBtn").hidden = true;
   if ($("#workbenchStartProductionBtn")) {
-    $("#workbenchStartProductionBtn").textContent = "开始生产";
+    $("#workbenchStartProductionBtn").textContent = "生成生产计划";
     $("#workbenchStartProductionBtn").disabled = false;
   }
   if ($("#createProductionPlanBtn")) {
-    $("#createProductionPlanBtn").textContent = "开始生产";
+    $("#createProductionPlanBtn").textContent = "生成生产计划";
     $("#createProductionPlanBtn").disabled = false;
   }
   if ($("#cancelProductionPlanBtn")) $("#cancelProductionPlanBtn").hidden = true;
@@ -28415,7 +28620,7 @@ function renderSettingsHome() {
     accountSummary.textContent = `${enabledAccounts.length}/${visibleAccounts.length} 个已启用${activeAccount?.name ? ` · 当前 ${activeAccount.name}` : ""}`;
   }
   if (quotaSummary) {
-    quotaSummary.textContent = `${Number(gptAutoSettings.generationLimit || 45)} 张 / ${Number(gptAutoSettings.windowHours || 3)} 小时 · 当前作品先收尾`;
+    quotaSummary.textContent = `${Number(gptAutoSettings.generationLimit || 50)} 张 / ${Number(gptAutoSettings.windowHours || 3)} 小时 · 当前作品先收尾`;
   }
   if (runSummary) {
     runSummary.textContent = `${productionStatus.label} · ${productionStatus.message}`;
@@ -29982,6 +30187,7 @@ function bindEvents() {
       gptTestQueueIndex = 0;
       persistActiveGptWindowSelections();
       renderGptTestTemplates();
+      refreshProductionTemplateModeHints();
       return;
     }
     const jump = event.target.closest("[data-jump]");
@@ -31725,7 +31931,7 @@ function bindEvents() {
   });
   $("#workbenchEditPlanBtn")?.addEventListener("click", () => {
     invalidateProductionPlan();
-    setProductionLiveStatus("已返回调整。修改页数、质量或本批要求后，再点击开始生产。", "", 0, "等待调整");
+    setProductionLiveStatus("已返回调整。修改页数、质量或本批要求后，再点击生成生产计划。", "", 0, "等待调整");
   });
   $("#workbenchRefreshProductsBtn")?.addEventListener("click", () => loadProductionWorkspace().catch((error) => showSystemNotice("成品库刷新失败", error.message, { tone: "danger" })));
   $("#workbenchPackBtn")?.addEventListener("click", () => packSelectedProductionWorks().catch((error) => showSystemNotice("没有完成打包", error.message, { tone: "danger" })));
@@ -33066,10 +33272,409 @@ window.setTimeout(() => {
 }, 4000);
 
 // ========================================================
-// THREE PRODUCTION LINES & POSTMESSAGE BRIDGE (2026-10-01)
-// Line 1: CDP (ChatGPT Web) | Line 2: Gemini | Line 3: Codex
+// TWO PRODUCTION LINES & POSTMESSAGE BRIDGE (2026-10-01)
+// Online mode (GPT Web/CDP, instances A/B) and local mode (Codex client); Gemini remains read-only history.
 // ========================================================
 (function initProductionLinesBridge() {
+  let codexManualPromptMode = "setup";
+
+  function refreshCodexManualPrompt() {
+    const preview = document.getElementById("codexManualPromptPreview");
+    const copyButton = document.getElementById("codexCopyManualPromptBtn");
+    const status = document.getElementById("codexManualPromptStatus");
+    if (!preview || !window.TBFixedTemplateSession) return;
+    const templates = selectedGptTestTemplates();
+    const entries = selectedGptTestEntries();
+    const template = templates.length === 1 ? templates[0] : null;
+    const entry = entries.length === 1 ? entries[0] : null;
+    const sourceFiles = entry?.item?.images || entry?.item?.attachments || [];
+    const prompt = codexManualPromptMode === "material"
+      ? window.TBFixedTemplateSession.buildMaterialPrompt({
+        template: template || {}, sourcePath: entry?.item?.path || "", sourceFiles
+      })
+      : window.TBFixedTemplateSession.buildTemplateSetupPrompt({ template: template || {} });
+    preview.value = prompt.text;
+    if (copyButton) copyButton.disabled = !prompt.ready;
+    if (status) {
+      status.dataset.state = prompt.ready ? "neutral" : "error";
+      status.textContent = prompt.status;
+    }
+    document.querySelectorAll("[data-codex-manual-prompt-mode]").forEach((button) => {
+      const active = button.dataset.codexManualPromptMode === codexManualPromptMode;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  function currentCodexRequestSelection() {
+    const entries = selectedGptTestEntries();
+    const mode = document.getElementById('codexContentTemplateMode')?.value || '';
+    const templates = selectedProductionTemplates('codex-api', mode);
+    return {
+      pipeline: 'codex-api',
+      mode,
+      sourcePath: entries.length === 1 ? entries[0].item.path : '',
+      templateId: templates.length === 1 ? templates[0].id : '',
+      templateCandidates: templates.map((template) => template.id)
+    };
+  }
+
+  let productionStateSnapshot = null;
+  async function readFreshProductionStateForRequest() {
+    try {
+      const snapshot = await apiWithTimeout('/api/production/state', {}, 10000);
+      const contractMismatch = window.TBProductionRequest?.stateSnapshotMismatch?.(snapshot);
+      if (contractMismatch) throw new Error(contractMismatch);
+      if (!window.TBProductionRequest?.validateStateSnapshot?.(snapshot)) {
+        throw new Error('统一状态快照与前端合同不一致');
+      }
+      productionStateSnapshot = snapshot;
+      return snapshot;
+    } catch (error) {
+      // Never let a stale cached snapshot authorize a new production request.
+      productionStateSnapshot = null;
+      throw error;
+    }
+  }
+  function cdpPipelineFromCurrentIdentity() {
+    let identity = '';
+    try { identity = String(contentInstanceId() || '').trim().toLowerCase(); } catch (_) {}
+    return identity === 'a' || identity === 'b' ? `cdp-${identity}` : '';
+  }
+
+  function productionTemplateSelect(pipeline) {
+    const id = pipeline === 'codex-api' ? 'codexProductionTemplates'
+      : pipeline === 'gemini' ? 'geminiProductionTemplates' : 'cdpProductionTemplates';
+    return document.getElementById(id);
+  }
+
+  function selectedProductionTemplates(pipeline, mode) {
+    const select = productionTemplateSelect(pipeline);
+    if (!select) return [];
+    return Array.from(select.selectedOptions || []).filter((option) => option.value)
+      .map((option) => ({ id: option.value, name: option.textContent || option.value }));
+  }
+
+  function syncProductionTemplateSelectors(snapshot) {
+    const helper = window.TBProductionRequest;
+    const valid = helper?.validateStateSnapshot?.(snapshot) === true;
+    const bindings = [
+      [cdpPipelineFromCurrentIdentity(), 'gptContentTemplateMode', 'cdpProductionTemplates'],
+      ['codex-api', 'codexContentTemplateMode', 'codexProductionTemplates'],
+      ['gemini', 'geminiContentTemplateMode', 'geminiProductionTemplates']
+    ];
+    for (const [pipeline, modeId, selectId] of bindings) {
+      const select = document.getElementById(selectId);
+      if (!select) continue;
+      const mode = document.getElementById(modeId)?.value || '';
+      const capability = valid ? helper.capabilityFor(snapshot, pipeline, mode) : null;
+      const templates = capability?.registration?.templateOptions || [];
+      const selected = new Set(Array.from(select.selectedOptions || []).map((option) => option.value));
+      select.multiple = mode === '2_random_template';
+      select.replaceChildren();
+      if (!templates.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = valid ? '后端没有可用的真实 P1/P2 母版' : '正在读取后端模板目录…';
+        option.disabled = true;
+        select.append(option);
+        select.disabled = true;
+        continue;
+      }
+      templates.forEach((template) => {
+        const option = document.createElement('option');
+        option.value = template.id;
+        option.textContent = `${template.label} · ${template.id}`;
+        option.selected = selected.has(template.id);
+        select.append(option);
+      });
+      select.disabled = !valid;
+    }
+    refreshCodexStudioSelection();
+  }
+
+  function syncProductionModeSelectors(snapshot) {
+    const modes = snapshot?.catalog?.modes;
+    if (!Array.isArray(modes) || !modes.length) return;
+    const savedCodexMode = window.TBProductionRequest?.savedModeFor?.(snapshot, 'codex-api');
+    ['gptContentTemplateMode', 'codexContentTemplateMode', 'geminiContentTemplateMode'].forEach((id) => {
+      const select = document.getElementById(id);
+      if (!select) return;
+      select.dataset ||= {};
+      const selectedValue = select.value;
+      const options = modes.map((mode, index) => {
+        const option = document.createElement('option');
+        option.value = mode.id;
+        option.textContent = `${index + 1} · ${mode.label}`;
+        return option;
+      });
+      select.replaceChildren(...options);
+      const persistedValue = id === 'codexContentTemplateMode' && !select.dataset.userTouched
+        ? savedCodexMode?.mode : null;
+      select.value = modes.some((mode) => mode.id === persistedValue) ? persistedValue
+        : modes.some((mode) => mode.id === selectedValue) ? selectedValue : modes[0].id;
+    });
+  }
+
+  function renderProductionCapabilityMatrix(containerId, pipeline, snapshot) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.replaceChildren();
+    const helper = window.TBProductionRequest;
+    const valid = helper?.validateStateSnapshot?.(snapshot) === true;
+    const modes = valid ? snapshot.catalog.modes : [];
+    const title = document.createElement('strong');
+    title.textContent = '三种模式 · 后端回读';
+    container.append(title);
+    if (!valid || !pipeline) {
+      const unknown = document.createElement('p');
+      unknown.textContent = '当前产线实例或服务端状态未核实；本区域操作保持关闭。';
+      container.append(unknown);
+      return;
+    }
+    modes.forEach((mode) => {
+      const capability = helper.capabilityFor(snapshot, pipeline, mode.id);
+      const row = document.createElement('div');
+      row.className = 'production-capability-row';
+      row.dataset.mode = mode.id;
+      row.dataset.state = capability?.execution?.state || 'UNVERIFIED';
+      const heading = document.createElement('strong');
+      heading.textContent = mode.label;
+      const registration = document.createElement('small');
+      registration.textContent = `登记：${capability?.registration?.label || '未核实'}`;
+      const execution = document.createElement('small');
+      execution.textContent = `执行：${capability?.execution?.label || '未核实'}`;
+      const reason = document.createElement('small');
+      reason.textContent = capability?.execution?.reason || '没有匹配的后端能力回执。';
+      row.append(heading, registration, execution, reason);
+      container.append(row);
+    });
+    const asOf = document.createElement('small');
+    asOf.className = 'production-capability-asof';
+    asOf.textContent = `状态回读：${new Date(snapshot.asOfUtc).toLocaleString()}`;
+    container.append(asOf);
+  }
+
+  function updateProductionCapabilityView(snapshot = productionStateSnapshot) {
+    const helper = window.TBProductionRequest;
+    const snapshotReady = helper?.validateStateSnapshot?.(snapshot) === true;
+    const cdpLine = cdpPipelineFromCurrentIdentity();
+    const cdpModeSelector = document.getElementById('gptContentTemplateMode');
+    const codexModeSelector = document.getElementById('codexContentTemplateMode');
+    const geminiModeSelector = document.getElementById('geminiContentTemplateMode');
+    if (cdpModeSelector) cdpModeSelector.disabled = !snapshotReady || !cdpLine;
+    if (codexModeSelector) codexModeSelector.disabled = !snapshotReady;
+    if (geminiModeSelector) geminiModeSelector.disabled = true;
+    syncProductionTemplateSelectors(snapshot);
+    refreshProductionTemplateModeHints();
+    const apply = (noteId, buttonId, pipeline, mode) => {
+      const note = document.getElementById(noteId);
+      const button = document.getElementById(buttonId);
+      const capability = helper?.capabilityFor?.(snapshot, pipeline, mode);
+      if (note) {
+        note.dataset.state = capability ? String(capability.execution.state || 'unverified').toLowerCase() : 'unverified';
+        const selectedTemplates = selectedProductionTemplates(pipeline, mode);
+        const selectionReady = mode === '2_random_template' ? selectedTemplates.length >= 2 : selectedTemplates.length === 1;
+        const selectionHint = capability?.registration?.state === 'READY' && !selectionReady
+          ? (mode === '2_random_template' ? '；请从后端母版列表至少选两套' : '；请从后端母版列表选一套') : '';
+        note.textContent = capability
+          ? `登记：${capability.registration.label}${selectionHint}；执行：${capability.execution.label}。${capability.execution.reason || ''}`
+          : '后端状态未读取；登记能力和实际执行能力均未核实。请刷新状态后再操作。';
+      }
+      if (button) {
+        const selectedTemplates = selectedProductionTemplates(pipeline, mode);
+        const selectionReady = mode === '2_random_template' ? selectedTemplates.length >= 2 : selectedTemplates.length === 1;
+        const canRegister = capability?.registration?.state === 'READY'
+          && selectionReady && selectedGptTestEntries().length === 1;
+        button.disabled = !canRegister;
+        button.title = canRegister ? '后端已确认可登记；登记不代表开始生图。'
+          : capability?.registration?.label || '正在等待后端状态回读。';
+      }
+    };
+    apply('gptModeExecutionCapability', 'cdpPrepareRequestBtn', cdpLine,
+      cdpModeSelector?.value || '');
+    apply('codexModeExecutionCapability', 'codexStartProductionBtn', 'codex-api',
+      codexModeSelector?.value || '');
+    apply('geminiModeExecutionCapability', 'geminiPrepareRequestBtn', 'gemini',
+      geminiModeSelector?.value || '');
+    renderProductionCapabilityMatrix('gptCapabilityMatrix', cdpLine, snapshot);
+    renderProductionCapabilityMatrix('codexCapabilityMatrix', 'codex-api', snapshot);
+    renderProductionCapabilityMatrix('geminiCapabilityMatrix', 'gemini', snapshot);
+  }
+
+  function updateCodexRequestList(records, omittedInvalidCount = 0) {
+    const list = document.getElementById('codexRequestList');
+    const status = document.getElementById('codexRequestListStatus');
+    if (!list) return;
+    list.replaceChildren();
+    const currentStateSnapshot = typeof productionStateSnapshot === 'undefined' ? null : productionStateSnapshot;
+    const models = (Array.isArray(records) ? records : [])
+      .filter((record) => record?.pipeline === 'codex-api')
+      .map((record) => window.TBProductionRequest?.requestViewModel?.(record, currentStateSnapshot))
+      .filter(Boolean);
+    if (models.length) {
+      models.forEach((model) => {
+        const article = document.createElement('article');
+        article.className = 'codex-request-row';
+        const title = document.createElement('strong');
+        title.textContent = model.sourceName;
+        const badge = document.createElement('span');
+        badge.className = 'codex-request-state';
+        badge.textContent = model.statusLabel;
+        const meta = document.createElement('small');
+        const templateSummary = model.mode === '2_random_template'
+          ? `候选 ${model.candidateCount} 套 · 抽中 ${model.templateId}` : `母版 ${model.templateId}`;
+        meta.textContent = `${model.modeLabel} · ${model.sourceCount} 张源图 · ${templateSummary} · ${model.lifecycleSummary} · 当前执行：${model.executionLabel}${model.modifiedAt ? ` · ${new Date(model.modifiedAt).toLocaleString()}` : ''}`;
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = `请求 ${model.shortId} · ${model.nextStepLabel}`;
+        const sourcePath = document.createElement('code');
+        sourcePath.textContent = `素材：${model.sourcePath}`;
+        const requestPath = document.createElement('code');
+        requestPath.textContent = `凭证：${model.requestPath}`;
+        details.append(summary, sourcePath, requestPath);
+        const handoff = document.createElement('button');
+        handoff.type = 'button';
+        handoff.textContent = '复制任务给 Codex';
+        handoff.addEventListener('click', async () => {
+          try {
+            const prompt = window.TBProductionRequest.operatorPrompt(model.id, window.location.origin);
+            await navigator.clipboard.writeText(prompt);
+            handoff.textContent = '已复制，粘贴到 Codex 对话即可接手';
+          } catch (error) {
+            handoff.textContent = '复制失败：' + error.message;
+          }
+        });
+        details.append(handoff);
+        article.append(title, badge, meta, details);
+        list.append(article);
+      });
+      if (status) {
+        status.dataset.state = 'success';
+        const asOf = currentStateSnapshot?.asOfUtc ? `；统一后端快照 ${new Date(currentStateSnapshot.asOfUtc).toLocaleString()}` : '';
+        const phaseCounts = models.reduce((counts, model) => {
+          counts[model.statusLabel] = (counts[model.statusLabel] || 0) + 1;
+          return counts;
+        }, {});
+        const phaseSummary = Object.entries(phaseCounts).map(([label, count]) => `${label} ${count}`).join('；');
+        status.textContent = `已回读 ${models.length} 条请求：${phaseSummary}${asOf}。${omittedInvalidCount ? `另有 ${omittedInvalidCount} 条无效记录已隐藏。` : ''}`;
+      }
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'codex-empty-state';
+      const number = document.createElement('span');
+      number.textContent = '01';
+      const message = document.createElement('p');
+      message.textContent = '目前没有有效登记记录。登记请求不等于已经开始生产。';
+      empty.append(number, message);
+      list.append(empty);
+      if (status) {
+        status.dataset.state = 'neutral';
+        status.textContent = omittedInvalidCount
+          ? `未找到有效请求；已隐藏 ${omittedInvalidCount} 条无效记录。`
+          : '已回读请求台账，当前没有有效登记记录。';
+      }
+    }
+    const panel = document.getElementById('codexProductionPanel');
+    const selection = currentCodexRequestSelection();
+    const matchingRequest = window.TBProductionRequest?.findMatchingRequest?.((records || []).filter((record) => record?.pipeline === 'codex-api'), selection);
+    if (panel) {
+      panel.dataset.requestSavedFor = matchingRequest
+        ? (window.TBProductionRequest?.selectionKey?.(selection) || '')
+        : '';
+    }
+    refreshCodexStudioSelection();
+  }
+
+  function updateGeminiRequestList(records, omittedInvalidCount = 0) {
+    const list = document.getElementById('geminiRequestList');
+    const status = document.getElementById('geminiRequestLedgerStatus');
+    if (!list) return;
+    list.replaceChildren();
+    const currentStateSnapshot = typeof productionStateSnapshot === 'undefined' ? null : productionStateSnapshot;
+    const models = (Array.isArray(records) ? records : [])
+      .filter((record) => record?.pipeline === 'gemini')
+      .map((record) => window.TBProductionRequest?.requestViewModel?.(record, currentStateSnapshot))
+      .filter(Boolean);
+    if (!models.length) {
+      const empty = document.createElement('p');
+      empty.className = 'codex-empty-state';
+      empty.textContent = currentStateSnapshot
+        ? '目前没有已登记的 Gemini 请求。'
+        : '统一后端状态未读取；当前请求记录未知。';
+      list.append(empty);
+      if (status) {
+        status.dataset.state = currentStateSnapshot ? 'neutral' : 'error';
+        status.textContent = currentStateSnapshot
+          ? `已按 Gemini 历史台账回读请求；未生成。${omittedInvalidCount ? `另有 ${omittedInvalidCount} 条无效记录已隐藏。` : ''}`
+          : '读取失败，不能判断 Gemini 请求是否已登记。';
+      }
+      return;
+    }
+    models.forEach((model) => {
+      const row = document.createElement('article');
+      row.className = 'codex-request-row';
+      const title = document.createElement('strong'); title.textContent = model.sourceName;
+      const badge = document.createElement('span'); badge.className = 'codex-request-state'; badge.textContent = model.statusLabel;
+      const meta = document.createElement('small');
+      meta.textContent = `${model.modeLabel} · ${model.sourceCount} 张源图 · ${model.templateId} · ${model.lifecycleSummary} · 执行：${model.executionLabel}`;
+      const details = document.createElement('details');
+      const summary = document.createElement('summary'); summary.textContent = `请求 ${model.shortId} · ${model.nextStepLabel}`;
+      const sourcePath = document.createElement('code'); sourcePath.textContent = `素材：${model.sourcePath}`;
+      const requestPath = document.createElement('code'); requestPath.textContent = `凭证：${model.requestPath}`;
+      details.append(summary, sourcePath, requestPath); row.append(title, badge, meta, details); list.append(row);
+    });
+    if (status) {
+      status.dataset.state = 'success';
+      const phaseCounts = models.reduce((counts, model) => {
+        counts[model.statusLabel] = (counts[model.statusLabel] || 0) + 1;
+        return counts;
+      }, {});
+      status.textContent = `已回读 ${models.length} 条 Gemini 请求：${Object.entries(phaseCounts).map(([label, count]) => `${label} ${count}`).join('；')}。`;
+    }
+  }
+
+  async function refreshCodexRequestCards(button) {
+    if (button?.disabled) return;
+    if (button) button.disabled = true;
+    const status = document.getElementById('codexRequestListStatus');
+    try {
+      if (status) { status.dataset.state = 'neutral'; status.textContent = '正在读取统一产线状态…'; }
+      const result = await apiWithTimeout('/api/production/state', {}, 10000);
+      const contractMismatch = window.TBProductionRequest?.stateSnapshotMismatch?.(result);
+      if (contractMismatch) throw new Error(contractMismatch);
+      if (!window.TBProductionRequest?.validateStateSnapshot?.(result)) throw new Error('统一状态快照与前端合同不一致');
+      productionStateSnapshot = result;
+      syncProductionModeSelectors(result);
+      refreshProductionTemplateModeHints();
+      updateProductionCapabilityView(result);
+      updateCodexRequestList(result.requests, Number(result.omittedInvalidCount) || 0);
+      updateGeminiRequestList(result.requests, Number(result.omittedInvalidCount) || 0);
+    } catch (error) {
+      productionStateSnapshot = null;
+      updateProductionCapabilityView(null);
+      const list = document.getElementById('codexRequestList');
+      if (list) {
+        const empty = document.createElement('div');
+        empty.className = 'codex-empty-state';
+        const number = document.createElement('span'); number.textContent = '!';
+        const message = document.createElement('p');
+        const versionMismatch = String(error?.message || '').startsWith('界面与本机服务版本不一致：');
+        message.textContent = versionMismatch
+          ? error.message
+          : '暂时无法回读统一产线状态。登记能力、执行能力与请求进度均未核实；不能认定作品已开始生产。';
+        empty.append(number, message); list.replaceChildren(empty);
+      }
+      const geminiStatus = document.getElementById('geminiRequestLedgerStatus');
+      const geminiList = document.getElementById('geminiRequestList');
+      if (geminiStatus) { geminiStatus.dataset.state = 'error'; geminiStatus.textContent = `回读失败：${error.message || '本机服务未响应'}`; }
+      if (geminiList) geminiList.replaceChildren();
+      if (status) { status.dataset.state = 'error'; status.textContent = `回读失败：${error.message || '本机服务未响应'}`; }
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
   function switchProdLine(targetLine) {
     const tabs = document.querySelectorAll('#prodLinesTabs button');
     tabs.forEach(tab => {
@@ -33086,6 +33691,8 @@ window.setTimeout(() => {
     const codexPanel = document.getElementById('codexProductionPanel');
 
     if (targetLine === 'cdp') {
+      refreshCodexRequestCards();
+      updateProductionCapabilityView();
       if (cdpGrid) {
         cdpGrid.hidden = false;
         cdpGrid.style.setProperty('display', 'grid', 'important');
@@ -33102,6 +33709,8 @@ window.setTimeout(() => {
         showEmbeddedGptView().catch(() => {});
       }
     } else if (targetLine === 'gemini') {
+      refreshCodexRequestCards();
+      updateProductionCapabilityView();
       if (cdpGrid) {
         cdpGrid.hidden = true;
         cdpGrid.style.setProperty('display', 'none', 'important');
@@ -33127,10 +33736,14 @@ window.setTimeout(() => {
         codexPanel.hidden = false;
         codexPanel.style.setProperty('display', 'flex', 'important');
       }
+      refreshCodexStudioSelection();
+      refreshCodexRequestCards();
     }
   }
 
   window.switchProdLine = switchProdLine;
+  window.switchGptAccount = switchGptAccount;
+  window.addGptAccount = addGptAccount;
   if (typeof applyTheme === 'function') {
     window.applyTheme = applyTheme;
   }
@@ -33151,17 +33764,176 @@ window.setTimeout(() => {
     }
   });
 
-  // Gemini actions
-  document.getElementById('geminiRefreshBtn')?.addEventListener('click', () => {
-    const frame = document.getElementById('geminiDashFrame');
-    if (frame) frame.src = frame.src;
-  });
-
-  document.getElementById('geminiOpenGateBtn')?.addEventListener('click', () => {
-    window.open('http://127.0.0.1:8820', '_blank');
-  });
-
   // Codex actions
+  window.refreshCodexManualPrompt = refreshCodexManualPrompt;
+  document.querySelectorAll("[data-codex-manual-prompt-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      codexManualPromptMode = button.dataset.codexManualPromptMode === "material" ? "material" : "setup";
+      refreshCodexManualPrompt();
+    });
+  });
+  document.getElementById("codexCopyManualPromptBtn")?.addEventListener("click", async () => {
+    const preview = document.getElementById("codexManualPromptPreview");
+    const status = document.getElementById("codexManualPromptStatus");
+    if (!preview?.value) return;
+    try {
+      await navigator.clipboard.writeText(preview.value);
+      if (status) { status.dataset.state = "success"; status.textContent = "指令已复制。请在 Codex 对话手动附上对应图片/完整素材；面板没有代发或生图。"; }
+    } catch (error) {
+      if (status) { status.dataset.state = "error"; status.textContent = `复制失败：${error.message || "剪贴板不可用"}。可手动选中预览文字复制。`; }
+    }
+  });
+  function syncCdpStrategyTabs(mode) {
+    // 联动左侧发送区按钮
+    const tabs = document.querySelectorAll('#cdpStrategyTabsRow .strategy-tab-btn');
+    tabs.forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.strategy === mode);
+    });
+    // 联动顶部核心生产模式总控条
+    const topPills = document.querySelectorAll('#topStrategySegmented .strategy-pill-btn');
+    topPills.forEach((pill) => {
+      pill.classList.toggle('active', pill.dataset.strategy === mode);
+    });
+    const pickerContainer = document.getElementById('cdpProductionTemplatePickerContainer');
+    const notice = document.getElementById('cdpReplicaShuffleNotice');
+    if (mode === '1_replica_shuffle') {
+      if (pickerContainer) pickerContainer.style.display = 'none';
+      if (notice) notice.style.display = 'flex';
+      // 自动对齐 V6 单窗口直出复刻调度
+      const prodModeSelect = document.getElementById('gptProductionMode');
+      if (prodModeSelect && prodModeSelect.value !== 'replicate') {
+        prodModeSelect.value = 'replicate';
+        prodModeSelect.dispatchEvent(new Event('change'));
+      }
+    } else {
+      if (pickerContainer) pickerContainer.style.display = 'flex';
+      if (notice) notice.style.display = 'none';
+    }
+  }
+
+  // 绑定发送区与顶部总控条点击事件
+  function handleStrategyClick(e, btn) {
+    e.preventDefault();
+    const strategy = btn.dataset.strategy;
+    const select = document.getElementById('gptContentTemplateMode');
+    if (select && strategy) {
+      select.value = strategy;
+      select.dispatchEvent(new Event('change'));
+    }
+    syncCdpStrategyTabs(strategy);
+  }
+
+  document.querySelectorAll('#cdpStrategyTabsRow .strategy-tab-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => handleStrategyClick(e, btn));
+  });
+
+  document.querySelectorAll('#topStrategySegmented .strategy-pill-btn').forEach((pill) => {
+    pill.addEventListener('click', (e) => handleStrategyClick(e, pill));
+  });
+
+  document.getElementById('gptContentTemplateMode')?.addEventListener('change', () => {
+    const mode = document.getElementById('gptContentTemplateMode')?.value || '';
+    syncCdpStrategyTabs(mode);
+    refreshProductionTemplateModeHints();
+    updateProductionCapabilityView();
+  });
+  syncCdpStrategyTabs(document.getElementById('gptContentTemplateMode')?.value || '3_fixed_template');
+  document.getElementById('codexContentTemplateMode')?.addEventListener('change', () => {
+    const selector = document.getElementById('codexContentTemplateMode');
+    if (selector?.dataset) selector.dataset.userTouched = 'true';
+    refreshProductionTemplateModeHints();
+    updateProductionCapabilityView();
+    refreshCodexStudioSelection();
+    refreshCodexRequestCards();
+  });
+  ['cdpProductionTemplates', 'codexProductionTemplates'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      refreshProductionTemplateModeHints();
+      updateProductionCapabilityView();
+      refreshCodexStudioSelection();
+    });
+  });
+  refreshProductionTemplateModeHints();
+  updateProductionCapabilityView(null);
+  refreshCodexRequestCards();
+
+  async function refreshOnlinePlans() {
+    const result = await apiWithTimeout('/api/production/plans', {}, 15000);
+    if (!result.ok || !Array.isArray(result.plans)) throw new Error('计划回读未确认');
+    const host = document.getElementById('cdpPlanList');
+    if (!host) return;
+    host.replaceChildren();
+    const pipeline = cdpPipelineFromCurrentIdentity();
+    result.plans.filter(plan => ['cdp-a', 'cdp-b'].includes(pipeline) && ['cdp-a', 'cdp-b'].includes(plan.intent.pipeline)).forEach(plan => {
+      const row = document.createElement('details');
+      const title = document.createElement('summary');
+      const waiting = plan.status === 'AWAITING_MATERIALS';
+      title.textContent = `${plan.displayName || plan.createdAt.slice(0, 16)} · ${waiting ? '等待找到素材' : '计划已保存，等待执行/验收'} · ${plan.progress.selectedSources} 套已选 · ${plan.progress.generatedPendingQa} 套图待质检`;
+      const description = document.createElement('p'); description.textContent = plan.intent.query || '按所选素材制作';
+      const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = '复制计划给 AI';
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(`使用 teambuilding-production-3modes 执行工作台计划。工作台地址：${window.location.origin}；计划编号：${plan.planId}。先 GET /api/production/plans/${plan.planId}，读取原话、素材范围和模板候选。没有素材时先在获准素材库寻找；找不到则保持等待，不能随意换题。每个完整素材文件夹分别准备 production/requests 子任务，再 POST /api/production/plans/${plan.planId}/bind，body 为 {requestId: 子任务编号}。只使用本计划产线及模板候选；已有子任务先续接，不重复生产。逐套完成图片、文案、QA、归档和云端回读。没有真实交付证据不能报完成。`);
+          copy.textContent = '已复制，粘贴到 AI 对话接手';
+        } catch (error) { copy.textContent = '复制失败：' + error.message; }
+      });
+      row.append(title, description, copy); host.append(row);
+    });
+  }
+  document.getElementById('cdpReadPlansBtn')?.addEventListener('click', async () => {
+    try { await refreshOnlinePlans(); }
+    catch (error) { document.getElementById('cdpPlanStatus').textContent = '读取计划失败：' + error.message; }
+  });
+  document.getElementById('cdpCreatePlanBtn')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget, status = document.getElementById('cdpPlanStatus');
+    button.disabled = true;
+    try {
+      const pipeline = cdpPipelineFromCurrentIdentity();
+      const mode = document.getElementById('gptContentTemplateMode')?.value || '';
+      const result = await apiWithTimeout('/api/production/plans', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pipeline, mode, query: document.getElementById('gptTestMaterialSearch')?.value || '',
+          sourcePaths: selectedGptTestEntries().map(entry => entry.item.path),
+          templateIds: selectedProductionTemplates(pipeline, mode).map(template => template.id) })
+      }, 15000);
+      if (!result.ok || !result.planId) throw new Error(result.error || '保存未确认');
+      const readback = await apiWithTimeout('/api/production/plans/' + result.planId, {}, 15000);
+      if (readback.planId !== result.planId) throw new Error('计划回读不一致');
+      status.textContent = result.status === 'AWAITING_MATERIALS'
+        ? '需求已保存，等待 AI 找到合适素材；尚未开始生图。'
+        : `已保存 ${result.progress.selectedSources} 套素材的计划；复制计划给 AI 即可接手，尚未开始生图。`;
+      await refreshOnlinePlans();
+    } catch (error) { status.textContent = '计划未确认：' + error.message; }
+    finally { button.disabled = false; }
+  });
+
+  document.getElementById('cdpPrepareRequestBtn')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    const hint = document.getElementById('gptWorkflowVariantHint');
+    button.disabled = true;
+    try {
+      const line = contentInstanceId().toLowerCase();
+      // Instance identity comes from the served workbench, never account aliases.
+      const pipeline = line === 'a' ? 'cdp-a' : line === 'b' ? 'cdp-b' : '';
+      if (!pipeline) throw new Error('当前界面未提供已核实的 A/B 实例身份');
+      const snapshot = await readFreshProductionStateForRequest();
+      const request = window.TBProductionRequest.payload({ snapshot, pipeline,
+        mode: document.getElementById('gptContentTemplateMode')?.value || '',
+        entries: selectedGptTestEntries(), templates: selectedProductionTemplates(pipeline, document.getElementById('gptContentTemplateMode')?.value || ''),
+        prompt: document.getElementById('gptTestExtraPrompt')?.value || '' });
+      const result = await apiWithTimeout('/api/production/requests/prepare', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request)
+      }, 30000);
+      if (hint) hint.textContent = window.TBProductionRequest.readback(result, snapshot, request.selection);
+    } catch (error) {
+      if (hint) hint.textContent = '登记未确认：' + error.message + '；尚未开始生产。';
+    } finally {
+      if (typeof updateProductionCapabilityView === 'function') updateProductionCapabilityView();
+      else button.disabled = false;
+    }
+  });
+
   document.getElementById('codexCopyPromptBtn')?.addEventListener('click', () => {
     const textarea = document.getElementById('codexPromptPreview');
     if (textarea && textarea.value) {
@@ -33173,19 +33945,70 @@ window.setTimeout(() => {
     }
   });
 
-  document.getElementById('codexStartProductionBtn')?.addEventListener('click', () => {
+  document.getElementById('codexStartProductionBtn')?.addEventListener('click', async (event) => {
     const logNode = document.getElementById('codexLiveOutputLog');
-    if (logNode) {
+    const actionStatus = document.getElementById('codexRequestActionStatus');
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    const append = (message) => {
+      if (!logNode) return;
       const now = new Date().toLocaleTimeString();
-      logNode.textContent += '\n[' + now + '] 制作指令已登记，尚未开始生产；此面板未接入执行器。请复制 Prompt，在已配置的生产入口确认后执行。';
+      logNode.textContent += '\n[' + now + '] ' + message;
       logNode.scrollTop = logNode.scrollHeight;
+    };
+    button.disabled = true;
+    try {
+      const snapshot = await readFreshProductionStateForRequest();
+      const request = window.TBProductionRequest.payload({
+        snapshot, pipeline: 'codex-api', mode: document.getElementById('codexContentTemplateMode')?.value || '', entries: selectedGptTestEntries(),
+        templates: selectedProductionTemplates('codex-api', document.getElementById('codexContentTemplateMode')?.value || ''),
+        prompt: document.getElementById('codexPromptPreview')?.value || ''
+      });
+      append('正在保存本套制作请求，尚未开始生图…');
+      const result = await apiWithTimeout('/api/production/requests/prepare', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request)
+      }, 30000);
+      append(window.TBProductionRequest.readback(result, snapshot, request.selection));
+      if (actionStatus) {
+        actionStatus.dataset.state = 'success';
+        actionStatus.textContent = `请求 ${result.requestId.slice(0, 12)} 已保存并回读 · ${result.sourceCount} 张源图 · 尚未开始生图。`;
+      }
+      refreshCodexStudioSelection();
+      await refreshCodexRequestCards();
+    } catch (error) {
+      append('登记未确认：' + error.message + '。尚未开始生产；超时请先核对请求记录，勿重复提交。');
+      if (actionStatus) {
+        actionStatus.dataset.state = 'error';
+        actionStatus.textContent = `登记未确认：${error.message}。尚未开始生产；超时请先刷新请求台账，避免重复提交。`;
+      }
+    } finally {
+      updateProductionCapabilityView();
     }
+  });
+
+  document.getElementById('codexReadRequestsBtn')?.addEventListener('click', async (event) => {
+    await refreshCodexRequestCards(event.currentTarget);
   });
 
   // Cross-App PostMessage receiver (from Station 1 Materials & Station 2 Templates & Container)
   window.addEventListener('message', (event) => {
     const msg = event.data;
     if (!msg || typeof msg !== 'object') return;
+
+    // Single-Core Account Switching (0ms instant tab switch)
+    if (msg.type === 'SWITCH_ACCOUNT' && msg.accountId) {
+      if (typeof switchGptAccount === 'function') {
+        switchGptAccount(msg.accountId, { silent: true });
+      }
+    }
+
+    // Instant Account Creation (<50ms)
+    if (msg.type === 'ADD_ACCOUNT') {
+      if (typeof addGptAccount === 'function') {
+        addGptAccount();
+      }
+    }
 
     // Theme synchronization from master container
     if (msg.type === 'THEME_CHANGE' && msg.theme) {
@@ -33198,16 +34021,35 @@ window.setTimeout(() => {
     if (msg.type === 'APPLY_TEMPLATE' || msg.action === 'APPLY_TEMPLATE') {
       const tplName = msg.templateTitle || msg.templateName || msg.templateId || '已选母版';
       const promptText = msg.prompt || msg.templatePrompt || '';
-      const desc = msg.description || (msg.rating ? '评级: ' + msg.rating : '');
+      const incomingTemplateId = typeof msg.templateId === 'string' ? msg.templateId.trim() : '';
+      const matchedTemplate = window.TBProductionRequest?.resolveTemplateSelection?.(
+        incomingTemplateId, gptTemplateCatalog()
+      ) || null;
+      if (matchedTemplate) {
+        if (matchedTemplate.category && matchedTemplate.category !== gptTemplateCategory) {
+          gptTemplateCategory = matchedTemplate.category;
+          localStorage.setItem('teambuilding-gpt-template-category', gptTemplateCategory);
+        }
+        gptTestSelectedTemplates.clear();
+        gptTestSelectedTemplates.add(matchedTemplate.id);
+        renderGptTestTemplates();
+      }
+      const desc = matchedTemplate
+        ? (matchedTemplate.description || '已将此真实母版绑定到本套请求；提交时服务端仍会复核实物')
+        : incomingTemplateId
+          ? '已收到母版标识，但它不在当前真实模板目录中；本套不会把名称当成已选母版。'
+          : '已收到母版名称；请从模板库选择真实母版后再登记。';
 
       // Update Codex Studio
       const selectedTplNode = document.getElementById('codexSelectedTemplate');
       const descNode = document.getElementById('codexTemplateDesc');
       const promptNode = document.getElementById('codexPromptPreview');
 
-      if (selectedTplNode) selectedTplNode.textContent = tplName;
+      if (selectedTplNode) selectedTplNode.textContent = matchedTemplate
+        ? `${matchedTemplate.name || tplName} · ${matchedTemplate.id}` : tplName;
       if (descNode) descNode.textContent = desc || '已加载母版参数与生成规范';
       if (promptNode) promptNode.value = promptText;
+      refreshCodexStudioSelection();
 
       // Update CDP workspace
       const gptTplNameNode = document.getElementById('gptTestTemplateName');
@@ -33219,7 +34061,7 @@ window.setTimeout(() => {
       const logNode = document.getElementById('codexLiveOutputLog');
       if (logNode) {
         const now = new Date().toLocaleTimeString();
-        logNode.innerHTML += '\n[' + now + '] ✅ 成功从第2站模板库接收入库母版: ' + tplName;
+        logNode.textContent += '\n[' + now + '] 已接收母版选择，实物待核实: ' + tplName;
         logNode.scrollTop = logNode.scrollHeight;
       }
     }
@@ -33250,5 +34092,68 @@ window.setTimeout(() => {
       }
     }
   });
+
+// ========================================================
+// 内容制作 · 顶栏 ABCD 账号中枢极速切换驱动
+// ========================================================
+function initProdTopbarAbcd() {
+  const abcdGroup = document.getElementById('prodTopbarAbcdGroup');
+  if (!abcdGroup) return;
+
+  abcdGroup.addEventListener('click', (e) => {
+    const pill = e.target.closest('.abcd-pill-btn');
+    if (pill && pill.dataset.account) {
+      const accId = pill.dataset.account;
+      if (typeof switchGptAccount === 'function') {
+        switchGptAccount(accId);
+      }
+      syncTopbarAbcdActive(accId);
+      return;
+    }
+    if (e.target.closest('#btnContentProdAddAccount') || e.target.closest('#btnContentProdAddInst')) {
+      if (typeof addGptAccount === 'function') addGptAccount();
+      else if (typeof openPageSettings === 'function') openPageSettings('gptAuto');
+      return;
+    }
+  });
+
+  syncTopbarAbcdActive(typeof activeGptAccountId === 'string' ? activeGptAccountId : 'account-1');
+}
+
+function syncTopbarAbcdActive(activeId) {
+  const abcdGroup = document.getElementById('prodTopbarAbcdGroup');
+  if (abcdGroup) {
+    abcdGroup.querySelectorAll('.abcd-pill-btn').forEach(btn => {
+      const isCurrent = btn.dataset.account === activeId || 
+        (activeId === 'account-1' && btn.dataset.inst === 'A') ||
+        (activeId === 'account-2' && btn.dataset.inst === 'B') ||
+        (activeId === 'account-3' && btn.dataset.inst === 'C') ||
+        (activeId === 'account-4' && btn.dataset.inst === 'D');
+      btn.classList.toggle('active', isCurrent);
+    });
+  }
+
+  // 同步浏览器导航条的独立配置账号徽章
+  const labelEl = document.getElementById('browserActiveAccountLabel');
+  if (labelEl) {
+    const instMap = { 'account-1': 'A·账号 1', 'account-2': 'B·账号 2', 'account-3': 'C·账号 3', 'account-4': 'D·账号 4', 'account-5': 'E·账号 5', 'account-6': 'F·账号 6' };
+    labelEl.textContent = instMap[activeId] || `账号 ${activeId}`;
+  }
+
+  // 同步地址栏显示的 URL
+  if (typeof syncGptBrowserAddress === 'function') {
+    const account = Array.isArray(gptAccounts) ? gptAccounts.find(a => a.id === activeId) : null;
+    const url = account?.lastBrowserUrl || account?.lastUrl || 'https://chatgpt.com/';
+    syncGptBrowserAddress(url);
+  }
+}
+
+// 自动初始化顶栏 ABCD
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initProdTopbarAbcd);
+} else {
+  setTimeout(initProdTopbarAbcd, 50);
+}
+
 })();
 

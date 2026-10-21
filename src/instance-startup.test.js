@@ -59,9 +59,10 @@ test("A-D startup scripts share only the material root and never the browser/run
 test("Electron instances use the local proxy while bypassing local workbench traffic", () => {
   const config = resolveElectronProxy();
   assert.equal(config.enabled, true);
-  // [2026-09-25 修] 代理端口现在会自动探测本机存活端口（7897/7890/7891/7892），
-  // 不再硬性等于 DEFAULT_ELECTRON_PROXY；只断言落在候选集合内。
-  const liveCandidates = new Set(["7897", "7890", "7891", "7892"].map((p) => `http://127.0.0.1:${p}`));
+  // The preferred port is itself a valid outcome; otherwise the probe may
+  // select any supported local fallback port.
+  const preferredPort = new URL(DEFAULT_ELECTRON_PROXY).port;
+  const liveCandidates = new Set([preferredPort, "7897", "7890", "7891", "7892", "7900"].map((p) => `http://127.0.0.1:${p}`));
   assert.ok(liveCandidates.has(config.proxyServer), `unexpected proxyServer: ${config.proxyServer}`);
   assert.equal(config.proxyBypassList, ELECTRON_PROXY_BYPASS_LIST);
 

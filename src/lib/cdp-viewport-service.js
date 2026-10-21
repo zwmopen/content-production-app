@@ -31,6 +31,15 @@ class CdpSession {
         !t.url.startsWith("file:")
       );
 
+      // Prioritize active conversation URLs (/c/ or /g/) and specific titles
+      externalPages.sort((a, b) => {
+        const aScore = (a.url.includes('/c/') ? 10 : (a.url.includes('/g/') ? 8 : 0)) +
+                       (a.title && !a.title.includes('Code with AI') ? 5 : 0);
+        const bScore = (b.url.includes('/c/') ? 10 : (b.url.includes('/g/') ? 8 : 0)) +
+                       (b.title && !b.title.includes('Code with AI') ? 5 : 0);
+        return bScore - aScore;
+      });
+
       let target = externalPages.find(t => /chatgpt\.com|chat\.openai\.com|auth.*\.openai\.com/i.test(t.url));
       if (!target && externalPages.length > 0) {
         target = externalPages[0];
@@ -168,11 +177,21 @@ class CdpSession {
     }
 
     try {
+      if (!this.lastFrame) {
+        // First frame or waking up cold background window: gently nudge compositor
+        this.send("Page.enable").catch(() => {});
+        this.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
+        this.send("Runtime.evaluate", {
+          expression: "(() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;top:0;left:0;width:2px;height:2px;background:rgba(0,0,0,0.01);z-index:999999;'; document.body.appendChild(d); setTimeout(() => d.remove(), 60); return 1; })()"
+        }).catch(() => {});
+      }
+
       const res = await this.send("Page.captureScreenshot", {
         format: "jpeg",
-        quality: 80,
+        quality: 75,
+        fromSurface: false,
         captureBeyondViewport: false
-      }, 5000);
+      }, 4000);
 
       if (res && res.data) {
         const buf = Buffer.from(res.data, "base64");
@@ -181,6 +200,7 @@ class CdpSession {
         return buf;
       }
     } catch (err) {
+      this.cleanup();
       if (this.lastFrame) return this.lastFrame;
       throw err;
     }

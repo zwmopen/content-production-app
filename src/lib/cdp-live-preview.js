@@ -4,9 +4,10 @@ const http = require('node:http');
 const { WebSocket } = require('undici');
 const PORTS = new Set([9431, 9432, 9433, 9434]);
 const PREVIEW_PORT = 9440;
+const cachedFrames = new Map();
 
 function allowedOrigin(origin) {
-  return !origin || /^http:\/\/127\.0\.0\.1:(433[1-4]|9440)$/.test(origin);
+  return !origin || /^http:\/\/(127\.0\.0\.1|localhost):(433[1-4]|9440|19223)$/.test(origin);
 }
 
 async function findTarget(port) {
@@ -97,20 +98,52 @@ function createPreviewServer({ getTarget = findTarget, call = callTarget } = {})
         const layout = await call(target, [{ method: 'Page.getLayoutMetrics' }]);
         const viewport = layout?.cssLayoutViewport || layout?.layoutViewport;
         const commands = [];
-        // A detached native WebContentsView has no drawable viewport. Provide a display
-        // viewport for the local preview instead of activating or navigating the production window.
+        commands.push({ method: 'Page.enable' });
+        commands.push({ method: 'Emulation.setFocusEmulationEnabled', params: { enabled: true } });
+        commands.push({ method: 'Runtime.evaluate', params: {
+          expression: "(() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;top:0;left:0;width:2px;height:2px;background:rgba(0,0,0,0.01);z-index:999999;'; document.body.appendChild(d); setTimeout(() => d.remove(), 60); return 1; })()"
+        } });
         if (!viewport?.clientWidth || !viewport?.clientHeight) commands.push({ method: 'Emulation.setDeviceMetricsOverride', params: { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false } });
-        commands.push({ method: 'Page.captureScreenshot', params: { format: 'jpeg', quality: 80, fromSurface: true, captureBeyondViewport: false } });
-        const frame = await call(target, commands);
-        if (!frame?.data) throw new Error('实例未返回画面');
-        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'X-Viewport-Width': viewport?.clientWidth || 1280,
-          'X-Viewport-Height': viewport?.clientHeight || 800 }).end(Buffer.from(frame.data, 'base64')); return;
+        commands.push({ method: 'Page.captureScreenshot', params: { format: 'jpeg', quality: 75, fromSurface: false, captureBeyondViewport: false } });
+        try {
+          const frame = await call(target, commands);
+          if (frame?.data) {
+            const buf = Buffer.from(frame.data, 'base64');
+            cachedFrames.set(port, { buf, width: viewport?.clientWidth || 1280, height: viewport?.clientHeight || 800 });
+            res.writeHead(200, { 'Content-Type': 'image/jpeg', 'X-Viewport-Width': viewport?.clientWidth || 1280,
+              'X-Viewport-Height': viewport?.clientHeight || 800 }).end(buf);
+            return;
+          }
+        } catch (captureErr) {
+          const cached = cachedFrames.get(port);
+          if (cached) {
+            res.writeHead(200, { 'Content-Type': 'image/jpeg', 'X-Viewport-Width': cached.width,
+              'X-Viewport-Height': cached.height }).end(cached.buf);
+            return;
+          }
+          throw captureErr;
+        }
+        const cached = cachedFrames.get(port);
+        if (cached) {
+          res.writeHead(200, { 'Content-Type': 'image/jpeg', 'X-Viewport-Width': cached.width,
+            'X-Viewport-Height': cached.height }).end(cached.buf);
+          return;
+        }
+        throw new Error('实例未返回画面');
       }
       if (url.pathname === '/input') await call(target, inputCommands(body));
       if (url.pathname === '/activate') await call(target, [{ method: 'Page.bringToFront' }]);
       if (url.pathname === '/action') {
         if (body.action === 'reload') await call(target, [{ method: 'Page.reload' }]);
         else if (body.action === 'home') await call(target, [{ method: 'Page.navigate', params: { url: 'https://chatgpt.com/' } }]);
+        else if (body.action === 'url' || body.action === 'navigate') {
+          let targetUrl = String(body.url || body.targetUrl || '').trim();
+          if (targetUrl && !/^https?:\/\//i.test(targetUrl)) {
+            targetUrl = 'https://' + targetUrl;
+          }
+          if (!/^https?:\/\//i.test(targetUrl)) throw new Error('无效的网页网址');
+          await call(target, [{ method: 'Page.navigate', params: { url: targetUrl } }]);
+        }
         else if (['back', 'forward'].includes(body.action)) {
           const history = await call(target, [{ method: 'Page.getNavigationHistory' }]);
           const entry = history.entries?.[history.currentIndex + (body.action === 'back' ? -1 : 1)];

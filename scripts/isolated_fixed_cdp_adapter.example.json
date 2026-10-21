@@ -1,0 +1,4 @@
+{
+  "$ref": "../../../../.agents/skills/teambuilding-production-3modes/config/isolated_fixed_cdp_adapter.example.json",
+  "note": "Documentation pointer only. Copy the referenced canonical sample outside the repository; this file is not executable adapter configuration."
+}

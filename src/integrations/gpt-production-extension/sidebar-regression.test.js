@@ -23,6 +23,38 @@ test("automatic upload handler uses task-owned scope after submitting attachment
   assert.match(handler, /recordWorkbenchQuota\(task\.entry, "uploaded", expectedAttachmentCount\)/);
 });
 
+test("CDP quota ledger records ordinary account-window tasks without an API request id", () => {
+  const helperStart = sidebarSource.indexOf("  async function recordWorkbenchQuota(entry, kind, count) {");
+  const helperEnd = sidebarSource.indexOf("\n  // ── 对话日志", helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, "quota recorder boundary must exist");
+  const helper = sidebarSource.slice(helperStart, helperEnd);
+  assert.match(helper, /entry\?\.externalRequestId \|\| entry\?\.quotaRequestId/);
+  assert.match(helper, /requestId,/);
+  assert.doesNotMatch(helper, /!entry\?\.externalRequestId/);
+
+  const queueStart = sidebarSource.indexOf("  function uploadEntry(entry) {");
+  const queueEnd = sidebarSource.indexOf("\n  async function processUploadQueue", queueStart);
+  const queue = sidebarSource.slice(queueStart, queueEnd);
+  assert.match(queue, /tb-workbench-account-id/);
+  assert.match(queue, /entry\.quotaRequestId = `cdp-\$\{requestToken\}`/);
+  assert.match(sidebarSource, /task\.entry\.autoRun && !workflow\.uploadQuotaRecorded/);
+});
+
+test("generic 429 or request-rate limiting is not labeled as exhausted account quota", () => {
+  const pauseStart = sidebarSource.indexOf("  function platformPauseReason() {");
+  const pauseEnd = sidebarSource.indexOf("\n  function isExplicitPlatformQuotaLimit", pauseStart);
+  const pause = sidebarSource.slice(pauseStart, pauseEnd);
+  const classifierStart = sidebarSource.indexOf("  function isExplicitPlatformQuotaLimit(message = \"\") {");
+  const classifierEnd = sidebarSource.indexOf("\n  function sendButton", classifierStart);
+  const classifier = sidebarSource.slice(classifierStart, classifierEnd);
+  assert.ok(pauseStart >= 0 && pauseEnd > pauseStart, "platform pause classifier boundary must exist");
+  assert.match(pause, /isExplicitPlatformQuotaLimit\(message\)/);
+  assert.match(pause, /未判定账号额度触顶/);
+  assert.match(classifier, /resource_exhausted/);
+  assert.match(classifier, /usage\\s\+limit/);
+  assert.doesNotMatch(classifier, /rate\\s\*limit|too many requests/);
+});
+
 test("send-confirm refuses to submit while material attachments remain in the composer", () => {
   const start = sidebarSource.indexOf("    async function handleSendConfirm() {");
   const end = sidebarSource.indexOf("\n    // wait-images：等待本轮图片生成完成", start);

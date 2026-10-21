@@ -20,10 +20,12 @@ const {
   resumedWorkflowState,
   rotationTaskBoundAccountId,
   selectMaterialAttachments,
+  restoreLegacyGenerationEstimate,
   shouldInitializeTemplate,
   taskQuotaBoundary,
   selectNextRotationAccount
 } = require("./gpt-account-rotation");
+const { createQuotaViewModel } = require("./gpt-quota-view");
 
 test("material attachment selection respects the web limit and preserves copy files", () => {
   const images = Array.from({ length: 25 }, (_, index) => `D:\\material\\image-${index + 1}.jpg`);
@@ -385,11 +387,20 @@ test("later-added account inherits current quota defaults without overwriting ex
     settings: [
       { id: "account-1", name: "primary", uploadLimit: 60, generationLimit: 40, windowHours: 4 }
     ],
-    defaults: { uploadLimit: 80, generationLimit: 45, windowHours: 3 }
+    defaults: { uploadLimit: 80, generationLimit: 50, windowHours: 3 }
   }), [
     { id: "account-1", name: "primary", uploadLimit: 60, generationLimit: 40, windowHours: 4 },
-    { id: "account-6", name: "new account", uploadLimit: 80, generationLimit: 45, windowHours: 3 }
+    { id: "account-6", name: "new account", uploadLimit: 80, generationLimit: 50, windowHours: 3 }
   ]);
+  assert.equal(reconcileAccountQuotaSettings({ profiles: [{ id: "account-7" }] })[0].generationLimit, 50);
+  assert.equal(accountQuotaBoundary({ settings: {} }).limit, 50);
+});
+
+test("only a known legacy 50-to-45 migration is restored to the 50-image estimate", () => {
+  assert.equal(restoreLegacyGenerationEstimate(45, { legacyDowngradeApplied: true }), 50);
+  assert.equal(restoreLegacyGenerationEstimate(45, { legacyDowngradeApplied: false }), 45);
+  assert.equal(restoreLegacyGenerationEstimate(40, { legacyDowngradeApplied: true }), 40);
+  assert.equal(restoreLegacyGenerationEstimate(45, { legacyDowngradeApplied: true, migrationApplied: true }), 45);
 });
 
 test("a new work starts only when all attachments and the complete image set fit quota", () => {
@@ -411,6 +422,25 @@ test("a new work starts only when all attachments and the complete image set fit
     remainingUploads: 6,
     remainingGenerations: 5
   }), { reached: false, kind: "", required: 0, remaining: 0 });
+});
+
+test("an account at the 3-hour upload safety line yields to the next eligible CDP window", () => {
+  const view = createQuotaViewModel({
+    settings: { enabled: true, uploadLimit: 80, generationLimit: 45, windowHours: 3 },
+    uploaded: 80,
+    generated: 12,
+    nextExpiryAt: "2026-08-07T13:00:00.000Z"
+  }, "CDP窗口 A", {}, Date.parse("2026-08-07T12:00:00.000Z"));
+  assert.equal(view.state, "blocked");
+  assert.equal(view.remainingUploads, 0);
+
+  const selected = selectNextRotationAccount({
+    accounts: [{ id: "a", mode: "rotate" }, { id: "b", mode: "rotate" }],
+    cursor: 0,
+    now: Date.parse("2026-08-07T12:00:00.000Z"),
+    cycleByAccount: { a: { nextProbeAt: Date.parse("2026-08-07T13:00:00.000Z") }, b: { nextProbeAt: 0 } }
+  });
+  assert.equal(selected.account.id, "b");
 });
 
 test("全局轮换只接纳启用且模式为 rotate 的账号", () => {

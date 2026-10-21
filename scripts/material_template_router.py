@@ -19,6 +19,49 @@ CATEGORY_LABELS = {
     "personal_guide": "泛流量个人攻略"
 }
 
+_RANDOM_TEMPLATE_REJECTIONS = {
+    "rejected", "pending", "pending_review", "blocked", "ineligible",
+    "not_eligible", "excluded"
+}
+_RANDOM_TEMPLATE_LOW_FIT = {"low", "poor", "not_fit", "no_fit"}
+
+
+def is_template_random_eligible(template):
+    """Return False when template metadata explicitly excludes random selection."""
+    folder = Path(str((template or {}).get("folder") or ""))
+    if not folder.is_dir():
+        return False
+    metadata_path = next((folder / name for name in ("template.json", "metadata.json")
+                          if (folder / name).is_file()), None)
+    if metadata_path is None:
+        return True
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(metadata, dict):
+        return False
+    quality = metadata.get("templateQuality")
+    quality = quality if isinstance(quality, dict) else {}
+    eligibility = quality.get("eligibility", metadata.get("eligibility"))
+    task_fit = quality.get("taskFit", metadata.get("taskFit"))
+    random_flag = quality.get("eligible_for_random",
+                              quality.get("eligibleForRandom",
+                                          metadata.get("eligible_for_random",
+                                                       metadata.get("eligibleForRandom"))))
+    eligibility = str(eligibility).strip().lower().replace("-", "_") if eligibility is not None else ""
+    task_fit = str(task_fit).strip().lower().replace("-", "_") if task_fit is not None else ""
+    if eligibility in _RANDOM_TEMPLATE_REJECTIONS or task_fit in _RANDOM_TEMPLATE_LOW_FIT:
+        return False
+    if isinstance(random_flag, bool):
+        return random_flag
+    if isinstance(random_flag, str) and random_flag.strip():
+        flag = random_flag.strip().lower()
+        if flag in {"true", "yes", "1", "eligible", "allowed"}:
+            return True
+        return False
+    return True
+
 
 def detect_material_category(material_path):
     """
@@ -57,6 +100,14 @@ def detect_material_category(material_path):
         tags = [str(t).lower() for t in (tagging.get("tags") or meta.get("tags") or [])]
         main_tag = str(tagging.get("mainTag") or meta.get("mainTag") or "").lower()
         all_meta_str = " ".join([traffic_type, main_tag] + tags)
+
+        # Explicitly precise team-building metadata outranks incidental activity tags.
+        # A company event may mention games, but that does not make its product a
+        # generic mini-game template (which can be a completely different visual set).
+        if ("精准团建" in traffic_type or "精准流量团建" in traffic_type
+                or (any(k in main_tag for k in ["团建", "企业", "hr"])
+                    and not any(k in main_tag for k in ["小游戏", "破冰游戏"]))):
+            return "team_building"
 
         if any(k in all_meta_str for k in ["游戏", "破冰", "互动", "game"]):
             return "game"
@@ -167,11 +218,19 @@ def pick_template_for_material(material_path, template_root=DEFAULT_TEMPLATE_ROO
     # 兜底容错：如果该分类库暂无模板，平滑回退到精准库
     if not pool:
         print(f"⚠️ [路由降级] 分类库 [{cat_label}] 暂无可用模板，回退到精准流量团建模板库...")
+        category_key = "team_building"
+        cat_label = CATEGORY_LABELS.get(category_key, "精准流量团建")
         pool = scan_category_templates("team_building", template_root)
 
     if not pool:
         print(f"❌ [严重告警] 全库均未找到任何有效模板！路径: {template_root}")
         return None, category_key
+
+    if mode == "2_random_template":
+        pool = [tpl for tpl in pool if is_template_random_eligible(tpl)]
+        if len(pool) < 2:
+            print(f"❌ [随机模板准入] 合格候选仅 {len(pool)} 个，拒绝伪随机选择")
+            return None, category_key
 
     # 固定模板模式
     if mode == "3_fixed_template" and fixed_id:

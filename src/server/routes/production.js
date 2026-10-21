@@ -3,8 +3,13 @@
  *
  * 旧 API 生图链（/api/production、/api/image-api、/api/text-api）已在
  * 0.16.10 正式退役。真实内容生产统一走持久 GPT 网页与本地归档链。
+ * /api/production/requests 仅准备和回读隔离的真实制作请求，不复活旧生图 API。
  */
+const productionRequest = require("./production-request");
+const productionPlan = require("./production-plan");
 async function handle(req, res, pathname, parsed, ctx) {
+  if (await productionPlan.handle(req, res, pathname, parsed, ctx)) return true;
+  if (await productionRequest.handle(req, res, pathname, parsed, ctx)) return true;
   if (pathname !== "/api/workbench-assistant/interpret" || req.method !== "POST") return false;
 
   const { send, sendJson, getBody, interpretWorkbenchAssistantCommand } = ctx;

@@ -1,4 +1,121 @@
+## 2.6.34-dev：双线实际续跑与在线连接修复（2026-10-11，未发布）
+
+在线 producer 的内存回收与生产共享 WebSocket 接收器会互抢，现将完整命令交换、重连与关闭串行化；专项测试 5/5，附件严格计数测试 4/4。A/B 均 HALTED、无 current_package 后已替换闲置旧进程，当前 PID 34668；浏览器与登录保留，批量领料保持暂停。新进程启动不代表模型生产验收。
+
+独立固定模板 adapter 分开验证附件齐全与提示词发送就绪，使用原生输入并完整回读正文，缺图、多图、截断或已有草稿均拒绝发送。在线 T27 新会话学习正在实测；旧模板链接为空不能伪造 READY。两条产线的完整交付及三种制作模式仍未全部验收。
+
+本地 Codex 已实际接续义乌 T27 测试套图，按 manifest 页码保留旧合格图继续缺页；实际张数和 SHA 以测试 manifest 为准。11 版本文案已落盘并通过现有检查。没有把单页图片、学习回复或程序测试计为完整成品。
+
+飞书异常消息已由 feishu-main bot 发送并精确回读，message ID om_x100b63926cc980a4c295c873df246a1；总控卡更新 API 230075 独立记为 PENDING，不重发警报、不更换总控消息 ID。通知脚本回归 29/29。未推送 GitHub。
+
+下一步：完成本地整套图片与交付；在线取得真实 T27 学习回执后执行同素材单套，不解除批量暂停冒进。
+
+
+## 2.6.33-dev：完整套图与文案核验（本地开发，未发布）
+
+新增同一请求的整套实物验收入口：按原素材逐页核对原生图 SHA、实际图片解码及 1086×1448 规范图，复用现行 11 版文案检查，并拒绝正文完全重复的版本。验收后界面显示“整套已核验 · 待交付”；正式归档和云端回读尚未接入，仍不计为完成。状态回读重新检查文件 SHA，文件变化后旧合格状态失效。
+
+该项属于总计划 P09/P11 的部分实现，不代表两条产线、三种模式现场跑通。现有活动进程未强制重启，未发布 GitHub，未发送成功通知。
+
+## 本地开发 2.6.26-dev：统一请求的领取与生成回执（未发布）
+
+- `production-request.js` 保持 `request.json` 不变；每个请求 ID 旁边分别放 `execution-claim.json`、`generation-receipt.json` 与逐页 `outputs/`。
+- claim 用独占文件创建阻止多 worker 重复领取；receipt 必须对应同一请求、产线、模式、领取、源页顺序和物理文件 SHA。收到 receipt 只到 `GENERATED_PENDING_QA`，且 `completed` 仍为 false。
+- `/api/production/state` 是前端阶段的唯一投影来源。真实模型工具调用、报告 QA、正式归档和飞书通知仍须各自执行器/回执；此改动不连接这些系统。
+
+## 本地开发 2.6.25-dev：状态合同诊断（未发布）
+
+产线状态 DTO 的 schema/revision 与必需字段共同构成兼容合同。客户端在完整快照校验前先报告可识别的 schema、revision 或 required-field 错配；无法归类的错误继续显示为未核实，并清除旧快照。请求登记始终要求完整且新鲜的同一份服务端快照。
+
+## 本地开发 2.6.21-dev：旧状态合同错误显式化（未发布）
+
+- 客户端在完整快照校验前调用 `stateSnapshotMismatch`。可识别旧 `schemaVersion` 和旧 capabilities revision，并显示预期/实际合同；未识别的 HTTP、网络或数据错误仍走通用“未核实”回退。
+- 该诊断不从端口或客户端缓存推断产线状态，不开启执行器或推进作品阶段。
+
+## 本地开发 2.6.20-dev：统一运行态 DTO（未发布）
+
+- `/api/production/state` schema v4 在同一回执中返回目录、能力、请求台账与 `runtime`。`capabilities.declaredProfileRevisionState` 是浏览器完整性校验要求的字段，必须从 capability snapshot 原样投影；`runtime.executors` 对 `catalog` 中每个实例严格一对一；客户端拒绝缺项、重项、悬空 sourceId 或旧 schema。
+- CDP A/B 共读 profile 配置的旧 daemon 状态源；状态源包含观测时间和 `staleAfterSeconds`。过期时 executor 仍可说明最后观测年龄，但不能携带 queueRemaining/lastCompleted 字段。文件路径不下发到客户端。
+- Codex 宿主/Gemini 的状态源当前分别是 `UNOBSERVED`、`UNCONNECTED`。这是后端明确的接线状态，不从请求登记或 UI 交互推断运行进度。
+- 面板渲染 `runtime.executors`；它不发明在线状态或计算进度。版本不一致时回退为未核实。
+
+## 本地开发 2.6.19-dev：三产线与实例统一状态投影（未发布）
+
+- `GET /api/production/state` 由 `src/server/routes/production-request.js` 构造 schema v3 快照：三个主线目录（CDP、Codex API、Gemini）、三种模式、每条线的实例、各实例的登记/执行能力、服务端核验的模板候选及 P1/P2 哈希、隔离请求台账、无效记录计数与时间戳。
+- CDP A/B 是同一 CDP 主线的实例。后端请求仍用 `cdp-a` / `cdp-b` 保留精确目标身份；Codex API 与 Gemini 各有默认实例。
+- `src/public/production-request.js` 校验主线、实例、模式矩阵及模板选项；`src/public/app.js` 从快照同步模式、母版选择器与能力提示。三条线使用同一模板真源。Gemini 面板提供请求准备入口，并只展示 Gemini 自己的登记请求。
+- 该快照是登记与接线状态，不是模型在线状态、额度、生成、QA、正式归档或飞书回读。相关项目没有实物凭证时不得显示为已完成。
+
+## 本地开发 2.6.18-dev：产线统一状态投影（未发布）
+
+- `GET /api/production/state` 由 `src/server/routes/production-request.js` 一次构造 schema version 1 快照：服务端模式目录、3×3 注册/执行能力、隔离请求台账、无效记录计数与采集时间。
+- `src/public/production-request.js` 校验快照版本、完整产线/模式矩阵与字段，再按 `(pipeline, mode)` 投影请求卡能力；未知或不完整状态返回 `UNVERIFIED`。
+- `src/public/app.js` 从同一快照同步两个模式选择器、CDP 当前实例提示、Codex 提示与登记按钮门禁。快照读取失败时不保留旧能力结论；按钮不会因静态选项而默认可用。
+- 既有 `/api/production/capabilities` 与 `/api/production/requests` 路由保留兼容；面板改读统一快照。该接口仍是状态查询，不触发模型、执行器、素材上传或作品写入。
+
+# 本地开发 2.6.15-dev：额度账本与 CDP 实例让位（2026-10-09）
+
+- `scripts/production_quota_policy.py` 是旧 CDP producer 的滚动附件预算策略：读取本实例工作台 `runtime-state` 当前 `activeAccountId` 与对应 quota event，合并本地未镜像事件并按 request ID 去重。
+- `scripts/dual_browser_autonomous_producer.py` 在每套任务第一次上传前进行全套预算门；已确认挂载的每个附件在最低挂载门槛判断与提示词提交前写入上传事件，即使随后因部分挂载不足而拒绝提交也不漏记。生产器本地事件与工作台按 `requestId` 镜像/去重；工作台不可达时本地账本继续保守拦截。
+- 如果一整套附件数高于当前可用的单次额度上限，该素材进入“额度待拆分”状态，不会每秒重试或计入生产失败；其他未完成素材可继续。
+- 生图安全门同时合并工作台 `generated` 事件与 producer 本地按实例记录，执行值取 producer 40/3h 与工作台活动账号设置中的较小者；180/日仍由 producer 本地独立统计。
+- 额度等待写为 `quotaYield`、释放任务锁且移除全局素材 `cooldownUntil`；本额度窗之后由该实例按最早时间重试，其他实例可以先领取。普通 CDP/脚本失败仍按旧节奏处理。
+- 当前 CDP A/B 共享目录可做实例间让位。Codex 与 Gemini 没有接入这一共享调度器/同一执行合同，不支持自动跨供应商派发。
+
+## 本地开发 2.6.11-dev：固定模板对话指令投影（未发布）
+
+- `src/public/fixed-template-session.js` 负责从当前模板的真实 image/reference 路径挑选 P1 与 P2，并生成纯文本初始化或单套制作指令；它是无副作用的前端纯函数。
+- `src/public/app.js` 只读取当前母版与当前选中的单个素材夹，显示预览并尝试复制到剪贴板；无可用的 P1/P2 或素材夹时禁用复制。
+- 模板路径和素材索引只是引导用户手动附加文件的来源提示，不是上传凭证。没有聊天创建、附件提交、宿主模型调用、imagegen、工作队列领取或正式文件写入接口。
+- Codex 原生对话不提供此面板可回读的永久会话学习状态；跨对话需重新附 P1/P2。准备指令不改变 `PREPARED_NOT_GENERATED` 等生产请求阶段。
+
+## 本地开发 2.6.10-dev：生产 PID 锁归 producer 所有（未发布）
+
+- `launch_producer_daemon.py` 只验证目标脚本、准备 append 日志并创建子进程；不创建、删除或覆盖 `producer.pid`。
+- `dual_browser_autonomous_producer.py` 是 PID 锁的唯一写入/检查所有者；活动进程冲突由 producer 自己判定，启动器不能绕过锁。
+- 本轮验证只用临时目录和 fake `Popen`，没有运行真实 producer。
+
+## 本地开发 2.6.9：请求状态绑定当前选择（未发布）
+
+- `selectionKey()` 只由 `pipeline + normalized sourcePath + templateId` 组成；`findMatchingRequest()` 只接受仍为 `PREPARED_NOT_GENERATED` 的合法回读记录。
+- UI 把当前 key 与“最近一次回读且命中当前选择的 key”比较；旧作品请求不能推进新作品流程。状态不依赖全局布尔值。
+- request 文件仍不可变，服务端无模型执行或状态事件接口；“执行器未接入”是当前真实边界。
+
+## 本地开发 2.6.8：请求状态投影与模板身份校验（未发布）
+
+- `production-request.js` 新增仅凭明确计数/请求回执输出五步阶段状态的纯函数；生图阶段始终要求独立执行证据，当前请求合同 `PREPARED_NOT_GENERATED` 不可能把生产或交付标为完成。
+- Codex 页面只从 `/api/production/requests` 读取最近请求，使用 `textContent` 构造卡片；无效记录不渲染，并把隐藏数展示为验证状态。
+- 外部模板消息必须以真实目录中的精确 template ID 解析，名称、自由文本或未知 ID 不足以选中母版。
+- UI 状态仍是本地可视化请求投影；本改动没有增加宿主执行器、浏览器控制或模型调用。
+
+## 本地开发 2.6.6：真实制作请求登记与回读（未发布）
+
+Codex 面板按钮由仅追加日志改为调用现有 production 路由的 POST /api/production/requests/prepare；单个完整素材文件夹与单一母版才能提交。后端从服务端私有配置解析素材根和母版实物，调用三模式技能真实 CLI 的默认准备路径，保存不可变请求并回读 SHA；不传 --execute、不生图、不写正式库、不发送飞书。GET /api/production/requests 与“查看已登记请求”用于超时后核对，准备请求不算作品完成。
+
+三条产线共用请求合同，补充要求参与请求身份；同输入返回同文件。当前只配置已核实 T79 的准备映射，A/B 实际母版会话学习与模型执行尚未验收。主执行核验前端/握手/母版投影29项、后端10项及技能35项通过；临时HTTP到真实Python、文件SHA与GET已通过。运行实例尚未加载新的后端，Electron界面未验收；不因这些离线结果称三线已跑通。
+
 # 架构
+
+# 本地开发 2.6.15-dev：额度账本与 CDP 实例让位（2026-10-09）
+
+- `scripts/production_quota_policy.py` 是旧 CDP producer 的滚动附件预算策略：读取本实例工作台 `runtime-state` 当前 `activeAccountId` 与对应 quota event，合并本地未镜像事件并按 request ID 去重。
+- `scripts/dual_browser_autonomous_producer.py` 在每套任务第一次上传前进行全套预算门；只有网页提交确认后才写上传事件。生产器 API event 写入失败不会丢本地计数，上传与最终验收生图事件分开。
+- 账号额度等待写为 `quotaYield`、释放任务锁且移除全局素材 `cooldownUntil`；本额度窗之后由该实例按最早时间重试，其他实例可以先领取。普通脚本/CDP失败仍按旧节奏处理。
+- 当前 CDP A/B 共享目录可做实例间让位。Codex 与 Gemini 没有接入这一共享调度器/同一执行合同，不支持自动跨供应商派发。
+
+## 2026-10-09 执行器唯一能力路由（本地开发 2.6.5，未发布）
+
+- canonical 实现位于 teambuilding-production-3modes 技能，随技能携带 `Pillow`/`websockets` 依赖声明、样例、运行合同及总控17+执行器17测试。脚本不依赖 App 模块或旧 InstanceWorker。
+- App import 路由通过 importlib 将当前模块替换为 canonical module，测试 patch 与运行方法共用同一模块全局；CLI 用 runpy 调 canonical main。`TEAMBUILDING_3MODES_SKILL_ROOT` 优先，否则祖先 `.agents/skills/teambuilding-production-3modes`；无硬编码机器路径、无平行实现。
+- App example JSON 为文档引用，私有运行配置直接从技能 config 样例复制。canonical executor 无共享队列、manifest、正式库与飞书写入；UI scheduler 尚未连接。
+
+## 2026-10-09 固定母版只读投影（本地开发 2.6.3，未发布）
+
+- `src/public/fixed-template-session.js` 为 UMD 纯函数模块，在 `app.js` 前加载，通过 `window.TBFixedTemplateSession.project` 提供状态、步骤、原因和说明；没有文件、网络或执行器副作用。
+- CDP `reuse-conversation` 的核实门：规范化 `https://chatgpt.com/c/...` URL、非空账号和母版 ID、回执身份完全匹配、`status=READY`、`physicalVerified=true`、回执路径和 64 位十六进制 SHA。缺回执仅为配置待核实，缺 URL 为未绑定。
+- CDP `fresh-session-fixed-template` 与 Codex 参照门：真实 references 列表非空，逐项路径、SHA 和 `physicalVerified` 齐全；Codex 投影不输出网页会话 URL，不允许初始化网页会话。
+- `readyForMaterial` / `canSubmitSelectedMaterial` 仅为投影，不作为发送授权或调度开关。legacy 与 fresh 两种工作流共用该投影提示；fresh 已选母版后仍显示核实状态和逐套步骤，不再隐藏提示。
+- 原容器握手 `SELECTED_NOT_STARTED`、当前生产保护和指令登记边界保持；无新增后端生成适配器。其他在途服务器和生产脚本修改不属于本次集成。
 
 ## 2026-10-07 容器接收握手（本地开发 2.6.2，未发布）
 
@@ -431,3 +548,23 @@ AI/skills/技能包/技能
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
 | 2026-09-17 23:11 | 💻 本地 PC / 反重力 | 初始化创建文档并补齐变更记录历史 |
+## 三产线/三模式准备合同（2.6.14-dev，未发布）
+
+- A、B、Codex API 共用制作请求入口，但每次必须显式提交一个模板模式。模式 2 必须提交至少两个不同候选；服务端只接受 profile 中真实存在且 P1/P2 唯一可读的候选。
+- 模式 2 使用 `sha256(line + sourceFingerprint + candidatePoolFingerprint)` 稳定选择，绑定源图哈希、候选池、选中母版和候选 P1/P2 哈希。超时重试不会随机换母版。
+- GET 回读只返回请求身份、模式、母版 ID/候选数和文件 SHA；状态仍是 `PREPARED_NOT_GENERATED`。该路由没有派发模型、逐页 QA、正式入库或飞书权限。
+- CDP A/B 配额按各自账号/窗口滚动账本统计；本地 80 上传附件/3 小时和 45 生图/3 小时是安全线估算，不是网页官方剩余额度。Codex/其他产线不借用该计数。跨产线让位尚未接入调度器；HTTP 429 单独不等于生图额度耗尽。
+- 验证：临时素材 3×3 请求准备 9/9；工作台请求/UI 26/26；技能合同 39/39。未做九组合真实模型生产验收。
+# 本地开发 2.6.23-dev：CDP 固定模板派单消费边界
+
+- CDP 桌面桥和扩展共用 `src/integrations/gpt-production-extension/cdp-pipeline-contract.js`；canonical dispatch 携带 mode、配置 revision、template ID、P1/P2 绝对路径、字节数与 SHA-256。
+- 只有 `3_fixed_template` 被当前 consumer 接受。桌面验证本地文件后通过原生 WebContents 附件路径转发；扩展核实实际 FileList 字节和 composer 预览。receipt 必须关联唯一原请求并按完全相同 revision 写入/回读，随后才返回 ACK。
+- receipt 证明附件已接收，不证明生产。当前自动 production worker 禁用，auto-run 明确以 `PIPELINE_WORKER_UNAVAILABLE` 结束，防止附件接收被表达为生成成功；当前 composer 暂停，阻止下一套素材叠加。
+
+## 工作台与本地技能接手
+
+共享技能 workbench_operator 复用 /api/production/requests/:id 的 read/claim/receipt。不可变 request.json 是选择设置的执行快照；claim 和 generation-receipt 是现有后端状态证据。前端仅复制精确任务说明，不连接隐藏模型 API，不伪装自动启动。
+
+## 父计划与子请求
+
+production-plan 路由提供 POST/GET /api/production/plans、GET /:id、POST /:id/bind {requestId}。意图不可变且按内容哈希幂等；绑定每素材一个子请求，不覆盖其他任务。状态每次从 production-request.readRequest 派生，子图生成不计交付完成。自然语言原文完整保存，当前关键词 includes 不冒充语义搜索；未匹配保持 AWAITING_MATERIALS。在线 A/B 可关联同一在线父计划，本地与在线不能混绑。

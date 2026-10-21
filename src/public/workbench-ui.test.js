@@ -21,6 +21,7 @@ const conversionFormalRuntime = fs.existsSync(conversionFormalRuntimePath)
   ? fs.readFileSync(conversionFormalRuntimePath, "utf8")
   : "";
 const promptRegistry = require("./gpt-prompt-registry");
+const quotaView = fs.readFileSync(path.join(__dirname, "gpt-quota-view.js"), "utf8");
 const _routeDir = path.join(__dirname, "..", "server", "routes");
 const _routeSources = fs.existsSync(_routeDir)
   ? fs.readdirSync(_routeDir).filter(f => f.endsWith(".js")).map(f => fs.readFileSync(path.join(_routeDir, f), "utf8")).join("\n")
@@ -59,6 +60,16 @@ test("P0 primary navigation exposes the approved product workspaces and skill ce
   }
   assert.doesNotMatch(html, /data-tab="wechat"/);
   assert.doesNotMatch(html, /<span>内容生产<\/span>|<span>内容分发<\/span>|<span>公众号分发<\/span>/);
+});
+
+test("内容制作移除顶部执行总览卡，保留后端能力和模式状态", () => {
+  assert.doesNotMatch(html, /id="productionRuntimeOverview"|id="productionRuntimeGrid"/);
+  assert.match(html, /id="gptCapabilityMatrix"/);
+  assert.match(html, /id="gptModeExecutionCapability"/);
+  assert.match(html, /id="codexModeExecutionCapability"/);
+  assert.match(app, /productionStateSnapshot = snapshot/);
+  assert.match(app, /renderProductionCapabilityMatrix\('gptCapabilityMatrix'/);
+  assert.match(app, /renderProductionCapabilityMatrix\('codexCapabilityMatrix'/);
 });
 
 test("P0 keeps the mature production workspace and adds a first-class work library", () => {
@@ -1949,6 +1960,10 @@ test("configured quota blocks only the next work boundary and real web limits st
   assert.match(app, /expectedAttachments: requiredUploads[\s\S]{0,160}nextProbeAt/);
   assert.match(app, /localQuotaBoundary[\s\S]{0,500}_submittedToGpt = false/);
   assert.match(app, /function isActualGptLimitMessage/);
+  assert.match(app, /function isActualGptLimitMessage\(message = ""\)[\s\S]*?TBGptQuotaView\?\.isExplicitQuotaLimitSignal/);
+  assert.match(html, /gptQuotaSummary/);
+  assert.match(html, /滚动窗口上传附件安全线/);
+  assert.match(quotaView, /普通网络 429 不单独判定额度耗尽/);
   assert.match(app, /function recordActualGptLimit/);
   assert.match(app, /function inferGptQuotaLimitKind/);
   assert.match(app, /function formatGptQuotaProbeTime/);
@@ -2024,12 +2039,12 @@ test("a Chinese GPT image-generation error resumes the confirmed image stage onc
 
 test("uncertain GPT image counts preserve the current material instead of faking a quota limit", () => {
   assert.match(app, /"IMAGE_COUNT_UNCERTAIN"/);
-  assert.match(app, /function isActualGptLimitMessage[\s\S]*?未\|无法\|不能[\s\S]*?return false/);
+  assert.match(quotaView, /未\|无法\|不能[\s\S]*?return false/);
   assert.match(app, /function isLowOutputGptLimitMessage[\s\S]*?未\|无法\|不能[\s\S]*?return false/);
   assert.match(app, /\(\?:只检测到\|完整回复只有\)/);
   assert.match(gptSidebar, /copy-turn-action-button/);
   assert.match(gptSidebar, /assistant-response-quiet-complete/);
-  assert.match(gptSidebar, /未判定额度触顶/);
+  assert.match(gptSidebar, /error\.code = "IMAGE_COUNT_UNCERTAIN"/);
   assert.match(app, /LEGACY_IMAGE_COUNT_RECHECK/);
   assert.match(app, /本轮只检测到\\s\*1\\s\*张/);
   assert.match(app, /task\.retryFromStage = "等待图片"/);
@@ -2102,6 +2117,16 @@ test("production confirmation stays in the main action dock and starts with one 
   assert.match(app, /workbenchPlanPanel"\)\?\.scrollIntoView/);
   assert.doesNotMatch(app, /data-confirm-production-plan/);
   assert.match(css, /\.workbench-action-dock\{position:sticky/);
+});
+
+test("the first production action is named for plan creation, not image generation", () => {
+  assert.match(html, /id="createProductionPlanBtn"[^>]*>生成生产计划<\/button>/);
+  assert.match(html, /id="workbenchStartProductionBtn"[^>]*>生成生产计划<\/button>/);
+  assert.match(html, /id="productionLiveStatus"[^>]*>先选择一个或多个素材文件夹和一个模板，再点击“生成生产计划”；核对后才会开始生图/);
+  assert.match(app, /activeProductionPlan\s*\?\s*confirmProductionPlan\(\)\s*:\s*createProductionPlan\(\)/);
+  assert.match(app, /async function createProductionPlan\(\)[\s\S]*?api\("\/api\/production\/plan"/);
+  assert.match(app, /async function confirmProductionPlan\(\)[\s\S]*?api\("\/api\/production\/run"/);
+  assert.match(app, /createProductionPlanBtn"\)\)\s*\$\("#createProductionPlanBtn"\)\.textContent = "生成首张校准图（仅1次调用）"/);
 });
 
 test("production model and page controls use one compact toolbar", () => {

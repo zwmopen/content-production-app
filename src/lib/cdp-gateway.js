@@ -1,7 +1,7 @@
 const http = require("http");
 const cdpViewportService = require("./cdp-viewport-service");
 
-const GATEWAY_PORT = Number(process.env.CDP_GATEWAY_PORT || 9433);
+const GATEWAY_PORT = Number(process.env.CDP_GATEWAY_PORT || 9449);
 
 const server = http.createServer((req, res) => {
   // Add CORS headers so webview / container / iframe can call from 4332 or anywhere
