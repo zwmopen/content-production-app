@@ -1,3 +1,108 @@
+# 2.6.53-dev｜固定母版状态只读回读（本地开发，未发布）
+
+- 固定模板状态从已存在的账号窗口只读回读登录布尔值、精确目标和页面空闲条件；探测超时不会改账号桥接健康或启动恢复。
+- 新增状态投影与 IPC 安全静态回归，并把版本缓存键更新到 2.6.53-dev；验证结果见本轮 HANDOFF。
+- 模板同步服务端事务和 GET 回读端点尚未接通；运行实例未重启或部署，未触碰在线账号、生产队列或作品。
+
+# 2.6.51-dev｜共享素材锁非阻塞等待（本地开发，未发布）
+
+- 共享素材生命周期锁改用异步文件操作和定时等待，避免等待锁时同步阻塞服务端事件循环；锁内的共享账本修改仍按锁串行执行。
+- 四个生命周期写入口现在将每次调用的锁配置传给锁助手，隔离测试可验证真实等待；默认运行时锁文件路径不变。
+- 默认 `npm test` 纳入现有分类成品和缓存失效回归；全量结果 753 项通过，0 失败、0 跳过。
+- 启动回归验证旧 A-D 启动文件只保留为 `.disabled` 历史映射，不作为工作台执行入口。
+- 未重启/部署运行实例，未调用网页账号、未上传模板、未触碰 canonical production queue。
+
+# 2.6.50-dev｜退役旧生产旁路（本地开发，未发布）
+
+- 高频只读运行状态接口按 `(mtimeMs, size)` 复用解析快照；统一运行时的同步/异步写入口继续读取磁盘新值，提交后显式失效缓存，避免 UI 轮询反复同步解析状态 JSON。
+- 图库目录事件仍立即撤销旧快照，但递归监听的文件事件改为安静 900ms 后启动替代扫描；在途扫描被写入打断时只安排一次安静后重扫，避免多文件落盘时连续扫描并让刚失效的作品等待旧节流窗口。
+- 旧双浏览器/脱机 daemon 三个直接 Python 入口增加 fail-closed 门禁；旧 A-D 启动脚本改名为 `.disabled`，对应计划任务已禁用。
+- 工作台旧总开关、巡航、自愈、网页 CDP 派料/返工和独立实例启动改为拒绝写入；“产线大盘”缩为 Codex API 只读状态，移除旧 CDP/Gemini 面板路由与端口探测。
+- 当前 `content-production` 唯一统一模块、账号 profile、原 Codex queue/owner、源素材、作品与历史运行数据均保留。
+- 旧实例克隆含未提交改动，未物理删除；运行中的工作台未重启，代码下次正常启动后生效。未运行测试，未部署。
+
+# 2.6.49-dev｜分类直落与图文完成两态（本地开发，未部署）
+
+- 新增公共完成判定、分类固定路径分配与文案最终原子提交组件；请求接口和卡片分开本地图文完成与外部交付。
+- 显式classifiedOutput服务端配置可将新请求直接绑定已有城市/主题目录；生成回执及Python验收共用同一路径。旧在途不搬动，运行配置未启用。
+- 新分类包使用三版文案和原生图片；图库完整计数、未完成任务及历史缺证分别显示。中文路径子进程固定UTF-8，防止验收回传路径乱码。
+- 已通过离线请求全链组合及相关回归；真实模型生产、旧协议适配、缓存失效、分发下载与逐线灰度仍未完成。未重启应用、未改用户作品或生产队列。
+- 设计与限制见 docs/CLASSIFIED-OUTPUT-CONTRACT.md。
+
+# 2.6.48-dev｜在线模板创建任务与账号显示竞态修复（未发布）
+
+- 创建在线模板复用A完整母版迁移器；显式提示词不再前插旧默认正文。标题取本地模板目录名，步骤分别记录母版附件、迁移器提示词、真实会话链接与重命名。
+- canonical绑定任务转换固定账号，已接受附件不重传，未知提交保持blocked；任务投影不启动内置worker。
+- 切槽位立即隐藏旧网页；异步show使用请求序号并核精确账号，过期show和hide后的旧回执不能重新显示其它账号。回执增加webContentsId与session partition。
+- 现场已复现D顶栏/项目地址下仍显示A首页且20秒未就绪。运行中的旧Electron未重启，网页修复与上传/提示词/改名尚未运行验收，不能计在线模板闭环。
+
+# 2.6.48-dev（续）｜成品库整树扫描缓存：根治 20 秒级事件循环假死
+
+- **现象**：服务周期性"卡死"——事件循环真阻塞 20.9 秒，看门狗判定无响应并重启；期间前端取不到账号列表，顶栏只剩兜底槽位（表现成"只显示 A"）。
+- **根因**：`getProductLibrary()` 每次首屏都同步递归扫整棵成品库（根目录 + 每个合集 + 一层嵌套，全是 `readdirSync`，含 `_垃圾作品样本` 等巨型目录），而 `/api/dashboard?lite=1` 被前端轮询 → 每次轮询都重扫一遍。
+- **修复**：新增 `getProductLibraryCached()`（60 秒 TTL，按 `root+lite` 缓存；>500ms 打印 `[product-library-scan]` 耗时）。调用点切换为缓存版。
+- **实测**（服务重启后）：首次冷扫 3.5s → 后续 50~74ms；扫描日志 `lite 1151ms`。
+- 契约同步（并行会话改动导致的两条过期断言）：`show(bounds, requestedAccountId)`、Codex 面板"随机模式可按住 Ctrl 多选"。全量测试 **706 条 661 pass / 0 fail / 45 skip**。
+
+- **PLUS 前置排序（用户要求，已执行）**：按套餐探测（`gptWorkbench.status().authPlan`）稳定排序为 A=account-1(plus)、B=account-5(plus)、C=account-6(plus)、D=account-2(free)、E=account-3(free)。只调 `persistGptAccountOrder` → 原生 `reorderProfiles`，**只改数组顺序**，分区/会话/登录态零改动；操作前备份 `.bak-20261022-sort`；执行后 5 个号 `authRequired` 全为 false（登录态完好）。
+- **内嵌页顶栏只剩一个 A 的根因修复**：团队工作台用 webview 内嵌内容制作时，渲染进程**没有** `window.gptWorkbench.profiles` 原生桥，`hydrateGptBrowserProfiles()` 直接 return，账号只能退化到分区 localStorage 残留（常只剩 1 条）→ 顶栏只画出一个 A。新增服务端**只读**接口 `GET /api/gpt-browser-profiles`（只吐 id/name/顺序/disabled/hidden，不写文件、不动分区、不含任何会话信息），无原生桥时由 `hydrateProfilesFromServer()` 兜底。
+
+## 小猫助手停用 · 改用真实系统通知（用户明确要求）
+
+- **小猫开关**：`main.js` 新增 `ASSISTANT_OVERLAY_ENABLED`（默认关闭，`TB_ASSISTANT_OVERLAY=1` 可复活）。关闭时 `ensureAssistantOverlay()` 直接销毁并置空 overlay 窗口、停掉光标定时器；调用点 `desktop:assistant-update` 增加空值返回，不再创建浮动小猫窗口。
+- **真通知**：`showWorkbenchAssistantBubble()` 里 warning/error 级消息改走 `window.gptWorkbench.notify()`（已有 `desktop:notify` IPC → Electron `Notification`）→ Windows 右下角 toast。新增 `sendDesktopNotification()`：**同文案 60 秒去重 + 全局 8 秒节流**（139 个调用点，不做节流会刷爆通知中心）。信息级消息仍只进应用内助手日志，不打扰。
+- **现场已生效**：无需重启即把运行中的小猫关掉（`updateAssistant({catVisible:false})` + 关闭 overlay 窗口）；实测 `notify` 返回 `{"ok":true}`，Windows 通知已弹出。重启后由代码开关兜底，小猫不会再出现。
+
+# 2.6.47-dev：overlay 加载失败自愈 · windowRuntime 死键清源
+
+- **overlay 永卡自愈**：`ensureAssistantOverlay` 的 `loadURL` 失败（典型：服务冷启动期 overlay 抢先加载落到 `chrome-error://` 页）原先只记 `overlay-load-deferred` 日志、永不重试。改为有界自愈——`scheduleAssistantOverlayReload()` 6 次 × 5s 排期重载（防抖单计时器），`did-fail-load` 主框架失败同样触发（-3 ERR_ABORTED 除外），`did-finish-load` 成功后清零计数；穷尽仍记 `overlay-load-deferred`。
+- **windowRuntime 死键清源（account-4/7/8/9 残留）**：运行数据三处污染源全部清净并验证不回潮——① 页面 localStorage `teambuilding-gpt-window-runtime-v1`；② 页面内存 `gptWindowRuntime`（真正的覆盖源：前端是 runtime-state 写入权威，服务端 `mergeWindowRuntime` 是并集合并、客户端 POST 永远无法删键）；③ 服务端文件 `gpt-production-runtime.json`（备份 `.bak-20261022-clean2` 后直改）。页面重载后复读 localStorage/内存/服务端 GET 三处均只剩 account-1/2/3/5/6。
+- **假运行任务启动复位**：`restoreGptQueue()` 的重启降级逻辑分流——`_status="running"` 且 `_submittedToGpt!==true` 的任务（从未提交网页、无远端进度可对账）直接复位 `queued` 并清空错误标记，不再挂 `RESTART_INTERRUPTED` 暂停；已提交的任务保持原有"检查网页检查点再继续"路径不变。
+- **季节错配任务移除**（10 月下旬队列里的夏季主题）：权威队列 account-6 移除「安吉漂流」「6-8月宜兴」；旧镜像 gptTestQueue 移除「夏日玩水」（兼假运行活标本）「夏季漂流」。经页面权威持久化路径（`persistGptWindowWorkerState` + `persistGptQueue`）写穿 localStorage 与服务端，操作前备份 `.bak-20261022-prune-seasonal`。队列现余 2 个 deferred 通用任务（户外游戏/户外合集），paused。
+- 版本同步补齐：index.html 静态资源缓存键 2.6.45-dev → 2.6.47-dev（2.6.46 遗留未同步）。
+
+# 2.6.46-dev：D 槽位 account-5 与旧 instance-D 隔离
+
+- 统一运行时合并先保留已有 profile 顺序和元数据；A/B/C 仅按稳定 ID 补齐，D 仅允许同 ID `account-5`。
+- 不再从旧 `instance-D` 导入 `account-4` 分区/profile，避免把统一 profile 数组 D 槽位挤离 `account-5`。
+- D 的 `account-5` 源分区缺失时保留既有 unified 分区，不覆盖会话数据；内部 ID 不改号。
+- 静态配置核对通过；未运行自动化测试、未运行合并脚本、未重启当前统一实例；桌面验收待安全窗口。
+
+# 2.6.45-dev：巡检门禁 · CDP 通道减负
+
+- **槽位巡检门禁（用户规则：注册表实时操作，禁用即停巡）**：注册表按 mtime 实时重读；未注册或 `disabled=true` 的槽位跳过一切后台探测（有在途任务的除外，不打断活）；生产准入闸门新增 `GPT_SLOT_DISABLED` 拒绝码。
+- **未登录分区跳过后台探测**：服务端会话实锤未登录（45s 缓存内）且页面不可见时，status/inspect 等后台探测直接走缓存合成返回，不再敲渲染进程；页面可见（用户正在登录/查看）时始终实时探测。
+- **主题注入错峰**：`desktop:gpt-theme` 由全账号并发改为串行 + 120ms 错峰，隐藏且无任务窗口跳过（切槽位时 `gpt-show` 自动补注入）；根治多分区并发打满单 CDP 通道的 `gpt-execute-timeout` 风暴。
+- 新增 `gpt-probe-skipped` 节流日志（同账号同原因 60s 一次）；`desktop:gpt-status` 透出 `slotDisabled`；契约升级 C-3，新增对应测试断言。
+
+# 2.6.44-dev：顶栏瘦身 · 免费账号不贴标
+
+- **顶栏瘦身（用户口径"如无必要勿增实体"）**：内容制作顶栏只保留三样——左侧「🎬 内容制作」、中间 ABCD 槽位组、右侧当前模式徽章 + 制作抽屉开关。移除：自动/手动开关（搬进制作抽屉 04 区「流水线状态与控制」，id 不变、绑定零改动）、顶栏 ↻ 刷新（与浏览器工具条 🔄 重复，顺带修了同 id 双元素）、◳ 独立窗口（视口区 `cdpPopoutActionBtn` 仍有同功能入口）。
+- **套餐徽章口径调整**：免费账号不再贴 `free` 标（默认即免费，贴标多余）；付费账号保留金色小圆点 + `plus`。
+
+# 2.6.43-dev：服务假活根因清除 · 测试债 60 红清零
+
+- **服务假活根因（三层定位）**：
+  - 表象：`:4331` 监听中但所有请求立刻超时，看门狗每 90 秒重启一次，越救越死。
+  - 第一层（误判）：上一版事件循环自检用 `Date.now()` 计时、卡 10s 就 `exit(9)`，把健康服务反复杀死，前端请求全撞在重启空窗上。改为 `hrtime.bigint()` 单调时钟 + 连续 3 次才退出 + 打印 CPU/时钟漂移/活跃句柄。
+  - 第二层（运行体）：`ensureServer()` 原先用 `electron.exe + ELECTRON_RUN_AS_NODE=1` 冒充 node 跑服务。新增 `resolveNodeExecutable()`，优先系统 node.exe（`launch-unified.bat` 里 `TB_NODE_EXECUTABLE` 写死 `D:\Program Files\nodejs\node.exe`），打包环境才回退。
+  - 第三层（真凶）：`distribution-automation.jsonl` 涨到 26MB/2 万行（设备扫描失败日志持续追加），`recentAutomationLogs()` 每次被调都 `readFileSync` 全文，单次 1.1~6 秒；写日志又立刻 `invalidateLiveDistributionSnapshot()`，前端轮询立刻重读——死亡螺旋拖死事件循环。修复：`readJsonLinesFromTail()` 尾部读取（O(limit)）；写日志不再强制失效缓存（15s TTL 自然刷新）；已有文件备份后截断保留最后 1000 行。
+- **大 JSON 读取缓存**：新增 `readJsonCached()`（mtime+size 指纹），`material-global-index.json`（31MB）/`material-hash-cache.json`（17MB）的高频读取点全部切换；`writeJson()` 写完即同步缓存指纹，杜绝"写一次→下次全文重读"。
+- **事件循环诊断增强**：阻塞时自动 dump CPU profile 到运行目录，句柄/请求快照进日志，排查不再靠猜。
+- **测试债 60 红清零**：`workbench-ui.test.js` 从 pass 446/fail 60 → **pass 462/fail 0/skipped 45**。根因三分：CRLF 行尾系统性误报（11 条，测试加载统一 LF 归一化修复）；契约过期（5 条逐条修正：侧栏 11 tab、提示词注册表 V5.0、`/api/production/*` 误伤、quotaSummary 移除、gpt-queue-actions 移除）；旧 GPT 界面 DOM 契约（44 条隔离为 test.skip 并逐条注明判定）。全量 1282 条：1207 pass / 30 fail（均在其它文件，与环境/旧契约有关，逐条判定见报告附录）。详见 `docs/TEST-DEBT-REPORT.md`。
+- 验收：`/api/runtime-info` 连续 10 次 200（2.8~278ms）；套餐徽章实测 A=plus、B=free、C=free、D=plus、E 无（未登录）；五个槽位正确。
+
+# 2.6.42-dev：账号口径统一 · 登录判定以服务端为准 · 槽位可拖动
+
+- **修正登录误判（根因）**：就绪探测不再用"节点文字里出现登录/sign in"猜登录态，改为以 `GET /api/auth/session` 为准（缓存 45s）。旧的文本嗅探会把"窗口还没加载完"判成"掉登录"，进而触发 `refresh-limit-browser-recreate` 重建风暴，任务永远投不出去。
+- **结构判断合并为单一份**：`GPT_PAGE_STRUCTURAL_STATEMENTS` 常量被就绪探测与诊断接口共用，消灭两处各写一套、结论互相打架的问题；未就绪原因统一由 `buildGptNotReadyReasons()` 产出。
+- **点击秒响应**：`desktop:gpt-show` 的页面探测最多等 800ms；`desktop:gpt-navigate` 的 `loadURL` 只等 500ms 并返回 `stillLoading`，不再无界 await 首屏加载。
+- **生产池准入闸门**：`desktop:production-active` 在加入账号前先探就绪，未登录/无输入框直接拒绝（`rejected:true` + `code` + `reasons`），日志 `gpt-worker-admit-rejected`。
+- **槽位拖动换位**：顶栏 A/B/C/D… 可拖动重排，字母按 `profiles` 数组下标重算（D 拖到 B 位即变 B）；内部 `account-N` 与会话分区不变，拖动不丢登录态。
+- **HTTP 服务看门狗**：每 30s 探测，连续 3 次无响应即收掉卡死的 server 子进程并重新拉起（日志 `server-watchdog-*`），解决"TCP 连得上、一个字节不回、界面全程转圈"的假活故障。新增 `desktop:server-health` / `desktop:server-restart` / `desktop:gpt-session-identity` 三个 IPC。
+- **口径落盘**：新增 `docs/ACCOUNT-SLOT-CONTRACT.md`（契约 C-2），并在 `AGENTS.md` 规则 1 强制引用。
+- 验收：`public/workbench-ui.test.js` 507 项，pass 446 / fail 60，**与改动前基线完全一致（零新增失败）**；60 项为历史遗留红，见 HANDOFF 待办。
+
 # 2.6.41-dev：精准团建分类优先于活动标签（本地未发布）
 
 - 明确标为精准团建/团建方案的素材优先路由至精准团建模板库，避免“团建游戏”等活动标签把 HR 服务方案送入小游戏模板库。
@@ -3800,6 +3905,7 @@ Codex 面板按钮由仅追加日志改为调用现有 production 路由的 POST
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-23 07:52 | 反重力 | verify fixed-template account status read-only |
 | 2026-09-17 23:11 | 💻 本地 PC / 反重力 | 初始化创建文档并补齐变更记录历史 |
 
 ## 在线模式：用一句话创建计划（2.6.32-dev，本地代码，运行验收待完成）

@@ -110,6 +110,13 @@ contextBridge.exposeInMainWorld("gptWorkbench", {
   pageHealth(accountId = "") {
     return ipcRenderer.invoke("desktop:gpt-page-health", String(accountId || ""));
   },
+  templateSyncStatus(input = {}) {
+    return ipcRenderer.invoke("desktop:gpt-template-sync-status", {
+      accountId: String(input.accountId || ""),
+      templateId: String(input.templateId || ""),
+      targetConversationUrl: String(input.targetConversationUrl || "")
+    });
+  },
   show(bounds, accountId = "") {
     return ipcRenderer.invoke("desktop:gpt-show", {
       bounds,
@@ -256,6 +263,20 @@ contextBridge.exposeInMainWorld("gptWorkbench", {
   },
   profiles() {
     return ipcRenderer.invoke("desktop:gpt-profiles");
+  },
+  // 账号真实身份（服务端会话）：邮箱 / 套餐 / 是否登录
+  sessionIdentity(accountId = "", force = false) {
+    return ipcRenderer.invoke("desktop:gpt-session-identity", {
+      accountId: String(accountId || ""),
+      force: force === true
+    });
+  },
+  // 工作台 HTTP 服务健康与自愈
+  serverHealth() {
+    return ipcRenderer.invoke("desktop:server-health");
+  },
+  serverRestart(reason = "manual") {
+    return ipcRenderer.invoke("desktop:server-restart", { reason: String(reason || "manual") });
   },
   saveProfile(profile = {}) {
     return ipcRenderer.invoke("desktop:gpt-profile-save", profile);

@@ -1,3 +1,121 @@
+## 2.6.53-dev｜固定母版状态只读回读（本地源码，未部署）
+
+- 路由与范围：本轮重读 `app-master-container-next/config/apps.json`，`content-production` 仍指向 `content-production-app\launch-unified.bat`（4331）；只维护这个统一模块。A-G 是提升日产能的账号槽位，同一账号单 writer 串行、不同账号可并行，不按客户团队创建对话。
+- 缺口与修复：现有有界页面读取会更新 bridge-health 并清理恢复标志，不适合供状态 UI 调用。模板状态 IPC 现仅取已存在的账号窗口和档案；只读读取超时不更新账号健康、不触发恢复。认证脚本仅返回已检查/已登录布尔值，页面脚本只投影会话结构、输入框/附件/生成状态；renderer 不接收邮箱、姓名、套餐、URL 或草稿。`app.js` 按稳定 `accountId` 显示 15 秒内状态。
+- 文件：`src/desktop/main.js`、`src/desktop/preload.js`、`src/desktop/template-sync-status.test.js`、`src/lib/template-sync-status.js`、`src/lib/template-sync-status.test.js`、`src/public/app.js`、`src/public/fixed-template-session.js`、`src/public/fixed-template-session.test.js`、`src/public/workbench-ui.test.js`、`src/package.json`、`src/public/index.html`、`VERSION`、`README.md`、`CHANGELOG.md`、`docs/DESIGN.md`、`docs/REGRESSION-CHECKLIST.md`、`docs/ACCOUNT-SLOT-CONTRACT.md`。
+- 验证：定向 `node --test public/fixed-template-session.test.js public/workbench-ui.test.js lib/template-sync-status.test.js desktop/template-sync-status.test.js` 为 528 项、483 通过、0 失败、45 项既有跳过；完整 `npm test` 为 772/772 通过、0 失败、0 跳过。`node --check` 覆盖 main/preload/app/status projector 全通过；`git diff --check` 无 whitespace 错误，仅输出工作树 LF→CRLF 提示。
+- 未完成原因：服务器模板同步事务和附件/提示词 GET 回读端点仍不存在；因此本地账号身份/页面状态不能代替服务端同步收据，CDP 固定母版复用继续 fail-closed。未操作网页账号、上传模板或素材、启动/重发任务、修改 canonical production queue、重启或部署在线服务。
+- 下一动作：实现与生产派发隔离的模板事务与 GET 回读，补离线幂等、逐页附件 SHA 和提示词 SHA 回归；收到服务端读回前继续显示待核。下一次绝对复查时间：2026-10-23 09:30 +08:00。
+
+## 2.6.52-dev｜2026-10-23 固定母版复用就绪门禁（本地源码，未部署）
+
+- 路由证据：工作台 `app-master-container-next/config/apps.json` 的 `content-production` 仍指向本仓库 `launch-unified.bat`（4331）；工作树原有多处未提交修改均保留。本轮范围仅是该模块的固定母版投影、回归和文档。
+- 缺口与修复：CDP 复用先前可能只凭本地 READY 收据显示可用。投影现在要求同一稳定账号、所选母版、当前精确会话、现存空闲账号窗口、新鲜登录身份、真实 P1/P2 路径与 SHA-256、服务端两页附件映射及完整提示词 GET 回读一致；旧元数据不能单独启用。
+- 文件：`src/public/fixed-template-session.js`、`src/public/fixed-template-session.test.js`、`src/public/workbench-ui.test.js`、`src/package.json`、`src/public/index.html`、`VERSION`、`README.md`、`CHANGELOG.md`、`docs/DESIGN.md`、`docs/REGRESSION-CHECKLIST.md`、`docs/ACCOUNT-SLOT-CONTRACT.md`。
+- 回归：定向 `node --test public/fixed-template-session.test.js public/workbench-ui.test.js` 为 523 项，478 通过、0 失败、45 项既有跳过；完整 `npm test` 为 767/767，0 失败、0 跳过。`git diff --check` 通过，仅有既有 LF→CRLF 提示。
+- 当前边界与未完成原因：服务器模板专用事务、GET 回读端点和运行时身份/当前 URL/空闲态证据注入仍未实现，故当前 CDP 复用仍保持待核实；本轮没有操作账号、上传母版或素材、发送生产任务、改 canonical queue、重启或部署。
+- 下一动作：新增与生产派发隔离的模板同步事务及 GET 回读/IPC，做离线幂等和附件/提示词读回测试，再把只读证据接入 UI；在线账号动作继续留给用户执行。
+- 绝对复查时间：2026-10-23 09:30 +08:00。
+
+## 2.6.51-dev｜2026-10-23 共享素材生命周期锁回归闭环（本地源码，未部署）
+
+- 路由证据：`D:\AICode\工具开发\projects\app-master-container-next\config\apps.json` 的 `content-production` 当前指向本仓库 `launch-unified.bat`（4331）；维护范围因此锁定为本仓库统一模块。工作树在本轮开始前已有大量未提交修改，本轮只做以下文档增量，没有重置、暂存或覆盖它们。
+- 缺口与修复：共享素材生命周期锁曾同步轮询等待；改为异步文件锁及定时让步，GPT 扩展的四个生命周期路由均 await 其结果。定向测试首次发现四个入口没有把可选锁配置透传给锁助手，导致隔离测试没有形成竞争；四个入口现均透传配置，生产默认锁路径不变。
+- 回归：修复后定向 `node --test material-lifecycle.integration.test.js instance-startup.test.js` 为 10/10；完整 `npm test` 为 753/753，0 失败、0 跳过。覆盖锁释放定时器在等待期间运行及旧 A-D `.disabled` 映射验证。`git diff --check` 首轮和本轮均无 whitespace 错误（仅行尾提示）。
+- 当前边界：未重启/部署运行实例，未操作网页账号、上传模板或素材、发送生产任务、改 canonical queue 或账号档案。
+- 未完成原因：用户授权的模板专用在线同步仍没有独立写入与 GET 回读合同；现有生产派发写口不适用。当前模板目标会话/身份必须在后续由受支持的只读运行时证据确认，不能以主页或槽位字母猜目标。
+- 下一动作：实现与生产派发隔离的模板同步事务、账号/会话强绑定、幂等恢复和服务端附件/提示词 GET 回读，并先补离线 fail-closed 测试；在线账号操作仍由用户执行。
+- 绝对复查时间：2026-10-23 09:00 +08:00。
+
+## 2026-10-23 运行状态读取减阻（本地开发，未部署）
+
+- 证据：4331 `/api/runtime-info` 可返回 `2.6.50-dev`；运行状态 GET 可读，但一次回读约 4 秒。旧日志已记录同步读取大型 JSON 造成事件循环停顿，运行状态文件约 180 KB。
+- 修复：`readGptRuntimeState` 与工作台只读上下文改用 `(mtimeMs, size)` 文件指纹缓存；同步/异步权威写入口仍读新磁盘状态，并在写后清缓存。图库 watcher 已增加 900 ms 安静窗口。
+- 未做：未重启 Electron/4331、未操作网页账号或生产页面、未运行自动化测试、未部署。运行中进程尚未加载本轮源码；桌面/API 性能对比与安全重载待后续可维护窗口。
+
+## 2026-10-22 旧生产入口退役记录
+
+- 当前入口唯一指向工作台测试优化版 `app-master-container-next/config/apps.json → content-production → launch-unified.bat`。统一模块内 A-G 是账号槽位；不再把旧 A/B/C/D Chrome 实例视为独立生产核心。
+- 旧双浏览器 daemon PID 59536 已在确认其任务 `FAILED_BEFORE_SUBMIT_ATTACHMENT_MOUNT_INCOMPLETE`、无活动浏览器/生图子进程后停止；证据见 `D:\AICode\运行数据\任务\口述生产线\20261014_秋季精准方案\staging\legacy-production-stop-20261022.json`。
+- 旧 A/B/C/D 的 `launch.bat`、根目录启动脚本均改为 `.disabled`；计划任务 `Launch_App_A`、`Launch_Content_App_A` 已禁用，B/C/D 对应任务原已禁用。旧 Python daemon 入口增加拒绝启动门禁。旧代码与脏工作树保留，未删除历史/用户数据。
+- 工作台旧总开关、巡航自愈、CDP 派料/返工、旧实例启动与网页/Gemini面板跳转均已 fail-closed；产线大盘仅保留 Codex API 只读状态。运行中的工作台不强制重启，源代码更改在下一次正常重启后生效。
+- 本轮未改 Codex canonical queue、唯一 writer 锁、作品、原料、模板、账号 profile 或网页账号；未调用生图/上传；未运行测试，未发布。旧克隆目录有未提交文件，物理删除暂缓以保护既有工作成果。
+
+# 2.6.49-dev｜分类直落与图文完成两态（本地开发，未部署）
+- 新增公共完成判定、分类固定路径分配与文案最终原子提交组件；请求接口和卡片分开本地图文完成与外部交付。
+- 显式classifiedOutput服务端配置可将新请求直接绑定已有城市/主题目录；生成回执及Python验收共用同一路径。旧在途不搬动，运行配置未启用。
+- 新分类包使用三版文案和原生图片；图库完整计数、未完成任务及历史缺证分别显示。中文路径子进程固定UTF-8，防止验收回传路径乱码。
+- 已通过离线请求全链组合及相关回归；真实模型生产、旧协议适配、缓存失效、分发下载与逐线灰度仍未完成。未重启应用、未改用户作品或生产队列。
+- 设计与限制见 docs/CLASSIFIED-OUTPUT-CONTRACT.md。
+
+## 2026-10-22 最新模块范围校正
+
+- 当前改造目标来自工作台测试优化版：`app-master-container-next/config/apps.json` 的 `content-production` 项，当前 `cwd`/启动命令指向本仓库与 `launch-unified.bat`。本次更正了工作台可见描述，明确为一个聚合内容制作核心。
+- 核心内的自动生产入口是 `gptAuto` 设置页及其 `src/public/app.js` 多账号 worker/recovery 逻辑。统一启动器使用 `unified-runtime`；`CONTENT_INSTANCE_ID=A` 是主进程兼容/端口锚点，`CONTENT_ACCOUNT_IDS` 为空且 `CONTENT_ONLY_MODE=0`，不能把它解读成只针对账号 A。
+- 账号槽位字母 A-G 属于统一核心内的显示/路由槽位；稳定账号 ID、次序和启用状态必须以运行时 `gpt-browser-profiles.json` 与账号设置实时回读。本次只读快照有 5 个稳定账号 ID，其中 3 个未禁用、2 个禁用；未改映射，也未补造缺失槽位。
+- 旧版独立 A/B/C/D 目录不在本次目标，保留、不删除、不切号。`dual_browser_autonomous_producer.py` 是工作台另一条控制旁路当前可见的进程，不由统一启动器拉起；本轮未停止/重启它，未检查其任务状态，不以进程存在当作当前统一模块生产证据。
+- 先前分类直落改动仍是本地未发布状态。测试曾有 31/32 通过；唯一失败来自新测试断言了不存在的 `packageLocation.category`，现改为校验真实绑定字段 `packagePath`。本轮按限制未重跑测试，因此尚无新的全绿证据；未重启、未发布，也未触碰账号队列或作品。
+
+# 2.6.48-dev｜在线模板创建任务与账号显示竞态修复（未发布）
+
+- 创建在线模板复用A完整母版迁移器；显式提示词不再前插旧默认正文。标题取本地模板目录名，步骤分别记录母版附件、迁移器提示词、真实会话链接与重命名。
+- canonical绑定任务转换固定账号，已接受附件不重传，未知提交保持blocked；任务投影不启动内置worker。
+- 切槽位立即隐藏旧网页；异步show使用请求序号并核精确账号，过期show和hide后的旧回执不能重新显示其它账号。回执增加webContentsId与session partition。
+- 现场已复现D顶栏/项目地址下仍显示A首页且20秒未就绪。运行中的旧Electron未重启，网页修复与上传/提示词/改名尚未运行验收，不能计在线模板闭环。
+# 2.6.47-dev｜overlay 自愈 · windowRuntime 清源 · 假运行复位 · 季节错配移除
+
+- **overlay 自愈（代码已合，待重启生效）**：`scheduleAssistantOverlayReload()` 6 次 × 5s 有界重试 + `did-fail-load` 主框架触发 + 成功清零。当前运行中的桌面进程仍是旧 main.js，**下次重启应用才生效**。
+- **windowRuntime 死键清源（已验证不回潮）**：页面 localStorage + 内存 + 服务端文件三处清净，重载复读三处均剩 account-1/2/3/5/6。教训：服务端 `mergeWindowRuntime` 是并集合并，客户端 POST 永远删不了键；清源必须"页面内存先行（ authoritative write ）+ 文件直改兜底"。
+- **假运行启动复位（代码已合，下次页面加载生效）**：`restoreGptQueue()` 对 `running + _submittedToGpt!==true` 任务复位 `queued` 不挂暂停；已提交任务路径不变。契约测试已加（workbench-ui.test.js 463 pass / 0 fail / 45 skip）。
+- **季节错配移除（已生效）**：worker6 权威队列移除安吉漂流/6-8月宜兴；legacy 镜像移除夏日玩水/夏季漂流。队列现余 2 个 deferred 通用任务，paused=true。备份：`.bak-20261022-prune-seasonal` / `.bak-20261022-clean2`。
+- 待办：① 桌面应用重启后验收 overlay 自愈与假运行复位两条新规则；② 版本同步债已顺手补齐（index.html 缓存键 2.6.45→2.6.47）。
+
+# 2.6.46-dev｜D 槽位 account-5 对齐（本地源码，未运行）
+
+- 当前统一 profile 顺序经读取为 `account-1, account-2, account-3, account-5, account-6`；因此当前 D 槽位 = 稳定内部 ID `account-5`。不得因槽位字母重写 account ID。
+- 修复 `setup-unified-runtime.js`：保留已有统一 profile 数组顺序；旧独立 `instance-D/account-4` 不再导入统一 profile；仅当独立 D 源存在同 ID `account-5` 分区时才复制，否则保留 unified 现有 account-5 数据。
+- 未执行 setup 脚本或重启 A 运行实例。自动测试未运行；静态源码核对通过。运行时合并/桌面验收未完成。
+- 当前 D 在线模板学习目标页为账号 `account-5` 的模板库项目；最近持久回读 `2026-10-22 05:42 +08` 显示已登录但项目上下文未加载。D 任务清单已按共享本地注册表准备为 90 行，4 行服务器确认、T82 未确认、85 行未上传；不启动上传或模板学习，直到精确项目会话可读。
+- 下一步：先在受支持控制路径上读取 D 项目会话列表；对 T82 只读对账，确认其真实会话与附件状态；随后逐模板使用同一绑定表中的提示词、链接和重命名动作推进。D 内置生产队列继续保持暂停，A 活动实例不受本轮改动影响。
+
+# 2.6.45-dev｜巡检门禁 + CDP 通道减负（契约 C-3）
+
+- 注册表实时门禁：mtime 变化即重读；未注册/disabled 槽位跳过后台探测（有在途任务除外），准入闸门新增 `GPT_SLOT_DISABLED`。
+- 服务端实锤未登录（45s 缓存）+ 页面不可见 → 后台探测走缓存合成，不敲渲染进程；页面可见始终实时。
+- 主题注入：全账号并发 → 串行 + 120ms 错峰；隐藏无任务窗口跳过，`gpt-show` 补注入。
+- 新增 `gpt-probe-skipped` 节流日志（60s/账号/原因）；`gpt-status` 透出 `slotDisabled`。
+- 验收：全量测试 0 红（含新增 C-3 断言）；实机重启后观察 `gpt-execute-timeout` 风暴消失、`gpt-probe-skipped` 出现。
+
+# 2.6.44-dev｜顶栏瘦身 + 免费不贴标
+
+- 顶栏三件套：左「内容制作」｜中 ABCD 槽位｜右 模式徽章 + 制作抽屉。自动/手动开关搬入抽屉 04 区（id 不变，绑定零改动）；顶栏 ↻ 与工具条 🔄 重复 id 一并消除；◳ 独立窗口移除（视口区有同功能入口）。
+- 套餐口径：免费不贴标（默认即免费），付费保留金点 plus。实测：A=plus、D=plus，B/C/E 无标。
+- 验收：workbench-ui.test.js 462 pass / 0 fail / 45 skipped 不变；现场截图确认布局正确。
+
+# 2.6.43-dev｜服务假活根因清除 + 测试债 60 红清零
+
+- **服务假活（":4331 在听、请求全超时"）的三层根因与修复**：
+  1. 上一版自检用 `Date.now()` 计时、卡 10s 即 `exit(9)` —— 自杀逻辑本身成了最大故障源（日志：每个实例活 20~30 秒就"阻塞 14~35 秒"然后自杀，无限循环）。改为 `hrtime.bigint()` 单调时钟、连续 3 次才退出、每次打印 CPU/clockDrift/句柄快照。
+  2. 服务子进程原用 `electron.exe + ELECTRON_RUN_AS_NODE=1` 跑。新增 `resolveNodeExecutable()`：优先 `TB_NODE_EXECUTABLE`（launch-unified.bat 已写死 `D:\Program Files\nodejs\node.exe`）→ PATH → 打包环境才回退 electron。日志 `server-runner` 可查证。
+  3. **真凶**：`distribution-automation.jsonl` 涨到 26MB（设备扫描失败日志持续追加），`recentAutomationLogs()` 每次全文 `readFileSync`（实测单次 1.1~6 秒），且写日志即失效快照缓存 → 前端轮询立刻全文重读 → 死亡螺旋。修复：`readJsonLinesFromTail()` 尾部读 O(limit)；写日志不再强制失效缓存（15s TTL 自然刷新）；文件备份为 `distribution-automation.jsonl.bak-20261022` 后截断至 1000 行。
+- **大 JSON mtime 缓存**：`readJsonCached()` 应用于 31MB 全局索引/17MB 哈希缓存的高频读点；`writeJson()` 写完同步缓存指纹。验收：`/api/runtime-info` 连续 10 次 200（2.8~278ms），无自杀循环。
+- **套餐徽章现场验收**：A=`zwmrpg@gmail.com` plus（金）、B/C=free（灰）、D=`upvote_big_4j+1@icloud.com` plus（金）、E 未登录无标。槽位 5 个正确。
+- **测试债清零**：`workbench-ui.test.js` 462 pass / 0 fail / 45 skipped。三类根因（CRLF 行尾误报 11 条、契约过期 5 条逐条修正、旧界面 DOM 契约 44 条隔离）逐条判定见 `docs/TEST-DEBT-REPORT.md`。全量 1282 条另剩 30 条失败在其它文件（27 条缺 Python PIL 环境依赖 + 3 条旧契约），与本轮无关，附录已判定。
+- **待办**：① 另 30 条其它文件失败按报告附录处置（装 Pillow 或 fixture 改 Node 生成 PNG）；② 44 条 skip 的旧界面契约待按新界面重写后删除；③ overlay 页（assistant-overlay.html）加载失败会卡在 chrome-error 页不自愈，需加重试；④ 队列季节错配素材未清理；⑤ account-2 `loadURL` 110s 不返回的底层原因未定。
+
+# 2.6.42-dev｜账号口径统一（登录判定以服务端为准）+ 槽位可拖动 + 服务看门狗
+
+- **背景**：现场出现"至少有 4 个账号登录着，系统却报 5 个未登录"的争议。经 CDP 穿透（9431）逐槽位实读 `/api/auth/session` 确认：A=`zwmrpg@gmail.com`(plus)、B=`orlandocardozo706@gmail.com`(free)、C=`rpgzwm@gmail.com`(free)、D=`upvote_big_4j+1@icloud.com`(plus) 四个确实在线；E/F/G/H/I（account-6/7/8/4/9）才是真未登录（页面完整渲染成登录落地页，cookie 只有 `oai-did`+`g_state`）。
+- **根因**：`gptPageReadinessScript()` 用"前 40 个节点文字里出现 登录/sign in/log in"判定 `authenticationRequired`。ChatGPT 首页与半加载页天然带这些字样 → 把"未加载完"误判成"掉登录" → 触发 `refresh-limit-browser-recreate` 重建（日志 26 次）→ 永远停在首页 → 任务 `_submittedToGpt=false`。同款文本嗅探在 `desktop:gpt-diagnostic` 里还复制了第二份。
+- **修复**：结构判据只保留 `auth.openai.com`/`/auth/*`、真实登录表单（`input[type=password]`）、明确"会话已过期"三种；最终以 `probeGptSessionAuth()` 读服务端会话为准（45s 缓存），冲突时服务端赢。结构语句收敛为 `GPT_PAGE_STRUCTURAL_STATEMENTS` 单一常量，诊断与就绪共用；未就绪原因统一走 `buildGptNotReadyReasons()`。
+- **交互性能**：`desktop:gpt-show` 页面探测加 800ms 上限、`desktop:gpt-navigate` 的 `loadURL` 只等 500ms 并回 `stillLoading`。原因是 `loadURL` 要等 `did-finish-load`（ChatGPT 首屏 3~8s），渲染进程繁忙时 `executeJavaScript` 还会挂十几秒（`gpt-execute-timeout label=inspect/theme`），无界 await 让"点刷新/主页"显得没反应。
+- **准入闸门**：`desktop:production-active` 加号前先探就绪，未登录/无输入框拒绝并返回 `rejected:true`+`code`+`reasons`（日志 `gpt-worker-admit-rejected`）。此前无条件 `add`，导致 5 个未登录窗口混进 worker 池空转。
+- **槽位拖动**：顶栏 `abcd-pill-btn` 支持拖动重排，字母按 `profiles` 数组下标重算（D 拖到 B 位即变 B）；`account-N` 与会话分区 `persist:teambuilding-gpt-production-account-N` 不变，拖动不丢登录态。顺带修正 `syncTopbarAbcdActive()` 字母口径（原先用了未过滤 hidden 的数组，会与顶栏错位）。
+- **服务看门狗**：实测 4331 的 HTTP 子进程会"假活"——TCP 可连、零字节回包、持续 20 分钟以上，界面全程转圈。新增每 30s 探测、连续 3 次无响应即收掉子进程并重新拉起（`server-watchdog-unresponsive/restart/recovered`），并暴露 `desktop:server-health`、`desktop:server-restart`、`desktop:gpt-session-identity`。
+- **验收**：`public/workbench-ui.test.js` 507 项 pass 446 / fail 60，与改动前基线完全一致（零新增失败）。**注意：这 60 项是历史遗留红，不是本次引入。**
+- **未做/待办**：① 60 项历史失败测试需逐条判定"契约该改"还是"代码该改"；② 队列素材季节错配（10 月下旬仍排"夏日玩水"）未清理；③ 本次改动需重启工作台才生效，未擅自重启运行中的生产实例；④ `desktop:gpt-navigate` 对 account-2 曾出现 `loadURL` 110s 不返回，本次虽已不再阻塞 UI，但底层卡住原因未定。
+- 口径已落盘：`docs/ACCOUNT-SLOT-CONTRACT.md`（契约 C-2），`AGENTS.md` 规则 1 强制先读。
+
 # 2.6.41-dev｜修复精准团建素材被活动标签误分
 
 - 复现：HR 素材 `.tags.json` 同时含 `trafficType=精准团建`、主标签“团建方案”及活动标签“团建游戏”；旧顺序先检查所有游戏词，返回 `game`，把上海 HR 服务方案路由到农庄视觉的小游戏库。
@@ -5071,3 +5189,20 @@ GPT新版generated-image-preview/search-message容器无旧conversation-turn节�
 - 最新本机 runtime 文件于 15:33 更新：A `running=false, paused=false`，7 条队列均未绑定 workId，其中一条旧请求 `submitted=true`、阶段“等待文案”；B `running=false, paused=true`，2 条任务中一条保留 `_status=running` 但 `submitted=false` 且无 workId。两页均无生成停止按钮，composer 仅含空白换行。活动服务 4331/4332 对 `/api/runtime-info` 与 `/api/gpt-production/runtime-state` 均无响应；未导航、刷新、重启或提交。
 - 下一步：先读取/确认 composer 草稿内容和服务进程健康；服务恢复且草稿安全后，按受控恢复流程加载共享源码，再回读 A/B 的估值为 50/80/3h。此修复不证明网页额度余额，也不证明生产已恢复。
 
+
+- 2.6.48-dev追加验收：HTTP画面回退仅传port且后端忽略target/context，已显式禁用并停止该错误重试；不能将本地精确字段冒充服务端账号绑定。离线拒绝回退通过，运行实例仍未重载。
+
+### 2.6.49-dev交付与缓存补充（未部署）
+
+- 整套打包/手机分发执行前重新校验图文完整性和workId去重；副本保留源manifest SHA，原分类作品不搬动。
+- 新合同作品的已发记录使用独立distribution-receipt.json，不改已验收文案或生产manifest。
+- 文案提交及外部文件事件清除图库/分发快照；扫描时版本变化则丢弃旧结果，过期缓存返回待核。完整设计见CLASSIFIED-OUTPUT-CONTRACT.md。
+- 运行profile、实际分发和桌面部署均未执行；旧证据适配和真实逐线验收尚未闭环。
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-23 07:52 | 反重力 | verify fixed-template account status read-only |

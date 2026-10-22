@@ -8,6 +8,39 @@ const template = { id: "T79", name: "四宫格母版", references: [
 ] };
 const profile = { accountId: "account-a", selectedTemplateId: "T79", templateConversationUrl: "https://chatgpt.com/c/6a9b0a9f-853c-83e8-9e81-b41697d14063" };
 const bindingReceipt = { ...profile, templateId: "T79", conversationUrl: profile.templateConversationUrl, status: "READY", physicalVerified: true, receiptPath: "init-receipt.json", receiptSha256: sha };
+const syncNowMs = Date.parse("2026-10-23T00:00:00.000Z");
+const verifiedTemplate = {
+  ...template,
+  migrationPromptSha256: sha,
+  references: [
+    { ...template.references[0], path: "D:\\Templates\\T79\\模板-P1.jpg" },
+    { ...template.references[1], path: "D:\\Templates\\T79\\模板-P2.jpg" }
+  ]
+};
+const sessionStatus = {
+  status: "VERIFIED", accountId: profile.accountId, templateId: template.id,
+  checkedAt: new Date(syncNowMs).toISOString(),
+  identityCheckedAt: new Date(syncNowMs - 10_000).toISOString(),
+  accountAvailable: true, slotEnabled: true, writerIdle: true, identityVerified: true,
+  targetMatches: true, conversationMatches: true, pageReady: true, chatConversation: true,
+  composerReady: true, composerEmpty: true, attachmentsClear: true, generationIdle: true,
+  pageIdle: true, accountIdle: true
+};
+const syncReadback = {
+  serverReadback: true, schemaVersion: 1, status: "VERIFIED",
+  accountId: profile.accountId, templateId: template.id,
+  conversationUrl: profile.templateConversationUrl,
+  transactionKey: "b".repeat(64), verifiedAt: new Date(syncNowMs - 5_000).toISOString(),
+  attachments: [
+    { page: 1, fileName: "模板-P1.jpg", sourceSha256: sha, observed: true },
+    { page: 2, fileName: "模板-P2.jpg", sourceSha256: sha, observed: true }
+  ],
+  promptStatus: "SENT", promptSha256: sha, promptReadbackSha256: sha
+};
+const verifiedSyncInput = {
+  pipeline: "cdp", profile, template: verifiedTemplate,
+  sessionStatus, nowMs: syncNowMs, promptSha256: sha, bindingReceipt: syncReadback
+};
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -19,6 +52,8 @@ function renderVariant(account, templates, projector = { project }) {
   const context = vm.createContext({
     window: { TBFixedTemplateSession: projector }, gptAccounts: account ? [account] : [],
     activeGptAccountId: account?.id || "none", gptAutoRunning: false,
+    cachedGptTemplateSyncStatus() { return null; },
+    refreshGptTemplateSyncStatus() { return Promise.resolve(null); },
     $(selector) { return nodes[selector]; }, availableGptTestTemplates() { return templates; },
     fetch() { throw new Error("Network forbidden"); }
   });
@@ -60,10 +95,34 @@ test("configured CDP URL does not prove the template was learned", () => {
 test("CDP without a bound URL visibly stays unbound", () => {
   assert.equal(project({ pipeline: "cdp", profile: { accountId: "a" }, template }).bindingStatus, "UNBOUND");
 });
-test("exact account, template and conversation receipt enables readiness", () => {
-  assert.equal(project({ pipeline: "cdp", profile, template, bindingReceipt, sourcePath: "source" }).canSubmitSelectedMaterial, true);
-  for (const change of [{ accountId: "account-b" }, { templateId: "T80" }, { conversationUrl: "https://chatgpt.com/c/other" }, { status: "PENDING" }, { receiptSha256: "bad" }, { physicalVerified: false }]) {
-    assert.equal(project({ pipeline: "cdp", profile, template, bindingReceipt: { ...bindingReceipt, ...change } }).readyForMaterial, false);
+test("legacy local binding metadata cannot enable CDP template readiness", () => {
+  const result = project({ pipeline: "cdp", profile, template, bindingReceipt, sourcePath: "source" });
+  assert.equal(result.bindingStatus, "CONFIGURED_UNVERIFIED");
+  assert.equal(result.readyForMaterial, false);
+  assert.equal(result.canSubmitSelectedMaterial, false);
+});
+test("server readback enables readiness only for the same idle account, conversation, P1/P2 and prompt", () => {
+  const result = project({ ...verifiedSyncInput, sourcePath: "source" });
+  assert.equal(result.bindingStatus, "CONVERSATION_VERIFIED");
+  assert.equal(result.readyForMaterial, true);
+  assert.equal(result.canSubmitSelectedMaterial, true);
+
+  const invalidEvidence = [
+    { sessionStatus: { ...sessionStatus, status: "PENDING", targetMatches: false, conversationMatches: false } },
+    { sessionStatus: { ...sessionStatus, accountAvailable: false, accountIdle: false } },
+    { sessionStatus: { ...sessionStatus, writerIdle: false, accountIdle: false } },
+    { sessionStatus: { ...sessionStatus, accountId: "account-b" } },
+    { sessionStatus: { ...sessionStatus, identityVerified: false } },
+    { sessionStatus: { ...sessionStatus, identityCheckedAt: new Date(syncNowMs - 300_001).toISOString() } },
+    { sessionStatus: { ...sessionStatus, composerEmpty: false, pageIdle: false, accountIdle: false } },
+    { bindingReceipt: { ...syncReadback, attachments: [{ ...syncReadback.attachments[0], sourceSha256: "c".repeat(64) }, syncReadback.attachments[1]] } },
+    { bindingReceipt: { ...syncReadback, promptReadbackSha256: "c".repeat(64) } }
+  ];
+  for (const evidence of invalidEvidence) {
+    const rejected = project({ ...verifiedSyncInput, ...evidence, sourcePath: "source" });
+    assert.notEqual(rejected.bindingStatus, "CONVERSATION_VERIFIED");
+    assert.equal(rejected.readyForMaterial, false);
+    assert.equal(rejected.canSubmitSelectedMaterial, false);
   }
 });
 test("Codex never exposes a web session URL or initialization action", () => {

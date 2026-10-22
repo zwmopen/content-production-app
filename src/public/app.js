@@ -848,6 +848,7 @@ let gptTestQueueIndex = 0;
 let gptEmbeddedResizeObserver = null;
 let gptEmbeddedResizeTimer = null;
 let gptLastShowSignature = "";
+let gptAccountSwitchEpoch = 0;
 let gptShowInFlight = null;
 let draggedGptAccountId = "";
 let gptAccountPointerDrag = null;
@@ -5212,6 +5213,16 @@ function restoreGptQueue() {
     const hadInterruptedTask = gptTestQueue.some((task) => task._status === "running");
     gptTestQueue.forEach((task) => {
       if (task._status === "running") {
+        if (task._submittedToGpt !== true) {
+          // 假运行复位：从未提交到网页的任务没有任何远端进度可对账，
+          // 直接回 queued 等待重新派发；不挂 RESTART_INTERRUPTED 暂停标记，
+          // 避免队列重启后卡在一个永远无法"从网页检查点继续"的空任务上。
+          task._status = "queued";
+          task._error = "";
+          task._errorCode = "";
+          task._dispatchingToGpt = false;
+          return;
+        }
         task._status = "paused";
         task._errorCode ||= "RESTART_INTERRUPTED";
         task._error ||= "工作台重启中断了当前执行；已保留网页和队列，将先检查现有阶段再继续";
@@ -5372,8 +5383,32 @@ function saveGptAccounts() {
   localStorage.setItem(GPT_ACCOUNTS_STORAGE_KEY, JSON.stringify(gptAccounts));
 }
 
+// 内嵌场景（团队工作台 webview）没有 window.gptWorkbench.profiles 原生桥，
+// 账号只能靠分区 localStorage 的残留值，实测会退化成“顶栏只有一个 A”。
+// 这里改用服务端只读档案兜底：只读取 id/name/顺序，绝不写文件、不建号、不动分区。
+async function hydrateProfilesFromServer() {
+  try {
+    const result = await apiWithTimeout("/api/gpt-browser-profiles", undefined, 8000);
+    const list = Array.isArray(result?.profiles) ? result.profiles : [];
+    const usable = list
+      .filter((profile) => profile && String(profile.id || "").startsWith("account-"))
+      .map((profile) => ({ ...profile }));
+    if (!usable.length) return false;
+    gptAccounts = filterContentInstanceAccounts(usable);
+    try { saveGptAccounts(); } catch (_) {}
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function hydrateGptBrowserProfiles() {
-  if (!window.gptWorkbench?.profiles) return;
+  if (!window.gptWorkbench?.profiles) {
+    // 无原生桥（webview 内嵌）：退到服务端只读档案，避免只剩一个兜底槽位
+    const restored = await hydrateProfilesFromServer();
+    if (restored && typeof renderProdTopbarAbcd === 'function') renderProdTopbarAbcd();
+    return;
+  }
   try {
     // A-D instances share source code but never share the account selector.
     // Old renderer localStorage can contain profiles from the other instance;
@@ -5837,6 +5872,45 @@ async function api(path, options) {
   return response.json();
 }
 
+const GPT_TEMPLATE_SYNC_STATUS_TTL_MS = 15_000;
+const gptTemplateSyncStatusCache = new Map();
+const gptTemplateSyncStatusPending = new Map();
+
+function gptTemplateSyncStatusKey(accountId, templateId, targetConversationUrl) {
+  return [accountId, templateId, targetConversationUrl].map((value) => String(value || "").trim()).join("\u0000");
+}
+
+function cachedGptTemplateSyncStatus(accountId, templateId, targetConversationUrl) {
+  const key = gptTemplateSyncStatusKey(accountId, templateId, targetConversationUrl);
+  const entry = gptTemplateSyncStatusCache.get(key);
+  return entry && Date.now() - entry.checkedAt <= GPT_TEMPLATE_SYNC_STATUS_TTL_MS ? entry.status : null;
+}
+
+function refreshGptTemplateSyncStatus(accountId, templateId, targetConversationUrl) {
+  const id = String(accountId || "").trim();
+  const templateKey = String(templateId || "").trim();
+  const targetUrl = String(targetConversationUrl || "").trim();
+  const bridge = window.gptWorkbench?.templateSyncStatus;
+  if (!id || !templateKey || !targetUrl || typeof bridge !== "function") return Promise.resolve(null);
+  const key = gptTemplateSyncStatusKey(id, templateKey, targetUrl);
+  const cached = cachedGptTemplateSyncStatus(id, templateKey, targetUrl);
+  if (cached) return Promise.resolve(cached);
+  const pending = gptTemplateSyncStatusPending.get(key);
+  if (pending) return pending;
+  const request = Promise.resolve(bridge.call(window.gptWorkbench, {
+    accountId: id, templateId: templateKey, targetConversationUrl: targetUrl
+  })).then((status) => {
+    if (!status || status.accountId !== id) return null;
+    gptTemplateSyncStatusCache.set(key, { checkedAt: Date.now(), status });
+    if (activeGptAccountId === id) renderGptWorkflowVariantControl();
+    return status;
+  }).catch(() => null).finally(() => {
+    if (gptTemplateSyncStatusPending.get(key) === request) gptTemplateSyncStatusPending.delete(key);
+  });
+  gptTemplateSyncStatusPending.set(key, request);
+  return request;
+}
+
 function renderGptWorkflowVariantControl() {
   const select = $("#gptWorkflowVariant");
   const hint = $("#gptWorkflowVariantHint");
@@ -5855,17 +5929,28 @@ function renderGptWorkflowVariantControl() {
     return;
   }
   const template = availableGptTestTemplates().find((item) => item.id === account.selectedTemplateId);
+  const targetConversationUrl = String(account.templateConversationUrl || "").trim();
+  const sessionStatus = template
+    ? cachedGptTemplateSyncStatus(account.id, template.id, targetConversationUrl)
+    : null;
   const projection = window.TBFixedTemplateSession?.project({
     pipeline: "cdp", profile: account, template: template || {},
-    bindingReceipt: account.templateBindingReceipt || null
+    bindingReceipt: account.templateBindingReceipt || null,
+    sessionStatus
   });
+  const statusSummary = !sessionStatus
+    ? "账号身份、会话目标与页面状态待只读回读"
+    : `身份${sessionStatus.identityVerified ? "已核" : "待核"} · 目标${sessionStatus.targetMatches ? "匹配" : "不匹配"} · 页面${sessionStatus.pageIdle ? "空闲" : "忙/未核"}`;
   hint.textContent = projection
-    ? `${projection.bindingLabel} · ${projection.steps.join(" → ")}`
+    ? `${projection.bindingLabel} · ${statusSummary} · ${projection.steps.join(" → ")}`
     : variant === "fresh-session-fixed-template"
-      ? "固定母版待核实 · 每套新建对话发送母版，再发送完整素材并验收交付"
-      : "未核实母版会话 · 先发送母版，再逐套发送素材并验收交付";
+      ? `固定母版待核实 · ${statusSummary} · 每套新建对话发送母版，再发送完整素材并验收交付`
+      : `未核实母版会话 · ${statusSummary} · 先发送母版，再逐套发送素材并验收交付`;
   hint.hidden = false;
   if (select) select.title = projection?.explanation || "固定母版会话逐套制作";
+  if (template && targetConversationUrl && typeof window.gptWorkbench?.templateSyncStatus === "function") {
+    void refreshGptTemplateSyncStatus(account.id, template.id, targetConversationUrl);
+  }
 }
 
 async function apiWithTimeout(path, options, timeoutMs = 2500) {
@@ -7118,8 +7203,6 @@ function renderPageSettingsValues() {
     productionReserveCategory: production.reserveCategory || "conversion",
     productionItemsPerCollection: production.itemsPerCollection ?? 9,
     productionScheduleTime: production.scheduleTime || "09:00",
-    desktopReserveThreshold: distribution.desktopReserveThreshold ?? 10,
-    desktopReserveCategory: distribution.desktopReserveCategory || "conversion",
     phoneReserveThreshold: distribution.phoneReserveThreshold ?? 5,
     autoDistributionCategory: distribution.autoCategory || "conversion",
     autoDistributionCount: distribution.autoSendCount ?? 1,
@@ -7137,7 +7220,6 @@ function renderPageSettingsValues() {
     productionAutoProduceEnabled: production.autoProduceEnabled === true,
     productionScheduleEnabled: production.scheduleEnabled === true,
     productionCompressCollections: production.compressCollections === true,
-    desktopReserveAlertEnabled: distribution.desktopReserveAlertEnabled !== false,
     detectOnConnection: distribution.detectOnConnection !== false,
     autoDistributionEnabled: distribution.autoDistributionEnabled === true,
     completionNotificationEnabled: distribution.completionNotificationEnabled !== false,
@@ -7214,9 +7296,6 @@ async function savePageSettingsFromUi(section) {
     };
   } else {
     payload.distribution = {
-      desktopReserveThreshold: Number($("#desktopReserveThreshold")?.value || 10),
-      desktopReserveCategory: $("#desktopReserveCategory")?.value || "conversion",
-      desktopReserveAlertEnabled: $("#desktopReserveAlertEnabled")?.checked !== false,
       phoneReserveThreshold: Number($("#phoneReserveThreshold")?.value || 5),
       autoCategory: $("#autoDistributionCategory")?.value || "conversion",
       autoSendCount: Number($("#autoDistributionCount")?.value || 1),
@@ -7233,7 +7312,6 @@ async function savePageSettingsFromUi(section) {
   });
   dashboard.workspaceSettings.pageSettings = result.settings;
   renderPageSettingsValues();
-  renderDistributionReserveAlert();
   if (section === "moments" && !isMomentsFeatureEnabled() && $("#momentsView")?.classList.contains("active")) {
     activateTab("settings");
     toast("朋友圈采集整理与发布已关闭；原始作品文件未被改动");
@@ -7497,36 +7575,6 @@ function closePageSettings() {
   activePageSettings = "";
   gptSettingsPreviewMode = null;
   if ($("#gptProductionTestView")?.classList.contains("active")) restoreEmbeddedGptView();
-}
-
-function reserveCategoryLabel(category) {
-  return ({ conversion: "精准流量（业务类）", traffic: "泛流量类", unclassified: "未分类", all: "全部" })[category] || "精准流量（业务类）";
-}
-
-function renderDistributionReserveAlert() {
-  const alert = $("#distributionReserveAlert");
-  if (!alert || !dashboard?.distribution) return;
-  const settings = pageSettings().distribution || {};
-  const category = settings.desktopReserveCategory || "conversion";
-  const reserve = Number(dashboard.distribution.reserve?.[category] || 0);
-  const threshold = Number(settings.desktopReserveThreshold || 10);
-  const dismissedKey = `tb-reserve-dismissed:${category}:${reserve}:${threshold}`;
-  const shouldNotify = settings.desktopReserveAlertEnabled !== false
-    && reserve < threshold
-    && localStorage.getItem(dismissedKey) !== "1";
-
-  // 隐藏旧的浮动通知条，改用小猫气泡
-  alert.hidden = true;
-
-  if (!shouldNotify) return;
-
-  const message = `电脑作品集储备不足：${reserveCategoryLabel(category)}只有 ${reserve} 个，低于安全线 ${threshold} 个，请继续批量制作作品集。`;
-  showWorkbenchAssistantBubble(message, {
-    sourceView: "distributionView",
-    notificationKey: `distribution-reserve:${category}:${reserve}:${threshold}`,
-    dedupeMs: 5 * 60_000,
-    tone: "warning"
-  });
 }
 
 function closeImageLightbox() {
@@ -10476,16 +10524,161 @@ function scheduleContinuousGptProduction(delayMs = 2500) {
   persistGptQueue();
 }
 
-function buildGptTemplateInitTask(template) {
+function buildGptTemplateInitTask(template, options = {}) {
+  const migrationPrompt = String(options.migrationPrompt || template.migrationPrompt || "").trim();
+  const sourcePath = String(template.localPath || template.path || "").replace(/[\\/]+$/, "");
+  const desiredConversationTitle = String(options.desiredConversationTitle || template.desiredConversationTitle || sourcePath.split(/[\\/]/).pop() || template.name || "").trim();
   return {
     requestId: `gpt-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     taskType: "template-init",
+    taskTypeLabel: "创建在线模板",
     templateId: template.id,
-    name: `初始化母版 · ${template.name}`,
+    name: `创建在线模板 · ${desiredConversationTitle}`,
+    desiredConversationTitle,
+    preserveTemplateMigrationPrompt: Boolean(migrationPrompt),
+    templateCreationSteps: {
+      uploadTemplate: "NOT_STARTED",
+      sendTemplateMigrationPrompt: "NOT_STARTED",
+      copyTemplateConversationLink: "NOT_STARTED",
+      renameOnlineTemplate: "NOT_STARTED"
+    },
     attachments: [...new Set([...(template.images || []).map((image) => image.path), ...(template.attachments || [])].filter(Boolean))].slice(0, 30),
-    prompt: `${defaultTemplatePrompt(template)}\n\n这些附件是本会话唯一母版。请完整读取并锁定母版结构、页面角色、字体、配色、标题、贴纸、拼图节奏和规则。只确认母版环境初始化完成，不要开始制作新作品。`
+    prompt: migrationPrompt || `${defaultTemplatePrompt(template)}\n\n这些附件是本会话唯一母版。请完整读取并锁定母版结构、页面角色、字体、配色、标题、贴纸、拼图节奏和规则。只确认母版环境初始化完成，不要开始制作新作品。`
   };
 }
+
+// Pure projection only: the coordinator supplies the canonical binding and
+// complete prompt texts. This never arms a worker or submits a browser task.
+function buildGptOnlineTemplateCreationTasks(binding, promptTexts = {}) {
+  const accountId = String(binding?.accountId || "").trim();
+  if (!accountId || !Array.isArray(binding?.onlineTemplateTasks)) {
+    throw new Error("在线模板任务缺少精确账号或canonical任务行");
+  }
+  const existing = new Map((binding.templates || []).map((item) => [String(item.templateId), item]));
+  const seen = new Set();
+  return binding.onlineTemplateTasks.map((row) => {
+    const templateId = String(row.templateId || "").trim();
+    if (!templateId || seen.has(templateId)) throw new Error("在线模板任务ID缺失或重复");
+    seen.add(templateId);
+    const prompt = String(promptTexts[templateId] || "").trim();
+    if (!prompt) throw new Error(`模板 ${templateId} 缺少完整迁移器提示词`);
+    const bound = existing.get(templateId) || {};
+    const accepted = row.existingAttachmentStatus === "SERVER_ACCEPTED";
+    const unknown = row.existingAttachmentStatus === "UNCONFIRMED_PENDING";
+    const task = buildGptTemplateInitTask({
+      id: templateId,
+      name: row.templateName,
+      localPath: row.sourceTemplatePath,
+      images: accepted || unknown ? [] : (row.sourceFiles || []).map((item) => ({ path: item.localPath }))
+    }, { migrationPrompt: prompt, desiredConversationTitle: row.desiredConversationTitle });
+    return {
+      ...task,
+      requestId: String(row.taskId || `create-online-template-${accountId}-${templateId}`),
+      accountId,
+      accountWindowId: accountId,
+      browserIdentityId: accountId,
+      quotaAccountId: accountId,
+      canonicalTemplateTaskId: row.taskId,
+      canonicalTemplateBindingPath: binding.bindingPath || "",
+      templateCreationSteps: { ...(row.actionStatus || task.templateCreationSteps) },
+      templateConversationUrl: String(bound.conversationUrl || ""),
+      templateProjectUrl: String(binding.projectUrl || ""),
+      navigationUrl: String(bound.conversationUrl || binding.projectUrl || ""),
+      _status: unknown ? "blocked" : "queued",
+      _errorCode: unknown ? "TEMPLATE_SUBMISSION_UNCONFIRMED" : "",
+      _error: unknown ? "先只读对账原提交，禁止重新上传或发送" : "",
+      _submittedToGpt: false,
+      templateCreationComplete: false,
+      autoRun: false
+    };
+  });
+}
+
+const gptOnlineTemplateCreationLists = new Map();
+
+async function loadGptOnlineTemplateCreationBinding(bindingPath) {
+  const sourcePath = String(bindingPath || "").trim();
+  if (!sourcePath) throw new Error("请指定在线模板任务绑定文件");
+  const readText = async (filePath) => {
+    const response = await fetch(`/file?path=${encodeURIComponent(filePath)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`无法读取任务文件（HTTP ${response.status}）：${filePath}`);
+    return response.text();
+  };
+  const binding = JSON.parse((await readText(sourcePath)).replace(/^\uFEFF/, ""));
+  const accountId = String(binding.accountId || "").trim();
+  if (!accountId || accountId !== String(activeGptAccountId || "")) {
+    throw new Error("任务绑定账号与当前槽位不一致，请先切换到该任务的真实账号槽位");
+  }
+  const promptTexts = {};
+  // Bounded reads avoid competing with the active production renderer.
+  const rows = binding.onlineTemplateTasks || [];
+  for (let offset = 0; offset < rows.length; offset += 4) {
+    await Promise.all(rows.slice(offset, offset + 4).map(async (row) => {
+      if (!row.promptFile) throw new Error(`模板 ${row.templateId} 没有迁移器提示词路径`);
+      promptTexts[row.templateId] = await readText(row.promptFile);
+    }));
+  }
+  const tasks = buildGptOnlineTemplateCreationTasks({ ...binding, bindingPath: sourcePath }, promptTexts);
+  if (accountId !== String(activeGptAccountId || "")) throw new Error("读取期间已切换账号，未更新当前槽位任务");
+  const list = { accountId, bindingPath: sourcePath, tasks, paused: true, autoRun: false, loadedAt: new Date().toISOString() };
+  gptOnlineTemplateCreationLists.set(accountId, list);
+  renderGptOnlineTemplateCreationList();
+  return list;
+}
+
+function renderGptOnlineTemplateCreationList() {
+  const drawer = $("#prodTemplateSidebar .pts-body-scrollable");
+  if (!drawer) return;
+  let host = $("#gptOnlineTemplateCreationTasks");
+  if (!host) {
+    host = document.createElement("details");
+    host.id = "gptOnlineTemplateCreationTasks";
+    host.className = "pts-section";
+    host.innerHTML = `<summary>创建在线模板任务</summary>
+      <label>任务绑定文件<input data-template-task-binding-path type="text" placeholder="选择本地任务绑定 JSON 路径" style="width:100%"></label>
+      <button type="button" data-template-task-load>读取任务列表</button>
+      <p data-template-task-message role="status">读取后逐模板显示上传、迁移器提示词、链接和重命名状态。</p>
+      <div data-template-task-rows style="max-height:420px;overflow:auto"></div>`;
+    drawer.appendChild(host);
+    host.querySelector("[data-template-task-load]").addEventListener("click", async () => {
+      const message = host.querySelector("[data-template-task-message]");
+      const button = host.querySelector("[data-template-task-load]");
+      button.disabled = true;
+      message.textContent = "正在读取本地绑定与完整迁移器提示词…";
+      try {
+        await loadGptOnlineTemplateCreationBinding(host.querySelector("[data-template-task-binding-path]").value);
+      } catch (error) {
+        message.textContent = error?.message || String(error);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+  const list = gptOnlineTemplateCreationLists.get(String(activeGptAccountId || ""));
+  const message = host.querySelector("[data-template-task-message]");
+  const rows = host.querySelector("[data-template-task-rows]");
+  if (!list) {
+    message.textContent = "当前账号尚未读取在线模板任务；列表保持暂停。";
+    rows.innerHTML = "";
+    return;
+  }
+  host.querySelector("[data-template-task-binding-path]").value = list.bindingPath;
+  message.textContent = `${list.tasks.length} 项创建在线模板任务 · 已暂停 · 外部唯一执行者推进，完成后重新读取回执`;
+  rows.innerHTML = list.tasks.map((task) => {
+    const steps = task.templateCreationSteps || {};
+    return `<article style="padding:8px 0;border-bottom:1px solid var(--border-color,#ddd)">
+      <strong>${escapeHtml(task.templateId)} · ${escapeHtml(task.desiredConversationTitle)}</strong>
+      <div>创建在线模板</div>
+      <small>上传母版：${escapeHtml(steps.uploadTemplate || "NOT_STARTED")}</small><br>
+      <small>迁移器提示词：${escapeHtml(steps.sendTemplateMigrationPrompt || "NOT_STARTED")}</small><br>
+      <small>复制对话链接：${escapeHtml(steps.copyTemplateConversationLink || "NOT_STARTED")}</small><br>
+      <small>重命名：${escapeHtml(steps.renameOnlineTemplate || "NOT_STARTED")}</small>
+      ${task.templateConversationUrl ? `<div><a href="${escapeHtml(task.templateConversationUrl)}" target="_blank" rel="noopener noreferrer">已记录的模板对话链接</a></div>` : ""}
+    </article>`;
+  }).join("");
+}
+
+window.loadGptOnlineTemplateCreationBinding = loadGptOnlineTemplateCreationBinding;
 
 async function uploadSingleItemToCurrentGpt(task, successMessage) {
   if (!window.gptWorkbench?.sendTask) {
@@ -12016,13 +12209,27 @@ async function toggleGptAccountDisabled(accountId) {
     }
   }
   saveGptAccounts();
+  // 禁用即沉底：被禁用的号自动排到队尾，把前面的位置让给在用的号。
+  // 只改顺序、不改 ID，所以不会丢登录态；启用时保持原位（可再手动拖回来）。
+  if (nextDisabled) {
+    try { await moveGptAccountToEnd(accountId); } catch (_) {}
+  }
   renderGptAccountTabs();
   renderGptBrowserManager();
+  renderProdTopbarAbcd();
+  syncTopbarAbcdActive(typeof activeGptAccountId === 'string' ? activeGptAccountId : accountId);
   if (account.disabled) {
-    showWorkbenchAssistantBubble(`账号窗口“${account.name}”已暂时禁用。自动化模式将跳过此窗口，窗口仍可手动查看。`, { duration: 4200, tone: "warning" });
+    showWorkbenchAssistantBubble(`账号窗口“${account.name}”已暂时禁用并移到队尾。自动化模式将跳过此窗口，窗口仍可手动查看。`, { duration: 4200, tone: "warning" });
   } else {
     showWorkbenchAssistantBubble(`账号窗口“${account.name}”已启用，自动化模式可正常驱动。`, { duration: 3000 });
   }
+}
+
+// 把某个账号挪到列表末尾（禁用沉底用）
+async function moveGptAccountToEnd(accountId) {
+  const ids = gptAccounts.map((item) => item.id).filter((id) => id !== accountId);
+  if (!ids.includes(accountId)) ids.push(accountId);
+  return persistGptAccountOrder(ids);
 }
 
 async function persistGptAccountOrder(accountIds = []) {
@@ -12272,7 +12479,10 @@ async function switchGptAccount(accountId, options = {}) {
     captureLegacyGptWindowState(previousAccountId);
   }
   activeGptAccountId = account.id;
+  gptAccountSwitchEpoch += 1;
+  const switchEpoch = gptAccountSwitchEpoch;
   restoreLegacyGptWindowState(account.id);
+  renderGptOnlineTemplateCreationList();
   // The material/template panels are a single renderer DOM tree, while their
   // selected values belong to the active account window.  Repaint immediately
   // after restoring the window state so switching tabs never leaves the
@@ -12313,9 +12523,11 @@ async function switchGptAccount(accountId, options = {}) {
   // new account remains permanently reported as loaded=false.
   if (gptShowInFlight) {
     try { await gptShowInFlight; } catch {}
+    if (switchEpoch !== gptAccountSwitchEpoch || account.id !== activeGptAccountId) return;
     gptLastShowSignature = String();
   }
   await showEmbeddedGptView();
+  if (switchEpoch !== gptAccountSwitchEpoch || account.id !== activeGptAccountId) return;
   // Refresh the selected account before painting its assistant summary. The
   // profiles are isolated; do not briefly reuse the previous account's
   // quota snapshot while this view is being attached.
@@ -12466,20 +12678,13 @@ function getCdpGatewayBase() {
 }
 
 function getCurrentInstanceCdpPort() {
-  if (typeof activeGptAccountId === 'string') {
-    if (activeGptAccountId === 'account-1' || activeGptAccountId.toLowerCase().includes('a')) return 9431;
-    if (activeGptAccountId === 'account-2' || activeGptAccountId.toLowerCase().includes('b')) return 9432;
-    if (activeGptAccountId === 'account-3' || activeGptAccountId.toLowerCase().includes('c')) return 9433;
-    if (activeGptAccountId === 'account-4' || activeGptAccountId.toLowerCase().includes('d')) return 9434;
-  }
-  const params = new URLSearchParams(window.location.search);
-  const paramPort = Number(params.get('cdpPort') || params.get('port'));
-  if ([9431, 9432, 9433, 9434].includes(paramPort)) return paramPort;
-  const p = window.location.port;
-  if (p === "4331") return 9431;
-  if (p === "4333") return 9433;
-  if (p === "4334") return 9434;
-  return 9431;
+  // The HTTP viewport service selects a page from /json/list by URL score.
+  // It does not consume exact target/context IDs; a port cannot identify an
+  // account inside the unified multi-profile process. Keep this fallback off
+  // until the service supports and verifies those identities end to end.
+  const error = new Error("画面回退服务尚不支持精确账号 target/context，已停用端口回退；请使用已核实账号的原生画面");
+  error.code = "CDP_VIEWPORT_EXACT_TARGET_UNSUPPORTED";
+  throw error;
 }
 
 async function refreshCdpLiveFrame() {
@@ -12515,9 +12720,14 @@ async function refreshCdpLiveFrame() {
     }
   } catch (err) {
     img.hidden = true;
+    const exactTargetUnsupported = err?.code === "CDP_VIEWPORT_EXACT_TARGET_UNSUPPORTED";
+    if (exactTargetUnsupported && cdpLiveRefreshTimer) {
+      clearInterval(cdpLiveRefreshTimer);
+      cdpLiveRefreshTimer = null;
+    }
     const errorBox = $("#cdpFrameError");
     if (errorBox) {
-      errorBox.textContent = `实操画面暂不可用：${err.message}。可以用上方“独立窗口”查看当前实例；画面会自动重试。`;
+      errorBox.textContent = exactTargetUnsupported ? err.message : `实操画面暂不可用：${err.message}。可以用上方“独立窗口”查看当前实例；画面会自动重试。`;
       errorBox.style.display = "block";
     }
   } finally {
@@ -12541,7 +12751,12 @@ async function initCdpLiveViewport() {
       if ($("#cdpStatusAccount")) $("#cdpStatusAccount").textContent = `实例 ${data.instance || "B"} · ${data.target.title || "ChatGPT"}`;
       if ($("#cdpCurrentUrl")) $("#cdpCurrentUrl").textContent = data.target.url || "https://chatgpt.com/";
     }
-  } catch (_) {}
+  } catch (error) {
+    if (error?.code === "CDP_VIEWPORT_EXACT_TARGET_UNSUPPORTED") {
+      await refreshCdpLiveFrame();
+      return;
+    }
+  }
 
   if (!cdpLiveRefreshTimer) {
     cdpLiveRefreshTimer = setInterval(() => {
@@ -12764,6 +12979,10 @@ async function navigateEmbeddedGpt(action, targetUrl = "", accountId = activeGpt
 }
 
 async function showEmbeddedGptView() {
+  const requestedAccountId = String(activeGptAccountId || "");
+  const requestedSwitchEpoch = gptAccountSwitchEpoch;
+  const isCurrentRequest = () => requestedAccountId === String(activeGptAccountId || "")
+    && requestedSwitchEpoch === gptAccountSwitchEpoch;
   // Guard: never show the native GPT view when the user has already switched
   // to a different tab.  The WebContentsView is a native compositor layer
   // that renders above all DOM regardless of z-index; showing it on a
@@ -12798,7 +13017,7 @@ async function showEmbeddedGptView() {
     }, 260);
     return;
   }
-  const signature = `${activeGptAccountId}:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`;
+  const signature = `${requestedAccountId}:${requestedSwitchEpoch}:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`;
   if (signature === gptLastShowSignature && !gptShowInFlight) return;
   if (gptShowInFlight) return gptShowInFlight;
   if (state && !gptLastShowSignature) {
@@ -12807,8 +13026,10 @@ async function showEmbeddedGptView() {
   }
   gptShowInFlight = (async () => {
   try {
-    const result = await boundedGptBrowserCall(window.gptWorkbench.show(bounds, activeGptAccountId), 5_000);
+    const result = await boundedGptBrowserCall(window.gptWorkbench.show(bounds, requestedAccountId), 5_000);
+    if (!isCurrentRequest()) return;
     if (!result) throw new Error("GPT browser view timed out while opening");
+    if (String(result.accountId || "") !== requestedAccountId) throw new Error("GPT 画面返回的账号与当前槽位不一致");
     // The native WebContentsView may finish showing after the user has already
     // navigated away. Re-check the active page after the async boundary so a
     // delayed GPT view cannot cover distribution or another workspace page.
@@ -12816,6 +13037,7 @@ async function showEmbeddedGptView() {
       host?.classList.remove("is-native-visible");
       gptLastShowSignature = "";
       await window.gptWorkbench?.hide?.().catch(() => {});
+      if (!isCurrentRequest()) return;
       return;
     }
     gptLastShowSignature = signature;
@@ -12826,7 +13048,7 @@ async function showEmbeddedGptView() {
       state.textContent = !result.isChatGpt
         ? "浏览器网页已打开 · 返回 GPT 可继续生产"
         : needsLogin
-        ? `${gptAccounts.find((item) => item.id === activeGptAccountId)?.name || "当前账号"}：请先登录`
+        ? `${gptAccounts.find((item) => item.id === requestedAccountId)?.name || "当前账号"}：请先登录`
         : result.ready ? "GPT 已就绪 · 生产助手已接入" : "GPT 网页加载中（最长20秒）";
       state.dataset.tone = !result.isChatGpt ? "success" : needsLogin ? "warning" : result.ready ? "success" : "busy";
       state.title = result.extensionError || "";
@@ -12838,7 +13060,11 @@ async function showEmbeddedGptView() {
       let readiness = result;
       while (Date.now() < deadline && !readiness.ready) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
-        readiness = await boundedGptBrowserCall(window.gptWorkbench.status(activeGptAccountId), 2_500) || readiness;
+        if (!isCurrentRequest()) return;
+        const observed = await boundedGptBrowserCall(window.gptWorkbench.status(requestedAccountId), 2_500);
+        if (!isCurrentRequest()) return;
+        if (observed && String(observed.accountId || "") !== requestedAccountId) throw new Error("GPT 就绪回读账号不一致");
+        readiness = observed || readiness;
       }
       if (state) {
         state.textContent = readiness.ready ? "GPT 已就绪 · 生产助手已接入" : "GPT 网页加载超时，请点击刷新";
@@ -12850,6 +13076,7 @@ async function showEmbeddedGptView() {
       }
     }
   } catch (error) {
+    if (!isCurrentRequest()) return;
     gptLastShowSignature = "";
     host?.classList.remove("is-native-visible");
     if (state) {
@@ -12905,6 +13132,7 @@ function restoreEmbeddedGptView() {
 
 function renderGptProductionTest() {
   if (!$("#gptProductionTestView")) return;
+  renderGptOnlineTemplateCreationList();
   renderGptTestMaterials();
   renderGptTestTemplates();
   if (gptTemplateMode !== "local" && !gptOnlineTemplatesLoaded) {
@@ -13276,7 +13504,8 @@ async function runGptTaskOnBrowser(task, account, tracker, workerState = gptWind
   // A newly-created account or a new local-template chat must receive the
   // current versioned guard before any material prompt. Existing conversation
   // windows keep their trained context and are not flooded with the prompt.
-  if (task.taskType === "template-init" || freshConversationTask || gptAccountNeedsMasterPrompt(account)) {
+  if ((task.taskType === "template-init" || freshConversationTask || gptAccountNeedsMasterPrompt(account))
+    && !(task.taskType === "template-init" && task.preserveTemplateMigrationPrompt === true)) {
     const extraRules = String(settings?.extraPromptRules || "").trim();
     const baseMaster = currentGptMasterPrompt(settings);
     const master = extraRules ? `${baseMaster}\n\n${extraRules}` : baseMaster;
@@ -17914,7 +18143,8 @@ function renderStats() {
   $("#statMaterialCategories").textContent = dashboard.stats.materialCategories;
   $("#statMaterialItems").textContent = dashboard.stats.materialItems;
   $("#statTemplates").textContent = dashboard.stats.templates;
-  $("#statProducts").textContent = dashboard.stats.products;
+  $("#statProducts").textContent = dashboard.stats.products == null ? '待核' : dashboard.stats.products;
+  $("#statProducts").title = `完整成品；未完成 ${dashboard.stats.incompleteProducts ?? '待核'} 套，其中历史证据待适配 ${dashboard.stats.unverifiedProducts ?? '待核'} 套`;
 }
 
 function renderMaterialLibraryFilter() {
@@ -18689,7 +18919,7 @@ function renderProducts() {
       <h3>${escapeHtml(work.name)}</h3>
       <div class="product-meta">
         <span class="status-pill">${work.imageCount} 图</span>
-        <span class="status-pill">${work.hasCopy ? "有文案" : "缺文案"}</span>
+        <span class="status-pill">${work.completionStatus === 'COMPLETE' ? "已完成" : "未完成"}</span>
         <span class="status-pill">${work.hasPlan ? "有计划" : "缺计划"}</span>
       </div>
     `;
@@ -18741,7 +18971,7 @@ function renderProductFeed(entries) {
       <div class="feed-card-head">
         <div>
           <strong>${escapeHtml(work.name)}</strong>
-          <p>${escapeHtml(itemGroup.name)} · ${work.imageCount || 0} 张图 · ${work.hasCopy ? "有文案" : "缺文案"} · ${work.hasPlan ? "有计划" : "缺计划"}</p>
+          <p>${escapeHtml(itemGroup.name)} · ${work.imageCount || 0} 张图 · ${work.completionStatus === 'COMPLETE' ? "已完成" : "未完成"} · ${work.hasPlan ? "有计划" : "缺计划"}</p>
         </div>
       </div>
       <div class="image-grid product-grid"></div>
@@ -18812,7 +19042,7 @@ function selectProductWork(work, group, options = {}) {
   $$("#productImages .product-card").forEach((card) => card.classList.toggle("active", card.dataset.id === work.id));
   $("#productPath").textContent = `${group.name} · ${work.imageCount || 0} 张图`;
   $("#productDetailTitle").textContent = work.name;
-  $("#productDetailMeta").textContent = `${group.name} · ${work.hasCopy ? "有文案" : "缺文案"} · ${work.hasPlan ? "有计划" : "缺计划"}`;
+  $("#productDetailMeta").textContent = `${group.name} · ${work.completionStatus === 'COMPLETE' ? "已完成" : "未完成"} · ${work.hasPlan ? "有计划" : "缺计划"}`;
   if (!options.keepFeed) renderProductImages(work.images || []);
   else if (work.images?.[0]) setProductPreview(work.images[0], work.name, "成品图片");
 }
@@ -19957,7 +20187,6 @@ function renderDistribution() {
   `;
   showDistributionPanel(activeDistributionPanel);
   restoreWechatDraftWorkspaceAfterRender();
-  renderDistributionReserveAlert();
   syncDevicePickerModalState();
 }
 
@@ -21647,6 +21876,29 @@ function presentNextAssistantNotice() {
   }, duration);
 }
 
+// 系统通知（Windows 右下角 toast）：小猫停用后，重要消息走真实系统通知通道。
+// 同文案 60s 去重 + 全局 8s 节流，避免 139 个调用点把通知刷爆。
+let lastDesktopNotifyAt = 0;
+const desktopNotifyRecent = new Map();
+function sendDesktopNotification(message, tone = "") {
+  try {
+    const text = String(message || "").trim().slice(0, 300);
+    if (!text) return;
+    const now = Date.now();
+    if (now - Number(desktopNotifyRecent.get(text) || 0) < 60000) return;
+    if (now - lastDesktopNotifyAt < 8000) return;
+    desktopNotifyRecent.set(text, now);
+    if (desktopNotifyRecent.size > 50) desktopNotifyRecent.clear();
+    lastDesktopNotifyAt = now;
+    const title = tone === "error" ? "内容制作 · 出错" : "内容制作 · 提醒";
+    const bridge = window.gptWorkbench?.notify;
+    if (typeof bridge === "function") { bridge({ title, body: text }); return; }
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification(title, { body: text });
+    }
+  } catch (_) {}
+}
+
 function showWorkbenchAssistantBubble(message, options = {}) {
   if (!message) return;
   // 过滤“已选多少”等鸡肋无意义通知（对应用户诉求：完全用不到还占位置）
@@ -21675,6 +21927,8 @@ function showWorkbenchAssistantBubble(message, options = {}) {
     if (window.parent && window.parent !== window) {
       window.parent.postMessage({ type: 'SHOW_TOAST', message: String(message), level: options.tone }, '*');
     }
+    // 小猫停用：重要告警/错误直接发系统通知（右下角 toast，同文案去重 + 全局节流）
+    sendDesktopNotification(message, options.tone);
   }
 
   const { bubble } = assistantElements();
@@ -25002,7 +25256,7 @@ function registerWorkbenchCommands() {
     id: "gpt.browser.refresh",
     label: "刷新当前 GPT 窗口",
     description: "只刷新当前账号的嵌入 GPT 页面，不重启整个应用",
-    readOnly: true,
+    readOnly: false,
     sources: ["ui", "assistant", "voice", "ai", "automation"]
   }, async (args) => navigateEmbeddedGpt("reload", "", args.accountId || activeGptAccountId));
   workbenchCommandBus.register({
@@ -29975,12 +30229,6 @@ function bindEvents() {
       closePageSettings();
       return;
     }
-    const dismissReserve = event.target.closest("[data-dismiss-reserve-alert]");
-    if (dismissReserve) {
-      localStorage.setItem(dismissReserve.dataset.dismissReserveAlert, "1");
-      renderDistributionReserveAlert();
-      return;
-    }
     const imagePreview = event.target.closest("[data-image-preview]");
     if (imagePreview) {
       event.preventDefault();
@@ -31023,7 +31271,6 @@ function bindEvents() {
       .catch((error) => showSystemNotice("内容制作设置没有保存", error.message, { tone: "danger" })));
   });
   [
-    "#desktopReserveThreshold", "#desktopReserveCategory", "#desktopReserveAlertEnabled",
     "#phoneReserveThreshold", "#autoDistributionCategory", "#autoDistributionCount", "#autoDistributionRetryLimit",
     "#detectOnConnection", "#autoDistributionEnabled",
     "#completionNotificationEnabled"
@@ -34144,10 +34391,88 @@ function renderProdTopbarAbcd() {
     const isDisabled = Boolean(acc.disabled);
     const dotClass = isDisabled ? "offline" : "online";
     const disabledBadge = isDisabled ? " · 已禁用（自动化跳过）" : "";
-    return `<button type="button" class="abcd-pill-btn${isActive ? " active" : ""}${isDisabled ? " disabled" : ""}" data-account="${escapeHtml(acc.id)}" data-inst="${letter}" title="【${letter} 账号】${escapeHtml(name)}${disabledBadge} · 左键切换 · 右键管理"><span class="subline-dot ${dotClass}"></span><span>${letter}</span></button>`;
+    return `<button type="button" class="abcd-pill-btn${isActive ? " active" : ""}${isDisabled ? " disabled" : ""}" draggable="true" data-account="${escapeHtml(acc.id)}" data-inst="${letter}" title="【${letter} 账号】${escapeHtml(name)}${disabledBadge} · 左键切换 · 右键管理 · 拖动换位"><span class="subline-dot ${dotClass}"></span><span>${letter}</span>${planBadgeHtml(slotPlanCache.get(acc.id))}</button>`;
   }).join("") + '<button type="button" class="abcd-add-inst-btn" id="btnContentProdAddInst" title="➕ 添加新生产槽位">➕</button>';
 
   abcdGroup.innerHTML = html;
+  // 套餐徽章先按缓存画出来，再异步刷新成实时值（不阻塞渲染）
+  if (!slotPlanFetching) {
+    setTimeout(() => { refreshSlotPlans().catch(() => {}); }, 400);
+  }
+}
+
+// 套餐徽章：付费账号显示「● plus」金色小标，免费账号显示「free」。
+// plan 取值来自服务端会话（plus / pro / free），未知时不显示，避免瞎标。
+function planBadgeHtml(plan) {
+  const value = String(plan || "").toLowerCase();
+  if (!value) return "";
+  // 免费账号不贴标（2026-10-22 用户口径：免费标多余，默认即免费）；
+  // 付费账号保留金色小圆点 + plus 字样。
+  if (value === "plus" || value === "pro" || value === "team" || value === "business" || value === "enterprise") {
+    return `<span class="plan-badge plan-paid"><i class="plan-dot"></i>${escapeHtml(value)}</span>`;
+  }
+  return "";
+}
+
+// 套餐缓存：与 gptAccounts 解耦。
+// 之前把 plan 写在账号对象上，会被"从后端重新加载档案"整体覆盖而丢失，
+// 导致徽章闪一下就没。用独立 Map + localStorage 单独存，稳定可复用。
+const SLOT_PLAN_STORAGE_KEY = "teambuilding-gpt-slot-plans";
+const slotPlanCache = new Map(
+  (() => {
+    try { return Object.entries(JSON.parse(localStorage.getItem(SLOT_PLAN_STORAGE_KEY) || "{}")); }
+    catch (_) { return []; }
+  })()
+);
+
+function persistSlotPlanCache() {
+  try {
+    localStorage.setItem(SLOT_PLAN_STORAGE_KEY, JSON.stringify(Object.fromEntries(slotPlanCache)));
+  } catch (_) {}
+}
+
+// 异步刷新区位套餐：走桌面桥 status()，结果写进独立缓存供渲染使用。
+// 5 分钟内不重复拉，避免每次重渲染都打一遍页面探测。
+const SLOT_PLAN_CACHE_MS = 5 * 60 * 1000;
+let slotPlanFetchedAt = 0;
+let slotPlanFetching = false;
+
+async function refreshSlotPlans(force = false) {
+  if (!window.gptWorkbench?.status) return;
+  if (!force && Date.now() - slotPlanFetchedAt < SLOT_PLAN_CACHE_MS) return;
+  if (slotPlanFetching) return;
+  slotPlanFetching = true;
+  try {
+    const accounts = (Array.isArray(gptAccounts) ? gptAccounts : []).filter((a) => !a.hidden);
+    const results = await Promise.all(accounts.map(async (acc) => {
+      try {
+        // 身份优先用专用接口（总是读服务端会话），拿不到再退回 status 的缓存值
+        if (window.gptWorkbench?.sessionIdentity) {
+          const who = await window.gptWorkbench.sessionIdentity(acc.id);
+          return { id: acc.id, plan: String(who?.plan || "") };
+        }
+        const status = await window.gptWorkbench.status(acc.id);
+        return { id: acc.id, plan: String(status?.authPlan || "") };
+      } catch (_) {
+        return { id: acc.id, plan: "" };
+      }
+    }));
+    let changed = false;
+    for (const item of results) {
+      if (!item.plan) continue;
+      if (slotPlanCache.get(item.id) !== item.plan) {
+        slotPlanCache.set(item.id, item.plan);
+        changed = true;
+      }
+    }
+    slotPlanFetchedAt = Date.now();
+    if (changed) {
+      persistSlotPlanCache();
+      renderProdTopbarAbcd();
+    }
+  } finally {
+    slotPlanFetching = false;
+  }
 }
 
 function initProdTopbarAbcd() {
@@ -34155,11 +34480,17 @@ function initProdTopbarAbcd() {
   if (!abcdGroup) return;
 
   renderProdTopbarAbcd();
+  // 后端档案是唯一真源：前端 localStorage 可能残留已被删除的槽位（实测出现过
+  // 顶栏显示 9 个、后端只有 8 个档案，第 9 个点了没反应）。这里只做"删除"，
+  // 从不新增、不覆盖已有字段，避免动到 UI-only 的 mode 等配置。
+  reconcileProdSlotsWithNative();
 
   // 左键点击：切换账号或新增槽位
   abcdGroup.addEventListener('click', (e) => {
     const pill = e.target.closest('.abcd-pill-btn');
     if (pill && pill.dataset.account) {
+      // 刚拖完不要顺带把账号切走
+      if (typeof gptAccountSuppressClick !== 'undefined' && gptAccountSuppressClick) return;
       const accId = pill.dataset.account;
       if (typeof switchGptAccount === 'function') {
         switchGptAccount(accId);
@@ -34172,6 +34503,57 @@ function initProdTopbarAbcd() {
       else if (typeof openPageSettings === 'function') openPageSettings('gptAuto');
       return;
     }
+  });
+
+  // 拖动换位：把 D 拖到 B 的位置，D 就变成 B。
+  // 内部 ID（account-N）始终不变，只是顺序变了 —— 字母是按顺序算的。
+  abcdGroup.addEventListener('dragstart', (e) => {
+    const pill = e.target.closest('.abcd-pill-btn');
+    if (!pill || !pill.dataset.account) return;
+    draggedGptAccountId = pill.dataset.account;
+    pill.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', draggedGptAccountId); } catch {}
+  });
+
+  abcdGroup.addEventListener('dragover', (e) => {
+    const pill = e.target.closest('.abcd-pill-btn');
+    if (!pill || !draggedGptAccountId || pill.dataset.account === draggedGptAccountId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    pill.classList.add('drag-over');
+  });
+
+  abcdGroup.addEventListener('dragleave', (e) => {
+    e.target.closest('.abcd-pill-btn')?.classList.remove('drag-over');
+  });
+
+  abcdGroup.addEventListener('drop', async (e) => {
+    const pill = e.target.closest('.abcd-pill-btn');
+    if (!pill || !pill.dataset.account) return;
+    e.preventDefault();
+    pill.classList.remove('drag-over');
+    const sourceId = draggedGptAccountId || (e.dataTransfer && e.dataTransfer.getData('text/plain')) || '';
+    draggedGptAccountId = '';
+    if (!sourceId || sourceId === pill.dataset.account) return;
+    gptAccountSuppressClick = true;
+    setTimeout(() => { gptAccountSuppressClick = false; }, 600);
+    try {
+      await reorderGptAccounts(sourceId, pill.dataset.account);
+      renderProdTopbarAbcd();
+      syncTopbarAbcdActive(typeof activeGptAccountId === 'string' ? activeGptAccountId : sourceId);
+    } catch (error) {
+      renderProdTopbarAbcd();
+      if (typeof showSystemNotice === 'function') {
+        showSystemNotice('槽位顺序没有保存', error && error.message, { tone: 'danger' });
+      }
+    }
+  });
+
+  abcdGroup.addEventListener('dragend', (e) => {
+    e.target.closest('.abcd-pill-btn')?.classList.remove('dragging');
+    abcdGroup.querySelectorAll('.abcd-pill-btn.drag-over').forEach((el) => el.classList.remove('drag-over'));
+    draggedGptAccountId = '';
   });
 
   // 右键点击：弹出账号管理快捷菜单（重命名、禁用/启用、删除）
@@ -34192,6 +34574,30 @@ function initProdTopbarAbcd() {
   });
 
   syncTopbarAbcdActive(typeof activeGptAccountId === 'string' ? activeGptAccountId : 'account-1');
+}
+
+// 用后端档案校正顶栏槽位：只删除"后端已经没有"的幽灵槽位。
+async function reconcileProdSlotsWithNative() {
+  if (!window.gptWorkbench?.profiles) return false;
+  try {
+    const state = await window.gptWorkbench.profiles();
+    const nativeIds = (state?.profiles || []).map((p) => String(p?.id || "")).filter(Boolean);
+    if (!nativeIds.length) return false;
+    const ghosts = (Array.isArray(gptAccounts) ? gptAccounts : [])
+      .map((a) => String(a?.id || ""))
+      .filter((id) => id && !nativeIds.includes(id));
+    if (!ghosts.length) return false;
+    gptAccounts = gptAccounts.filter((a) => nativeIds.includes(String(a?.id || "")));
+    if (typeof saveGptAccounts === 'function') saveGptAccounts();
+    renderProdTopbarAbcd();
+    syncTopbarAbcdActive(typeof activeGptAccountId === 'string' ? activeGptAccountId : 'account-1');
+    if (typeof showWorkbenchAssistantBubble === 'function') {
+      showWorkbenchAssistantBubble(`已清理 ${ghosts.length} 个失效槽位：${ghosts.join('、')}`, { transient: true, duration: 4200, tone: 'warning' });
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function syncTopbarAbcdActive(activeId) {
@@ -34215,13 +34621,14 @@ function syncTopbarAbcdActive(activeId) {
   }
 
   // 同步浏览器导航条的独立配置账号徽章
+  // 注意：这里必须和 renderProdTopbarAbcd 用同一个过滤口径（排除 hidden），
+  // 否则有隐藏账号时字母会错位——顶栏显示 D、徽章显示 E。
   const labelEl = document.getElementById('browserActiveAccountLabel');
   if (labelEl) {
-    const accounts = Array.isArray(gptAccounts) ? gptAccounts : [];
-    const idx = accounts.findIndex(a => a.id === activeId);
+    const visibleAccounts = (Array.isArray(gptAccounts) ? gptAccounts : []).filter((a) => !a.hidden);
+    const idx = visibleAccounts.findIndex(a => a.id === activeId);
     if (idx >= 0) {
-      const letter = String.fromCharCode(65 + (idx % 26));
-      labelEl.textContent = `${letter}·${accounts[idx].name || ('账号 ' + (idx + 1))}`;
+      labelEl.textContent = `${String.fromCharCode(65 + (idx % 26))}·${visibleAccounts[idx].name || ('账号 ' + (idx + 1))}`;
     } else {
       labelEl.textContent = `账号 ${activeId}`;
     }

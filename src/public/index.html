@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>内容生产</title>
-  <link rel="stylesheet" href="/styles.css?v=2.6.41-dev" />
+  <link rel="stylesheet" href="/styles.css?v=2.6.53-dev" />
   <link rel="stylesheet" href="/template-migration.css?v=0.1.0" />
   <script>
     (function() {
@@ -472,7 +472,8 @@
             </div>
           </header>
 
-            <!-- 极简高能顶栏：实例标识、模式徽章、自动/手动切换开关、抽屉折叠控制、独立窗口按钮 -->
+            <!-- 极简顶栏（2026-10-22 瘦身）：左侧品牌、中间 ABCD 槽位、右侧当前模式 + 抽屉开关。
+                 已移除：自动/手动开关（搬进抽屉 04 区）、顶栏刷新（浏览器工具条有重复 🔄）、独立窗口按钮。 -->
             <header class="prod-unified-topbar" id="prodUnifiedTopbar">
               <div class="topbar-left">
                 <div class="prod-app-brand-badge" id="topbarAppBrandBadge" title="内容制作 · 多账号统一单核心中枢">
@@ -488,34 +489,18 @@
                   <button type="button" class="abcd-add-inst-btn" id="btnContentProdAddInst" title="➕ 添加新生产槽位 (E、F...)">➕</button>
                   <button type="button" class="abcd-add-acc-btn" id="btnContentProdAddAccount" title="➕ 添加 / 绑定新的 ChatGPT 账号"><span>➕ 添加账号</span></button>
                 </div>
+              </div>
+
+              <div class="topbar-right">
                 <div class="mode-indicator-pill" id="topbarModeIndicator">
                   <span class="mode-icon">🎲</span>
                   <span class="mode-text">2·随机母版 (推荐)</span>
                 </div>
-              </div>
-
-              <div class="topbar-center">
-                <!-- 自动生产 vs 手动干预 极简二元控制开关 -->
-                <div class="prod-auto-manual-switch" id="prodAutoManualSwitch">
-                  <button type="button" class="switch-btn active" id="btnSwitchAuto" data-state="auto" title="开启全自动持续生产">
-                    <span class="dot-indicator running"></span>
-                    <span>🟢 自动持续生产</span>
-                  </button>
-                  <button type="button" class="switch-btn" id="btnSwitchManual" data-state="manual" title="暂停当前步骤，允许人工介入在画面中点击/打字">
-                    <span class="dot-indicator paused"></span>
-                    <span>⏸️ 手动干预/暂停</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="topbar-right">
-                <button id="gptBrowserReloadBtn" class="topbar-icon-btn" type="button" title="刷新 ChatGPT 网页">↻</button>
                 <button id="btnToggleProdDrawer" class="topbar-drawer-btn" type="button" title="点击展开/折叠右侧制作抽屉">
                   <span class="drawer-icon">🎛️</span>
                   <span class="drawer-label">制作抽屉</span>
                   <span class="drawer-arrow">◀</span>
                 </button>
-                <button id="gptPopoutBtn" class="topbar-popout-btn" type="button" title="独立弹出桌面窗口（支持多屏/拖拽操作）">◳ 独立窗口</button>
               </div>
             </header>
 
@@ -710,8 +695,19 @@
                       <span>04</span> <strong>流水线状态与控制</strong>
                       <span class="pts-send-badge" id="ptsSendStatusBadge">● 自动运转中</span>
                     </div>
+                    <!-- 自动/手动启停开关（2026-10-22 从顶栏搬入；id 不变，绑定逻辑不变） -->
+                    <div class="prod-auto-manual-switch pts-auto-manual-row" id="prodAutoManualSwitch">
+                      <button type="button" class="switch-btn active" id="btnSwitchAuto" data-state="auto" title="开启全自动持续生产">
+                        <span class="dot-indicator running"></span>
+                        <span>🟢 自动持续生产</span>
+                      </button>
+                      <button type="button" class="switch-btn" id="btnSwitchManual" data-state="manual" title="暂停当前步骤，允许人工介入在画面中点击/打字">
+                        <span class="dot-indicator paused"></span>
+                        <span>⏸️ 手动干预/暂停</span>
+                      </button>
+                    </div>
                     <div class="pts-send-info-row">
-                      <span id="ptsSendHintText">流水线源源不断自动跑；点击顶部暂停可直接在画面中操作</span>
+                      <span id="ptsSendHintText">流水线源源不断自动跑；点击"手动干预"可直接在画面中操作</span>
                     </div>
                     <div class="pts-secondary-actions-row">
                       <button type="button" class="pts-sub-action-btn" id="btnSidebarRetryStep" title="遇到页面交互卡顿时，重新执行当前步骤">↺ 重试当前步</button>
@@ -1006,7 +1002,6 @@
              <section class="distribution-drop-zone" id="distributionDropZone" tabindex="0" aria-label="拖入文件或文件夹" title="拖入文件或文件夹后，在设备卡片上发送" data-tooltip="拖入文件或文件夹"><strong>拖入文件或文件夹</strong><span>拖入后，在设备卡片上发送</span></section>
             <div class="distribution-command-actions"><button class="refresh-button" id="distributionRefreshBtn" title="刷新设备与库存" aria-label="立即刷新设备与库存"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 8.3A7 7 0 0 1 18.7 7L20 12M4 12l1.3 5A7 7 0 0 0 17.9 15.7"/></svg></button><button class="page-settings-button" type="button" data-open-page-settings="distribution" title="文件传输设置" aria-label="打开文件传输设置"><svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6A7 7 0 0 0 8.8 7L6.5 6.1l-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2.3 3.4 2.3-1A7 7 0 0 0 10.4 18l.3 2.6h4L15 18a7 7 0 0 0 1.5-1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg></button><button class="page-help-button" type="button" data-page-help="distributionView" title="文件传输说明" aria-label="查看文件传输说明"><svg class="round-action-icon help-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9a2.75 2.75 0 1 1 4.4 2.2c-1.1.8-1.9 1.35-1.9 2.8"/><circle cx="12" cy="17.2" r=".75"/></svg></button></div>
           </header>
-          <section id="distributionReserveAlert" class="reserve-floating-alert" hidden aria-live="polite"></section>
           <div class="segment-tabs distribution-stage-tabs" id="distributionTabs"></div>
           </div>
           <section class="distribution-panel active" id="distributionDevices"></section>
@@ -1403,13 +1398,8 @@
         </section>
         <section id="distributionPageSettings" class="page-settings-section" hidden>
           <div class="settings-group">
-            <h3>作品集目录与电脑储备</h3>
+            <h3>作品集目录</h3>
             <label><span>作品集目录</span><div class="inline-setting-control"><input id="distributionCollectionRootInput" type="text" placeholder="粘贴后回车或点到别处自动保存" /><button id="chooseDistributionCollectionRootBtn" type="button">选择</button></div></label>
-            <div class="settings-two-columns">
-              <label><span>低于多少提醒</span><input id="desktopReserveThreshold" type="number" min="1" max="500" /></label>
-              <label><span>检测分类</span><select id="desktopReserveCategory"><option value="conversion">精准流量（业务类）</option><option value="traffic">泛流量类</option><option value="unclassified">未分类</option><option value="all">全部</option></select></label>
-            </div>
-            <label class="switch-setting"><span><b>电脑储备悬浮提醒</b><small>达到阈值后自动消失</small></span><input id="desktopReserveAlertEnabled" type="checkbox" /></label>
           </div>
           <div class="settings-group">
             <h3>自动检测与分发</h3>
@@ -1609,12 +1599,12 @@
   <script src="/gpt-patrol-scheduler.js?v=0.1.0"></script>
   <script src="/gpt-progress-display.js?v=0.1.0"></script>
   <script src="/template-migration-panel.js?v=0.1.0"></script>
-  <script src="/distribution-ui.js?v=2.6.41-dev"></script>
-  <script src="/material-workspace.js?v=2.6.41-dev"></script>
+  <script src="/distribution-ui.js?v=2.6.53-dev"></script>
+  <script src="/material-workspace.js?v=2.6.53-dev"></script>
   <script src="/moments-publisher-panel.js?v=0.1.0"></script>
   <script src="/fixed-template-session.js?v=1"></script>
-  <script src="/production-request.js?v=2.6.41-dev"></script>
-  <script src="/app.js?v=2.6.41-dev"></script>
+  <script src="/production-request.js?v=2.6.53-dev"></script>
+  <script src="/app.js?v=2.6.53-dev"></script>
   <script src="/native-production-drawer.js?v=1.0.0" defer></script>
   </body>
 </html>

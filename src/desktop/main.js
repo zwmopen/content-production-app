@@ -36,6 +36,7 @@ const {
   resolveGptStartupUrl,
   isGptPageProductionReady
 } = require("../lib/gpt-session-guard");
+const { projectTemplateSyncStatus } = require("../lib/template-sync-status");
 const {
   planGptPageRecovery,
   isGptPageDocumentStable,
@@ -201,6 +202,9 @@ let assistantOverlayState = {
   settings: {}
 };
 let assistantCursorTimer = null;
+// 小猫助手（浮动 overlay）总开关：用户明确要求移除浮动小猫，重要消息改用系统通知。
+// 默认关闭；需要时设环境变量 TB_ASSISTANT_OVERLAY=1 重新启用。
+const ASSISTANT_OVERLAY_ENABLED = String(process.env.TB_ASSISTANT_OVERLAY || "0") === "1";
 // Overlay 加载失败自愈：loadURL 撞上服务冷启动会落到 chrome-error 永卡页，
 // 必须有界重试（6 次 × 5s），恢复后清零计数。
 let assistantOverlayLoadAttempts = 0;
@@ -250,6 +254,7 @@ const GPT_ACCOUNT_INITIALIZATION_CONCURRENCY = 1;
 let gptAccountInitializationActive = 0;
 const gptAccountInitializationQueue = [];
 let activeGptAccountId = defaultInstanceAccountId(CONTENT_INSTANCE_ID);
+let gptShowRequestSequence = 0;
 let wechatDraftView = null;
 const onlinePlatformViews = new Map();
 const onlinePlatformStates = new Map();
@@ -399,6 +404,12 @@ function updateAssistantCursorDirection() {
 }
 
 async function ensureAssistantOverlay() {
+  if (!ASSISTANT_OVERLAY_ENABLED) {
+    if (assistantOverlayWindow && !assistantOverlayWindow.isDestroyed()) assistantOverlayWindow.destroy();
+    assistantOverlayWindow = null;
+    if (assistantCursorTimer) { clearInterval(assistantCursorTimer); assistantCursorTimer = null; }
+    return null;
+  }
   if (!mainWindow || assistantOverlayWindow && !assistantOverlayWindow.isDestroyed()) return assistantOverlayWindow;
   const initialBounds = clampAssistantOverlayBounds(readAssistantOverlayBounds());
   assistantOverlayState = { ...assistantOverlayState, dockSide: assistantOverlayDockSide(initialBounds) };
@@ -586,6 +597,18 @@ function readBrowserProfiles() {
   }
 }
 
+// Read only the existing profile file for the template status projection.
+// Unlike readBrowserProfiles(), this helper never creates or repairs defaults.
+function readExistingBrowserProfileForTemplateSync(accountId) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(gptBrowserProfilesFile(), "utf8").replace(/^\uFEFF/, ""));
+    if (!Array.isArray(parsed.profiles)) return null;
+    return parsed.profiles.find((profile) => String(profile?.id || "").trim() === String(accountId || "").trim()) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 // ===== 槽位巡检门禁（2026-10-22 用户规则）=====
 // 注册表是实时操作的：文件 mtime 一变就重读，不变则用内存快照，避免高频探测打磁盘。
 // 未注册槽位与 disabled=true 的槽位一律跳过后台探测，不碰其渲染进程。
@@ -613,6 +636,15 @@ function gptSlotProfile(accountId) {
 function isGptSlotInspectionAllowed(accountId) {
   const profile = gptSlotProfile(accountId);
   return Boolean(profile) && profile.disabled !== true;
+}
+
+// 休眠判定（2026-10-22）：档案 disabled=true 即视为休眠。
+// 复用 disabled 而不新增字段 —— 它此前只用于挡巡检探测（isGptSlotInspectionAllowed），
+// 语义一致，且避免两份开关互相打架。
+// 读不到档案时返回 false：宁可多初始化一个账号，也不能因为读档失败把在用的槽位锁死。
+function isGptAccountDormant(accountId) {
+  const profile = gptSlotProfile(accountId);
+  return Boolean(profile) && profile.disabled === true;
 }
 
 // 后台探测判定：状态/体检/巡检/读取类标签才算后台探测；
@@ -827,7 +859,7 @@ function startTemporaryWebCacheCleanup() {
         // two queue steps and trigger a false bridge/load recovery. GPT cache
         // maintenance remains available through the per-account safe boundary;
         // this global timer only handles unrelated web workspaces.
-        clearReproducibleWebCaches("scheduled-3h", { includeGpt: false })
+        clearReproducibleWebCaches("scheduled-1h", { includeGpt: false })
           .then(() => { temporaryWebCacheCleanupLastRunAt = Date.now(); })
           .catch((error) => {
             appendDesktopLog("web-cache-clear-unhandled", String(error?.message || error));
@@ -1914,12 +1946,14 @@ async function executeGptJavaScriptViaCdp(contents, script, timeoutMs = 4000) {
   }
 }
 
-function executeGptJavaScriptBounded(contents, script, timeoutMs = 4000, fallback = null, label = "gpt-read") {
+function executeGptJavaScriptBounded(contents, script, timeoutMs = 4000, fallback = null, label = "gpt-read", options = {}) {
   if (!contents || contents.isDestroyed()) return Promise.resolve(fallback);
-  const channel = gptJavaScriptChannelForLabel(label);
+  const channel = String(options.channel || gptJavaScriptChannelForLabel(label));
+  const trackReadHealth = options.trackReadHealth !== false && channel !== "control";
+  const reportBridgeHealth = options.reportBridgeHealth !== false;
   const account = gptAccountForWebContents(contents);
   const now = Date.now();
-  const healthByChannel = channel === "control"
+  const healthByChannel = !trackReadHealth
     ? null
     : (gptJavaScriptReadHealth.get(contents) || new Map());
   const readHealth = healthByChannel
@@ -1995,7 +2029,7 @@ function executeGptJavaScriptBounded(contents, script, timeoutMs = 4000, fallbac
       // renderer that never settles must not permanently block every later
       // readiness probe for this browser window.
       finish(fallback);
-      noteGptBridgeTimeout(account, channel);
+      if (reportBridgeHealth) noteGptBridgeTimeout(account, channel);
       forcedReleaseTimer = setTimeout(() => {
         if (channelReleased) return;
         releaseChannel();
@@ -2025,7 +2059,7 @@ function executeGptJavaScriptBounded(contents, script, timeoutMs = 4000, fallbac
         return contents.executeJavaScript(script, true);
       })
       .then((value) => {
-        noteGptBridgeSuccess(account, channel);
+        if (reportBridgeHealth) noteGptBridgeSuccess(account, channel);
         releaseChannel();
         finish(value);
       })
@@ -2119,6 +2153,60 @@ ${GPT_PAGE_STRUCTURAL_STATEMENTS}
       authenticationRequired,
       chatConversation
     };
+  })()`;
+}
+
+function gptTemplateSyncStatusPageScript() {
+  return `(() => {
+${GPT_PAGE_STRUCTURAL_STATEMENTS}
+    const composerElement = document.querySelector('#prompt-textarea, textarea[data-id="root"], [contenteditable="true"]');
+    const composerText = String(composerElement?.value ?? composerElement?.innerText ?? composerElement?.textContent ?? "").trim();
+    const composerScope = composerElement?.closest("form")
+      || composerElement?.closest("[data-composer-surface]")
+      || document;
+    const attachmentSelector = 'button[aria-label*="Remove" i], button[aria-label*="移除" i], button[aria-label*="Delete" i], button[aria-label*="删除" i], [data-testid*="attachment"], [data-testid*="file-tile"], [class*="group/file-tile"], [class*="attachment-tile"], img[src^="blob:"], img[src^="data:"], img[alt*="attachment" i], img[alt*="Uploaded" i]';
+    const attachmentsClear = ![...composerScope.querySelectorAll(attachmentSelector)].some((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    const streamingMarker = [...document.querySelectorAll(
+      '[data-message-author-role="assistant"][data-is-streaming="true"], .result-streaming, [data-testid*="streaming" i]'
+    )].some((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    const stopControl = [...document.querySelectorAll("button")].some((button) => {
+      const rect = button.getBoundingClientRect();
+      const label = [button.getAttribute("aria-label"), button.title, button.getAttribute("data-testid")].join(" ");
+      if (/composer|voice|microphone|dictation|语音|听写/i.test(label)) return false;
+      const visible = rect.width > 0 && rect.height > 0
+        && rect.bottom > 0 && rect.right > 0
+        && rect.top < window.innerHeight && rect.left < window.innerWidth;
+      return visible && /stop-button|stop generating|停止生成/i.test(label);
+    });
+    return {
+      url,
+      readyState: document.readyState,
+      extensionReady,
+      authenticationRequired,
+      chatConversation,
+      composerReady,
+      composerEmpty: Boolean(composerElement) && !composerText,
+      attachmentsClear,
+      generating: streamingMarker || stopControl
+    };
+  })()`;
+}
+
+function gptTemplateSyncAuthStatusScript() {
+  return `(async () => {
+    try {
+      const response = await fetch("/api/auth/session", { credentials: "include", cache: "no-store" });
+      const payload = await response.json();
+      return { authChecked: response.ok === true, authLoggedIn: response.ok === true && Boolean(payload && payload.user) };
+    } catch (_) {
+      return { authChecked: false, authLoggedIn: false };
+    }
   })()`;
 }
 
@@ -2887,6 +2975,14 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
   const existing = gptAccounts.get(id);
   if (existing?.view && !existing.view.webContents.isDestroyed()) return existing;
   if (existing?.initializing) return existing.initializing;
+  // 休眠门禁（2026-10-22）：档案里 disabled=true 的账号不再创建 BrowserView /
+  // partition session，冷启动和切槽位都不会为它付内存和 CDP 握手成本。
+  // 注意门禁必须在"复用已有窗口"之后 —— 已经在显示中的窗口要照常返回，
+  // 否则正在看的槽位会被突然判死。唤醒只需把 disabled 置回 false。
+  // 登录态不受影响：分区目录全程不删不动。
+  if (isGptAccountDormant(id)) {
+    throw new Error(`账号 ${id} 处于休眠状态，请先唤醒后再使用`);
+  }
   if (!mainWindow) throw new Error("工作台窗口尚未就绪");
   const account = {
     id,
@@ -4261,6 +4357,7 @@ ipcMain.handle("desktop:assistant-update", async (_event, input = {}) => {
     settings: input.settings && typeof input.settings === "object" ? { ...assistantOverlayState.settings, ...input.settings } : assistantOverlayState.settings
   };
   const overlay = await ensureAssistantOverlay();
+  if (!overlay) return { ok: true, overlayDisabled: true };
   const modeChanged = previousDetached !== assistantOverlayIsDetached()
     || previousAlwaysOnTop !== (assistantOverlayState.settings?.alwaysOnTop === true);
   if (modeChanged) applyAssistantOverlayWindowMode(overlay);
@@ -4358,6 +4455,99 @@ ipcMain.handle("desktop:gpt-status", async (_event, accountId = activeGptAccount
   };
 });
 
+// 固定母版状态投影：只检查已存在的 BrowserView，不调用 ensureGptAccount，
+// 不导航、不写页面，也不把邮箱、套餐、会话 URL 或草稿内容返回给 renderer。
+ipcMain.handle("desktop:gpt-template-sync-status", async (_event, input = {}) => {
+  const request = input && typeof input === "object" ? input : { accountId: input };
+  const id = assertAssignedGptAccountId(request.accountId, { required: true });
+  const profile = readExistingBrowserProfileForTemplateSync(id);
+  const account = gptAccounts.get(id);
+  const contents = account?.view?.webContents;
+  const accountAvailable = Boolean(contents && !contents.isDestroyed());
+  const slotEnabled = Boolean(profile && profile.disabled !== true);
+  const writerIdle = Boolean(account
+    && !legacyProductionTaskActive
+    && !productionTaskAccounts.has(id)
+    && !account.pendingGptTask
+    && !account.maintenancePromise
+    && !account.bridgeRecoveryPending
+    && account.forceGptPageRecovery !== true
+    && account.userRecoveryHold !== true);
+  const checkedAt = new Date().toISOString();
+  const base = {
+    accountId: id,
+    profile: profile ? {
+      id,
+      selectedTemplateId: String(profile.selectedTemplateId || ""),
+      templateConversationUrl: String(profile.templateConversationUrl || "")
+    } : {},
+    requestedTemplateId: String(request.templateId || ""),
+    requestedTargetUrl: String(request.targetConversationUrl || ""),
+    accountAvailable,
+    slotEnabled,
+    writerIdle,
+    checkedAt,
+    nowMs: Date.now()
+  };
+  if (!accountAvailable || !slotEnabled || !writerIdle || !profile) {
+    return projectTemplateSyncStatus(base);
+  }
+
+  const page = await executeGptJavaScriptBounded(
+    contents,
+    gptTemplateSyncStatusPageScript(),
+    3000,
+    null,
+    `template-sync-readonly:${id}:page`,
+    { channel: "template-sync-readonly", trackReadHealth: false, reportBridgeHealth: false }
+  );
+  const currentUrl = safeGetWebContentsUrl(contents, "");
+  const profileTarget = normalizeChatConversationUrl(profile.templateConversationUrl);
+  const requestedTarget = normalizeChatConversationUrl(request.targetConversationUrl);
+  const pageReady = page && ["interactive", "complete"].includes(String(page.readyState || ""))
+    && page.extensionReady === true
+    && page.authenticationRequired !== true;
+  const canCheckIdentity = Boolean(pageReady
+    && page.chatConversation === true
+    && page.composerReady === true
+    && page.composerEmpty === true
+    && page.attachmentsClear === true
+    && page.generating === false
+    && profileTarget
+    && requestedTarget === profileTarget
+    && normalizeChatConversationUrl(currentUrl) === profileTarget
+    && String(request.templateId || "") === String(profile.selectedTemplateId || ""));
+  let identity = null;
+  let identityCheckedAt = "";
+  if (canCheckIdentity) {
+    // This dedicated probe returns only booleans; account identity stays scoped to this WebContents.
+    const auth = await executeGptJavaScriptBounded(
+      contents,
+      gptTemplateSyncAuthStatusScript(),
+      5000,
+      null,
+      `template-sync-readonly:${id}:auth`,
+      { channel: "template-sync-readonly", trackReadHealth: false, reportBridgeHealth: false }
+    );
+    if (auth && auth.authChecked === true) {
+      identity = { accountId: id, authChecked: true, authLoggedIn: auth.authLoggedIn === true };
+      identityCheckedAt = new Date().toISOString();
+    }
+  }
+  return projectTemplateSyncStatus({
+    ...base,
+    profile: base.profile,
+    requestedTemplateId: base.requestedTemplateId,
+    requestedTargetUrl: base.requestedTargetUrl,
+    currentUrl,
+    page,
+    identity,
+    identityCheckedAt,
+    checkedAt: new Date().toISOString(),
+    nowMs: Date.now()
+  });
+});
+
 // 账号真实身份：服务端会话（邮箱 / 套餐）——UI 与运维脚本的唯一真源。
 ipcMain.handle("desktop:gpt-session-identity", async (_event, input = {}) => {
   const accountId = assertAssignedGptAccountId(input.accountId || activeGptAccountId);
@@ -4394,11 +4584,23 @@ ipcMain.handle("desktop:server-restart", async (_event, input = {}) => {
 });
 
 ipcMain.handle("desktop:gpt-show", async (_event, input = {}) => {
+  const showSequence = ++gptShowRequestSequence;
   hideWechatDraftView();
   hideOnlinePlatformViews();
   const accountId = assertAssignedGptAccountId(input.accountId || activeGptAccountId);
+  // 休眠槽位在前置拦截：不能走到 hideAllGptViews()，否则点一个休眠槽位会把
+  // 正在用的 ABC 窗口一起藏掉。
+  if (isGptAccountDormant(accountId)) {
+    return { ok: false, dormant: true, accountId, code: "GPT_ACCOUNT_DORMANT", error: "该账号处于休眠状态，请先唤醒" };
+  }
   activeGptAccountId = accountId;
+  // A slow account initialization must not leave another account visible under
+  // the requested slot's label. Hiding preserves server work and drafts.
+  hideAllGptViews();
   const account = await ensureGptAccount(accountId);
+  if (showSequence !== gptShowRequestSequence || activeGptAccountId !== accountId) {
+    return { ok: false, superseded: true, accountId, code: "GPT_SHOW_SUPERSEDED" };
+  }
   account.lastUsedAt = Date.now();
   const view = account.view;
   hideAllGptViews(accountId);
@@ -4429,9 +4631,17 @@ ipcMain.handle("desktop:gpt-show", async (_event, input = {}) => {
     })`, true).catch(() => ({ ...showProbeFallback, probeTimedOut: false })),
     new Promise((resolve) => setTimeout(() => resolve(showProbeFallback), 800))
   ]);
+  if (showSequence !== gptShowRequestSequence || activeGptAccountId !== accountId) {
+    return { ok: false, superseded: true, accountId, code: "GPT_SHOW_SUPERSEDED" };
+  }
   return {
     ok: true,
     accountId,
+    webContentsId: view.webContents.id,
+    sessionPartition: account.partition,
+    visibleAccountIds: [...gptAccounts.entries()]
+      .filter(([, candidate]) => candidate.view?.isVisible?.() === true)
+      .map(([visibleId]) => visibleId),
     extensionLoaded: Boolean(account.extensionInfo),
     extensionRuntimeReady: Boolean(account.extensionRuntimeReady),
     extensionInfo: account.extensionInfo ? {
@@ -4455,6 +4665,7 @@ ipcMain.handle("desktop:gpt-show", async (_event, input = {}) => {
 });
 
 ipcMain.handle("desktop:gpt-hide", async () => {
+  ++gptShowRequestSequence;
   hideAllGptViews();
   return { ok: true };
 });

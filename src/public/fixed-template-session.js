@@ -41,6 +41,90 @@
       || assets.find((asset) => asset !== p1) || null;
     return p1 && p2 ? [p1, p2] : [];
   }
+  function verifyTemplateSyncReadback(input = {}) {
+    const profile = input.profile || {};
+    const template = input.template || {};
+    const receipt = input.receipt || {};
+    const sessionStatus = input.sessionStatus || {};
+    const accountId = text(profile.accountId || profile.id);
+    const templateId = text(template.id || template.templateId);
+    const targetUrl = conversationUrl(profile.templateConversationUrl);
+    const reject = (code, reason) => ({ ok: false, code, reason });
+    if (!accountId || !templateId || text(profile.selectedTemplateId) !== templateId) {
+      return reject("TEMPLATE_SYNC_SELECTION_MISMATCH", "当前账号与所选母版不匹配");
+    }
+    if (sessionStatus.accountId !== accountId || sessionStatus.templateId !== templateId
+      || sessionStatus.status !== "VERIFIED") {
+      return reject("TEMPLATE_SYNC_STATUS_UNVERIFIED", "本地只读账号状态尚未核实");
+    }
+    if (sessionStatus.targetMatches !== true || sessionStatus.conversationMatches !== true || !targetUrl) {
+      return reject("TEMPLATE_SYNC_TARGET_MISMATCH", "当前网页不是账号档案绑定的精确模板会话");
+    }
+    const nowMs = Number.isFinite(Number(input.nowMs)) ? Number(input.nowMs) : Date.now();
+    const identityCheckedAt = Date.parse(sessionStatus.identityCheckedAt || "");
+    const identityFresh = Number.isFinite(identityCheckedAt)
+      && identityCheckedAt <= nowMs + 60_000
+      && nowMs - identityCheckedAt <= 300_000;
+    if (sessionStatus.identityVerified !== true || !identityFresh) {
+      return reject("TEMPLATE_SYNC_IDENTITY_UNVERIFIED", "当前账号服务端登录身份未通过新鲜回读");
+    }
+    if (sessionStatus.accountAvailable !== true || sessionStatus.slotEnabled !== true
+      || sessionStatus.writerIdle !== true || sessionStatus.accountIdle !== true) {
+      return reject("TEMPLATE_SYNC_ACCOUNT_BUSY", "必须使用已存在且当前空闲的账号窗口");
+    }
+    if (sessionStatus.pageReady !== true || sessionStatus.chatConversation !== true
+      || sessionStatus.composerReady !== true || sessionStatus.composerEmpty !== true
+      || sessionStatus.attachmentsClear !== true || sessionStatus.generationIdle !== true
+      || sessionStatus.pageIdle !== true) {
+      return reject("TEMPLATE_SYNC_PAGE_BUSY", "网页生成、输入框、附件或会话页面尚未达到空闲条件");
+    }
+    if (!templateReferenceReady(template)) {
+      return reject("TEMPLATE_SYNC_REFERENCES_UNVERIFIED", "母版 P1/P2 实物及 SHA 尚未核实");
+    }
+    const pages = templatePageReferences(template);
+    if (pages.length !== 2) return reject("TEMPLATE_SYNC_REFERENCES_INCOMPLETE", "母版必须同时包含 P1 与 P2");
+    const expectedAttachments = pages.map((asset, index) => {
+      const source = (Array.isArray(template.references) ? template.references : [])
+        .find((item) => text(item?.path) === asset.path);
+      const sourcePath = text(source?.path);
+      return {
+        page: index + 1,
+        fileName: sourcePath.split(/[\\/]/).pop() || "",
+        sourceSha256: text(source?.sha256).toLowerCase(),
+        absolutePath: /^(?:[a-z]:[\\/]|\\\\|\/)/i.test(sourcePath)
+      };
+    });
+    if (expectedAttachments.some((item) => !item.fileName || !item.absolutePath
+      || !/^[a-f0-9]{64}$/.test(item.sourceSha256))) {
+      return reject("TEMPLATE_SYNC_REFERENCES_INVALID", "P1/P2 缺少绝对路径或有效 SHA-256");
+    }
+    const promptSha256 = text(input.promptSha256 || template.migrationPromptSha256).toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(promptSha256)) {
+      return reject("TEMPLATE_SYNC_PROMPT_UNVERIFIED", "迁移提示词 SHA-256 未核实");
+    }
+    const verifiedAt = Date.parse(receipt.verifiedAt || "");
+    if (receipt.serverReadback !== true || receipt.schemaVersion !== 1 || receipt.status !== "VERIFIED"
+      || receipt.accountId !== accountId || receipt.templateId !== templateId
+      || conversationUrl(receipt.conversationUrl) !== targetUrl
+      || !/^[a-f0-9]{64}$/i.test(text(receipt.transactionKey)) || !Number.isFinite(verifiedAt)) {
+      return reject("TEMPLATE_SYNC_SERVER_READBACK_MISSING", "服务器尚未回读同账号、同母版、同会话的完成凭证");
+    }
+    const actualAttachments = Array.isArray(receipt.attachments) ? receipt.attachments : [];
+    const attachmentMap = new Map(actualAttachments.map((item) => [Number(item?.page), item]));
+    const attachmentsMatch = actualAttachments.length === 2 && expectedAttachments.every((expected) => {
+      const actual = attachmentMap.get(expected.page);
+      return actual?.observed === true
+        && text(actual.fileName).toLowerCase() === expected.fileName.toLowerCase()
+        && text(actual.sourceSha256).toLowerCase() === expected.sourceSha256;
+    });
+    if (!attachmentsMatch) return reject("TEMPLATE_SYNC_ATTACHMENT_READBACK_MISMATCH", "服务器附件映射没有逐页匹配 P1/P2 实物哈希");
+    if (receipt.promptStatus !== "SENT"
+      || text(receipt.promptSha256).toLowerCase() !== promptSha256
+      || text(receipt.promptReadbackSha256).toLowerCase() !== promptSha256) {
+      return reject("TEMPLATE_SYNC_PROMPT_READBACK_MISMATCH", "服务器未回读到已发送的完整迁移提示词");
+    }
+    return { ok: true, code: "TEMPLATE_SYNC_VERIFIED", accountId, templateId, conversationUrl: targetUrl };
+  }
   function buildTemplateSetupPrompt(input = {}) {
     const template = input.template || {};
     const templateId = text(template.id || template.templateId);
@@ -128,17 +212,11 @@
       result.explanation = "每套新对话都重新发送相同母版，不继承上一套对话上下文。";
     } else if (cdp) {
       result.workflow = "reuse-conversation";
-      const matches = Boolean(url && accountId && templateId
-        && conversationUrl(receipt.conversationUrl) === url
-        && text(receipt.accountId) === accountId
-        && text(receipt.templateId) === templateId
-        && receipt.status === "READY"
-        && receipt.physicalVerified === true
-        && text(receipt.receiptPath)
-        && /^[a-f0-9]{64}$/i.test(text(receipt.receiptSha256)));
+      const syncReadback = verifyTemplateSyncReadback({ ...input, profile, template, receipt });
+      const matches = Boolean(url && accountId && templateId && syncReadback.ok);
       result.bindingStatus = matches ? "CONVERSATION_VERIFIED" : url ? "CONFIGURED_UNVERIFIED" : "UNBOUND";
       result.bindingLabel = matches ? "母版会话已核实" : url ? "已配置母版会话，待核实" : "未绑定母版会话";
-      result.reasons = matches ? [] : [url ? "需要当前账号、母版和会话一致的初始化回执" : "需要绑定本账号的母版会话"];
+      result.reasons = matches ? [] : [syncReadback.reason || (url ? "需要当前账号、母版和会话一致的服务器回读凭证" : "需要绑定本账号的母版会话")];
       result.steps = ["绑定账号与母版", "发送母版并保存学习回执", "在同一会话逐套发送完整素材", "质检、封装、入库后进入下一套"];
       result.explanation = "先在网页会话初始化母版；后续只发送本套素材，保留会话与账号绑定。";
     }
@@ -149,5 +227,5 @@
     result.canSubmitSelectedMaterial = result.readyForMaterial && Boolean(sourcePath);
     return result;
   }
-  return { project, conversationUrl, referenceAssets, templatePageReferences, buildTemplateSetupPrompt, buildMaterialPrompt };
+  return { project, conversationUrl, referenceAssets, templatePageReferences, verifyTemplateSyncReadback, buildTemplateSetupPrompt, buildMaterialPrompt };
 });

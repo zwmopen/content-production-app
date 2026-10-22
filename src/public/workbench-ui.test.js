@@ -17,6 +17,7 @@ const css = readText(path.join(__dirname, "styles.css"));
 const conversionOutputReport = readText(path.join(__dirname, "..", "..", "docs", "流量转化成交产出复盘.html"));
 const workerStateSource = readText(path.join(__dirname, "gpt-window-worker-state.js"));
 const productionStatus = readText(path.join(__dirname, "gpt-production-status.js"));
+const fixedTemplateSession = readText(path.join(__dirname, "fixed-template-session.js"));
 const desktopMain = readText(path.join(__dirname, "..", "desktop", "main.js"));
 const temporaryWebCacheSchedule = readText(path.join(__dirname, "..", "lib", "temporary-web-cache-schedule.js"));
 const desktopPreload = readText(path.join(__dirname, "..", "desktop", "preload.js"));
@@ -1562,6 +1563,19 @@ test("工作流版本切换按当前账号持久化并同步会话策略", () =>
   assert.match(app, /window\.gptWorkbench\?\.saveProfile\?\.\(\{ \.\.\.currentAccount, active: false \}\)/);
 });
 
+test("C-6固定母版就绪消费按稳定账号脱敏回读的本地状态", () => {
+  assert.match(fixedTemplateSession, /sessionStatus\.accountAvailable !== true \|\| sessionStatus\.slotEnabled !== true/);
+  assert.match(fixedTemplateSession, /sessionStatus\.identityVerified !== true \|\| !identityFresh/);
+  assert.match(fixedTemplateSession, /sessionStatus\.targetMatches !== true \|\| sessionStatus\.conversationMatches !== true/);
+  assert.match(app, /身份\$\{sessionStatus\.identityVerified \? "已核" : "待核"\} · 目标\$\{sessionStatus\.targetMatches \? "匹配" : "不匹配"\}/);
+  assert.match(desktopMain, /ipcMain\.handle\("desktop:gpt-template-sync-status"/);
+  assert.match(desktopPreload, /templateSyncStatus\(input = \{\}\)/);
+  assert.match(fixedTemplateSession, /receipt\.serverReadback !== true/);
+  assert.match(fixedTemplateSession, /actual\.sourceSha256/);
+  assert.match(fixedTemplateSession, /receipt\.promptReadbackSha256/);
+  assert.match(fixedTemplateSession, /const matches = Boolean\(url && accountId && templateId && syncReadback\.ok\)/);
+});
+
 // [legacy 2026-10-22] 判定：本条断言锁定的是旧版 GPT 生产界面 DOM/旧机制，界面已整体改版，断言目标在当前代码中已不存在。暂作隔离保留原文，待按新界面重写契约。详见 docs/TEST-DEBT-REPORT.md
 test.skip("发送区使用紧凑控制条并移除重复常驻说明", () => {
   assert.match(html, /id="gptSkipTaskBtn"[^>]*>跳过作品<\/button>/);
@@ -2524,7 +2538,7 @@ test("independent automatic windows launch together without the legacy startup s
   assert.match(gate, /startup-stagger-disabled/);
 });
 
-test("GPT production refreshes after a completed post and clears only temporary cache every configured three-hour window", () => {
+test("GPT production refreshes after a completed post and clears only temporary cache every configured hourly window", () => {
   assert.match(app, /GPT_TEMPORARY_CACHE_STORAGE_KEY/);
   assert.match(app, /function scheduleGptTemporaryCacheMaintenance\(/);
   assert.match(app, /async function refreshGptAfterProduction\(/);
@@ -2543,7 +2557,7 @@ test("GPT production refreshes after a completed post and clears only temporary 
   assert.match(desktopPreload, /desktop:gpt-maintenance/);
 });
 
-test("three-hour cache cleanup defers when a durable runtime still owns an unfinished task", () => {
+test("hourly cache cleanup defers when a durable runtime still owns an unfinished task", () => {
   assert.match(app, /const durableRuntime = readGptWindowRuntime\(key\);/);
   assert.match(app, /durableTaskStillBusy = Boolean\([\s\S]{0,360}currentTaskId/);
   assert.match(app, /!\["idle", "completed", "waiting-quota"\]\.includes\(String\(durableRuntime\.status \|\| ""\)\)/);
@@ -2596,9 +2610,9 @@ test("fresh-session pre-submit upload gets its own finite heartbeat budget", () 
   assert.match(app, /bridgeTaskLost = !previousPostIdleWithinBudget[\s\S]{0,240}freshRootPreSubmitWithinBudget/);
 });
 
-test("desktop cache maintenance is three-hour, work-hour gated, and defers during production", () => {
+test("desktop cache maintenance is hourly, work-hour gated, and defers during production", () => {
   assert.match(desktopMain, /temporary-web-cache-schedule/);
-  assert.match(temporaryWebCacheSchedule, /TEMPORARY_WEB_CACHE_INTERVAL_MS = 3 \* 60 \* 60 \* 1000/);
+  assert.match(temporaryWebCacheSchedule, /TEMPORARY_WEB_CACHE_INTERVAL_MS = 1 \* 60 \* 60 \* 1000/);
   assert.match(desktopMain, /planTemporaryWebCacheCleanup/);
   assert.match(temporaryWebCacheSchedule, /production-active/);
   assert.doesNotMatch(desktopMain, /TEMPORARY_WEB_CACHE_CLEANUP_INTERVAL_MS = 10 \* 60 \* 1000/);
@@ -2693,7 +2707,11 @@ test("assistant notifications are page-aware, stable, configurable, and independ
   assert.match(html, /id="assistantOtherDurationSeconds"[^>]*value="3"/);
   assert.match(html, /id="assistantOtherMaxPerBatch"[^>]*value="1"/);
   assert.match(app, /sourceView:\s*"distributionView"/);
-  assert.match(app, /distribution-reserve:/);
+  // [removed 2026-10-22] 电脑作品集「储备不足」提醒已按用户要求整体下线，本条断言随之作废。
+  // 原因：成品库已升级为 V6.0 货架制（24 大分类目录 + manifest 判定完结），而扫描逻辑仍按
+  // 旧架构统计「已发送0次（抖音小红书可发）」目录作为储备池，该池为空 → reserve 恒为 0 →
+  // 提醒只会误报。已删除 renderDistributionReserveAlert()、reserveCategoryLabel()、
+  // desktopReserveAlertEnabled/Threshold/Category 三个配置项及 index.html 入口。
   assert.match(app, /assistantNoticeQueue/);
   assert.match(app, /bubbleVisible:/);
   assert.match(desktopMain, /catVisible:/);
@@ -3732,7 +3750,7 @@ test("rotation quota refresh does not wait on a browser that was just reloaded",
 
 test("rotation browser readiness and admission IPC calls are individually bounded", () => {
   assert.match(app, /async function boundedGptBrowserCall/);
-  assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.show\(bounds, activeGptAccountId\), 5_000\)/);
+  assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.show\(bounds, requestedAccountId\), 5_000\)/);
   assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.status\(accountId\), 2_500\)/);
   assert.match(app, /boundedGptBrowserCall\(window\.gptWorkbench\.inspectStatus\(account\.id\), GPT_INSPECT_CALL_TIMEOUT_MS\)/);
   assert.match(app, /switchGptAccount\(account\.id, \{ silent: true, resumeWindow: false, syncBrowser: false \}\)/);
@@ -3992,7 +4010,7 @@ test("GPT production attachments use the exact Electron WebContents native file 
 test("scheduled web cache cleanup never clears GPT production partitions", () => {
   assert.match(desktopMain, /async function clearReproducibleWebCaches\(reason = "manual", options = \{\}\)/);
   assert.match(desktopMain, /const includeGpt = options\.includeGpt !== false/);
-  assert.match(desktopMain, /clearReproducibleWebCaches\("scheduled-3h", \{ includeGpt: false \}\)/);
+  assert.match(desktopMain, /clearReproducibleWebCaches\("scheduled-1h", \{ includeGpt: false \}\)/);
 });
 
 test("automatic readiness recovery never reloads an account that still owns a live task", () => {
@@ -4615,8 +4633,8 @@ test("shared controls expose visible pressed, focus and selected feedback", () =
   assert.match(app, /function showDistributionPanel\(panel\)/);
 });
 
-test("Electron runs a three-hour work-hour-gated disposable web-cache cleanup without clearing account storage", () => {
-  assert.match(temporaryWebCacheSchedule, /TEMPORARY_WEB_CACHE_INTERVAL_MS = 3 \* 60 \* 60 \* 1000/);
+test("Electron runs a hourly work-hour-gated disposable web-cache cleanup without clearing account storage", () => {
+  assert.match(temporaryWebCacheSchedule, /TEMPORARY_WEB_CACHE_INTERVAL_MS = 1 \* 60 \* 60 \* 1000/);
   assert.match(temporaryWebCacheSchedule, /TEMPORARY_WEB_CACHE_STARTUP_GRACE_MS = 60 \* 1000/);
   assert.match(desktopMain, /function startTemporaryWebCacheCleanup\(\)/);
   assert.match(desktopMain, /planTemporaryWebCacheCleanup/);
@@ -4628,7 +4646,7 @@ test("Electron runs a three-hour work-hour-gated disposable web-cache cleanup wi
   assert.match(desktopMain, /startTemporaryWebCacheCleanup\(\)/);
 });
 
-test("GPT three-hour cache maintenance respects each window and the 02:00 work boundary", () => {
+test("GPT hourly cache maintenance respects each window and the 02:00 work boundary", () => {
   assert.match(app, /const GPT_TEMPORARY_CACHE_INTERVAL_MS = 3 \* 60 \* 60 \* 1000/);
   assert.match(app, /function nextGptTemporaryCacheAllowedAt\(accountId, requestedAt = Date\.now\(\)\)/);
   assert.match(app, /const nextAt = Math\.max\(now \+ 1000, nextGptTemporaryCacheAllowedAt\(key, requestedTarget\)\)/);
