@@ -3,8 +3,8 @@
 - [x] 旧本地 `READY` 绑定元数据不能开启 CDP 母版会话就绪。
 - [x] 合法读回须对应现存空闲账号、同一新鲜登录身份、精确对话、P1/P2 文件名与 SHA-256，以及发送并回读一致的提示词 SHA-256。
 - [x] 只读 IPC 按 `accountId` 读取已存在窗口；认证探测只返回布尔值，页面探测只返回空闲判据；超时不更新账号桥接健康或触发恢复。
-- [x] `lib/template-sync-status.test.js`、`desktop/template-sync-status.test.js` 纳入默认测试；`workbench-ui.test.js` 更新 C-6 契约断言。
-- [x] 定向四文件回归：528 项、483 通过、0 失败、45 项既有跳过；完整 `npm test`：772/772 通过，0 失败、0 跳过。`node --check` 的四个目标文件全通过，`git diff --check` 无 whitespace 错误。
+- [x] `lib/template-sync-status.test.js`、`desktop/template-sync-status.test.js` 和含 C-6 契约断言的 `public/workbench-ui.test.js` 均纳入默认测试。
+- [x] 定向四文件回归：528 项、483 通过、0 失败、45 项既有跳过；完整 `npm test`：1281 项、1236 通过、45 项既有跳过、0 失败。`node --check` 的四个目标文件全通过，`git diff --check` 无 whitespace 错误。
 - [ ] 模板同步服务端事务与 GET 回读未实现，因此最终同步仍待核实；本轮没有在线账号验收。下一步补隔离后端事务和附件/提示词 GET 回读回归。
 
 ## 2.6.51-dev｜共享素材锁与默认回归覆盖
@@ -2211,4 +2211,5 @@ GPT新版generated-image-preview/search-message容器无旧conversation-turn节�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-23 07:56 | 反重力 | run C-6 workbench contract by default |
 | 2026-10-23 07:52 | 反重力 | verify fixed-template account status read-only |

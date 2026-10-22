@@ -1,3 +1,11 @@
+## 2026-10-23｜C-6 工作台契约回归纳入默认测试
+
+- 证据与缺口：`src/package.json` 默认 `npm test` 已包含状态投影和 IPC 静态测试，但未包含 `src/public/workbench-ui.test.js`；C-6 的 UI 接线断言只在定向测试时运行，日常默认回归会漏掉。
+- 修复：将 `public/workbench-ui.test.js` 加入默认测试命令；运行时模块和线上状态未改。
+- 验证：完整 `npm test` 为 1281 项，1236 通过、45 项既有跳过、0 失败。JSON 解析确认 UI 回归只登记一次；`git diff --check` 无 whitespace 错误。
+- 未完成原因：模板同步服务端事务与 GET 回读仍缺，因此固定母版最终同步继续待核；本轮未操作账号、生产队列或在线服务。
+- 下一动作：实现隔离的模板事务与 GET 回读并补离线回归；绝对复查时间：2026-10-23 10:00 +08:00。
+
 ## 2.6.53-dev｜固定母版状态只读回读（本地源码，未部署）
 
 - 路由与范围：本轮重读 `app-master-container-next/config/apps.json`，`content-production` 仍指向 `content-production-app\launch-unified.bat`（4331）；只维护这个统一模块。A-G 是提升日产能的账号槽位，同一账号单 writer 串行、不同账号可并行，不按客户团队创建对话。
@@ -5205,4 +5213,5 @@ GPT新版generated-image-preview/search-message容器无旧conversation-turn节�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-23 07:56 | 反重力 | run C-6 workbench contract by default |
 | 2026-10-23 07:52 | 反重力 | verify fixed-template account status read-only |
