@@ -146,6 +146,11 @@ const GPT_LOGIN_RECOVERY_ROOT = path.join(RUNTIME_ROOT, "gpt-login-recovery");
 const GPT_PENDING_BACKUP_FILE = path.join(GPT_LOGIN_RECOVERY_ROOT, "pending-backup.json");
 const GPT_PENDING_RESTORE_FILE = path.join(GPT_LOGIN_RECOVERY_ROOT, "pending-restore.json");
 let serverProcess = null;
+// 工作台 HTTP 服务的生命周期开关。
+// stoppingServer: 我们主动在收进程，不要触发自动重拉
+// quittingApp: 整个应用要退出，不要重拉
+let stoppingServer = false;
+let quittingApp = false;
 let mainWindow = null;
 let assistantOverlayWindow = null;
 
@@ -196,6 +201,33 @@ let assistantOverlayState = {
   settings: {}
 };
 let assistantCursorTimer = null;
+// Overlay 加载失败自愈：loadURL 撞上服务冷启动会落到 chrome-error 永卡页，
+// 必须有界重试（6 次 × 5s），恢复后清零计数。
+let assistantOverlayLoadAttempts = 0;
+let assistantOverlayRetryTimer = null;
+const ASSISTANT_OVERLAY_LOAD_RETRY_LIMIT = 6;
+const ASSISTANT_OVERLAY_LOAD_RETRY_MS = 5000;
+
+function scheduleAssistantOverlayReload(overlay, reason) {
+  if (!overlay || overlay.isDestroyed()) return;
+  if (assistantOverlayRetryTimer) return; // 已排期，不叠加
+  if (assistantOverlayLoadAttempts >= ASSISTANT_OVERLAY_LOAD_RETRY_LIMIT) {
+    appendDesktopLog("overlay-load-deferred", `attempts-exhausted ${reason}`);
+    return;
+  }
+  assistantOverlayLoadAttempts += 1;
+  appendDesktopLog("overlay-load-retry", `attempt=${assistantOverlayLoadAttempts} ${reason}`);
+  assistantOverlayRetryTimer = setTimeout(async () => {
+    assistantOverlayRetryTimer = null;
+    if (overlay.isDestroyed()) return;
+    try {
+      await overlay.loadURL(`${APP_URL}assistant-overlay.html?appVersion=${encodeURIComponent(APP_VERSION)}`);
+      assistantOverlayLoadAttempts = 0;
+    } catch (err) {
+      scheduleAssistantOverlayReload(overlay, err?.message || String(err));
+    }
+  }, ASSISTANT_OVERLAY_LOAD_RETRY_MS);
+}
 // While the user interacts with the child overlay, Windows can briefly report
 // both it and the parent as unfocused. Keep a short grace period so a drag or
 // click cannot make the cat flicker or disappear.
@@ -415,8 +447,16 @@ async function ensureAssistantOverlay() {
   try {
     await overlay.loadURL(`${APP_URL}assistant-overlay.html?appVersion=${encodeURIComponent(APP_VERSION)}`);
   } catch (err) {
-    appendDesktopLog("overlay-load-deferred", err?.message || String(err));
+    // 冷启动期服务未就绪会让 overlay 落到 chrome-error 永卡页；排期有界重试自愈
+    scheduleAssistantOverlayReload(overlay, err?.message || String(err));
   }
+  overlay.webContents.on("did-fail-load", (_event, code, _description, _validatedURL, isMainFrame) => {
+    if (!isMainFrame || code === -3) return; // -3 = ERR_ABORTED，正常导航中断
+    scheduleAssistantOverlayReload(overlay, `did-fail-load code=${code}`);
+  });
+  overlay.webContents.on("did-finish-load", () => {
+    assistantOverlayLoadAttempts = 0;
+  });
   sendAssistantOverlayState();
   if (!assistantCursorTimer) assistantCursorTimer = setInterval(updateAssistantCursorDirection, 50);
   if (mainWindow.isFocused() && assistantOverlayState.catVisible !== false) overlay.showInactive();
@@ -544,6 +584,52 @@ function readBrowserProfiles() {
   } catch {
     return writeBrowserProfiles(defaultBrowserProfiles());
   }
+}
+
+// ===== 槽位巡检门禁（2026-10-22 用户规则）=====
+// 注册表是实时操作的：文件 mtime 一变就重读，不变则用内存快照，避免高频探测打磁盘。
+// 未注册槽位与 disabled=true 的槽位一律跳过后台探测，不碰其渲染进程。
+let gptProfileRegistrySnapshot = { mtimeMs: -1, map: new Map() };
+function gptProfileRegistry() {
+  try {
+    const file = gptBrowserProfilesFile();
+    const stat = fs.statSync(file);
+    if (stat.mtimeMs !== gptProfileRegistrySnapshot.mtimeMs) {
+      const parsed = readBrowserProfiles();
+      gptProfileRegistrySnapshot = {
+        mtimeMs: stat.mtimeMs,
+        map: new Map(parsed.profiles.map((profile) => [profile.id, profile]))
+      };
+    }
+  } catch (_) { /* 保留旧快照 */ }
+  return gptProfileRegistrySnapshot.map;
+}
+
+function gptSlotProfile(accountId) {
+  const id = safeGptAccountId(accountId);
+  return id ? gptProfileRegistry().get(id) || null : null;
+}
+
+function isGptSlotInspectionAllowed(accountId) {
+  const profile = gptSlotProfile(accountId);
+  return Boolean(profile) && profile.disabled !== true;
+}
+
+// 后台探测判定：状态/体检/巡检/读取类标签才算后台探测；
+// workflow/control 类（真实生产与用户操作）不受门禁影响。
+function isBackgroundGptProbeLabel(label = "") {
+  const channel = gptJavaScriptChannelForLabel(label);
+  return channel === "health" || channel === "inspect" || channel === "read";
+}
+
+// 门禁日志节流：同一账号同一原因 60s 内只记一次，避免刷屏。
+const gptProbeSkipLogAt = new Map();
+function logGptProbeSkipped(accountId, reason, label) {
+  const key = `${accountId}|${reason}`;
+  const now = Date.now();
+  if (now - Number(gptProbeSkipLogAt.get(key) || 0) < 60_000) return;
+  gptProbeSkipLogAt.set(key, now);
+  appendDesktopLog("gpt-probe-skipped", `account=${accountId} reason=${reason} label=${label}`);
 }
 
 function safeGptUrl(value = "") {
@@ -1976,48 +2062,220 @@ const GPT_PAGE_READINESS_FALLBACK = {
   extensionVersion: "",
   extensionSource: "",
   composerReady: false,
+  signInFormVisible: false,
   authenticationRequired: false,
+  authChecked: false,
+  authLoggedIn: false,
+  authEmail: "",
+  authName: "",
+  authPlan: "",
+  authSource: "",
   chatConversation: false
 };
 
-function gptPageReadinessScript() {
-  return `(() => {
-    const url = String(location.href || "");
-    const signalNodes = document.querySelectorAll('input, button, [role="alert"], [role="dialog"], h1, h2');
-    const signalParts = [];
-    for (let index = 0; index < Math.min(signalNodes.length, 40); index += 1) {
-      const node = signalNodes[index];
-      signalParts.push(String(node.innerText || node.getAttribute?.("aria-label") || node.value || "").slice(0, 160));
-    }
-    const bodyText = signalParts.join(" ").slice(0, 2000).toLowerCase();
+// 页面结构语句：就绪探测与诊断接口共用同一份，杜绝"两处各写一套判断"。
+// 只回答"页面长什么样"，不回答"是否登录"——登录态由服务端会话决定。
+const GPT_PAGE_STRUCTURAL_STATEMENTS = `    const url = String(location.href || "");
     const composerReady = Boolean(document.querySelector('#prompt-textarea, textarea[data-id="root"], [contenteditable="true"]'));
-    const authenticationSignal = ["one-time code", "one time code", "verification code", "verify your identity", "check your email", "sign in", "log in", "一次性验证码", "验证码", "检查邮箱", "登录"]
-      .some((signal) => bodyText.includes(signal));
+    // 结构性登录表单判据：真正的登录页会有密码框/邮箱输入框，而不是"正文里出现登录二字"。
+    const signInFormVisible = Boolean(
+      document.querySelector('input[type="password"]')
+      || document.querySelector('form[action*="auth"] input[name="email"], input[name="username"]')
+      || document.querySelector('[data-testid="login-button"]')
+    );
     const terminalAuthenticationSignal = ["session has expired", "your session has expired", "会话已过期", "请重新登录"]
-      .some((signal) => bodyText.includes(signal));
+      .some((signal) => {
+        const nodes = document.querySelectorAll('[role="alert"], [role="dialog"]');
+        for (let i = 0; i < Math.min(nodes.length, 8); i += 1) {
+          if (String(nodes[i].innerText || "").toLowerCase().includes(signal)) return true;
+        }
+        return false;
+      });
     let parsedUrl = null;
     try { parsedUrl = new URL(url); } catch (_) { parsedUrl = null; }
-    const pathname = String(parsedUrl?.pathname || "").replace(/\\/+$/, "") || "/";
-    const chatHost = parsedUrl?.hostname === "chatgpt.com" || parsedUrl?.hostname === "www.chatgpt.com";
+    const pathname = String(parsedUrl && parsedUrl.pathname || "").replace(/\\/+$/, "") || "/";
+    const chatHost = parsedUrl && (parsedUrl.hostname === "chatgpt.com" || parsedUrl.hostname === "www.chatgpt.com");
     const chatConversation = Boolean(chatHost && (/^\\/c\\/[a-z0-9_-]+(?:\\/|$)/i.test(pathname) || /^\\/g\\/[a-z0-9_-]+\\/c\\/[a-z0-9_-]+(?:\\/|$)/i.test(pathname)));
-    const authenticationUrl = parsedUrl?.hostname === "auth.openai.com"
+    const authenticationUrl = Boolean(parsedUrl && (parsedUrl.hostname === "auth.openai.com"
       || pathname.startsWith("/auth/login")
       || pathname.startsWith("/auth/signup")
-      || pathname.startsWith("/api/auth/signin");
+      || pathname.startsWith("/api/auth/signin")));
+    const extensionReady = document.documentElement.dataset.tbGptProductionExtension === "ready" || Boolean(document.getElementById("tb-gpt-production-extension-marker"));
+    const extensionVersion = document.documentElement.dataset.tbGptProductionExtensionVersion || (document.getElementById("tb-gpt-production-extension-marker") || {}).content || "";
+    const extensionSource = document.documentElement.dataset.tbGptProductionExtensionSource || "";
+    const authenticationRequired = Boolean(authenticationUrl || terminalAuthenticationSignal || signInFormVisible);`;
+
+function gptPageReadinessScript() {
+  return `(() => {
+${GPT_PAGE_STRUCTURAL_STATEMENTS}
     return {
       url,
       readyState: document.readyState,
-      extensionReady: document.documentElement.dataset.tbGptProductionExtension === "ready" || Boolean(document.getElementById("tb-gpt-production-extension-marker")),
-      extensionVersion: document.documentElement.dataset.tbGptProductionExtensionVersion || document.getElementById("tb-gpt-production-extension-marker")?.content || "",
-      extensionSource: document.documentElement.dataset.tbGptProductionExtensionSource || "",
+      extensionReady,
+      extensionVersion,
+      extensionSource,
       composerReady,
-      authenticationRequired: authenticationUrl || terminalAuthenticationSignal || (!composerReady && authenticationSignal),
+      signInFormVisible,
+      authenticationRequired,
       chatConversation
     };
   })()`;
 }
 
+// 诊断用：同一份结构判断 + 额外可观测信息（正文片段 / 侧栏 / host）
+function gptDiagnosticScript() {
+  return `(() => {
+${GPT_PAGE_STRUCTURAL_STATEMENTS}
+    const bodyText = String((document.body && document.body.innerText) || "").slice(0, 8000).toLowerCase();
+    return {
+      url,
+      readyState: document.readyState,
+      extensionReady,
+      extensionVersion,
+      extensionSource,
+      composerReady,
+      signInFormVisible,
+      authenticationRequired,
+      chatConversation,
+      sidebarVisible: Boolean(document.querySelector("#tb-gpt-production-sidebar, .tb-gpt-sidebar")),
+      bodySnippet: bodyText.slice(0, 500),
+      hostname: (parsedUrl && parsedUrl.hostname) || "",
+      pathname
+    };
+  })()`;
+}
+
+// 登录态权威探测：读服务端会话，返回真实邮箱与套餐。
+// 结果按账号缓存，避免每次 3s 就绪轮询都打一次网络。
+const GPT_SESSION_AUTH_TTL_MS = 45_000;
+const gptSessionAuthCache = new Map();
+
+function gptSessionAuthScript() {
+  return `(async () => {
+    try {
+      const response = await fetch("/api/auth/session", { credentials: "include", cache: "no-store" });
+      const payload = await response.json();
+      const user = payload && payload.user ? payload.user : null;
+      const account = payload && payload.account ? payload.account : null;
+      return {
+        authChecked: true,
+        authLoggedIn: Boolean(user),
+        authEmail: user ? String(user.email || "") : "",
+        authName: user ? String(user.name || "") : "",
+        authPlan: account ? String(account.planType || "") : "",
+        authError: ""
+      };
+    } catch (error) {
+      return {
+        authChecked: false,
+        authLoggedIn: false,
+        authEmail: "",
+        authName: "",
+        authPlan: "",
+        authError: String(error && error.message || error).slice(0, 160)
+      };
+    }
+  })()`;
+}
+
+async function probeGptSessionAuth(account, timeoutMs = 5000, options = {}) {
+  const cacheKey = String(account?.id || "");
+  if (!cacheKey) return null;
+  const cached = gptSessionAuthCache.get(cacheKey);
+  const now = Date.now();
+  const ttl = Number(options.ttlMs || GPT_SESSION_AUTH_TTL_MS);
+  if (!options.force && cached && now - cached.at < ttl) return cached.value;
+  const contents = account?.view?.webContents;
+  if (!contents || contents.isDestroyed()) return cached ? cached.value : null;
+  const result = await executeGptJavaScriptBounded(
+    contents,
+    gptSessionAuthScript(),
+    Math.max(1500, Number(timeoutMs || 5000)),
+    null,
+    `session:${cacheKey}`
+  );
+  const value = result && typeof result === "object" && result.authChecked
+    ? result
+    : null;
+  if (value) {
+    gptSessionAuthCache.set(cacheKey, { at: now, value });
+    if (account) {
+      account.sessionAuth = { ...value, at: new Date(now).toISOString() };
+    }
+  }
+  return value;
+}
+
+// 未就绪原因的单一出口：诊断接口、准入闸门、状态面板都用它，
+// 避免同一件事在三处各写一套判断（过去正因为口径不一，才会互相"修回去"）。
+function buildGptNotReadyReasons(account, liveState = {}) {
+  const reasons = [];
+  const state = liveState || {};
+  if (state.slotDisabled) reasons.push("槽位已禁用或未注册（注册表实时生效）");
+  if (!account?.pageState?.domReady && !["interactive", "complete"].includes(String(state.readyState || ""))) {
+    reasons.push("DOM 未加载完成");
+  }
+  if (!state.extensionReady) reasons.push("扩展未注入页面");
+  if (!state.composerReady) reasons.push("ChatGPT 输入框未找到");
+  if (!state.chatConversation) {
+    let host = state.hostname || "";
+    let path = state.pathname || "";
+    if ((!host || !path) && state.url) {
+      try {
+        const parsed = new URL(state.url);
+        host = host || parsed.hostname;
+        path = path || parsed.pathname;
+      } catch (_) { /* 保留空值 */ }
+    }
+    reasons.push(`URL 不是对话页: ${host}${path}`);
+  }
+  if (state.authenticationRequired) {
+    reasons.push(state.authSource === "session" ? "服务端会话确认未登录" : "需要登录或验证码");
+  }
+  return reasons;
+}
+
 async function probeGptPageReadiness(account, label = "readiness", timeoutMs = 3000) {
+  const accountId = safeGptAccountId(account?.id);
+  // 门禁①：未注册/已禁用槽位，且无在途任务 → 不碰渲染进程，直接合成状态返回。
+  // （用户规则 2026-10-22：注册表实时生效，禁用即停巡；有在途任务的槽位除外，不打断正在跑的活）
+  if (!isGptSlotInspectionAllowed(accountId) && !account?.pendingGptTask) {
+    logGptProbeSkipped(accountId, "slot-disabled", label);
+    return {
+      ...GPT_PAGE_READINESS_FALLBACK,
+      slotDisabled: true,
+      errorCode: "GPT_SLOT_DISABLED"
+    };
+  }
+  // 门禁②：服务端实锤未登录（45s 缓存内）+ 后台探测 + 页面不可见 → 用缓存合成，不再敲渲染进程。
+  // 页面可见（用户正在看/正在登录）时不走门禁，始终实时探测。
+  const cachedAuth = account?.sessionAuth;
+  const cachedAuthAge = Date.now() - Date.parse(cachedAuth?.at || "");
+  const knownUnlogged = cachedAuth?.authChecked === true
+    && cachedAuth?.authLoggedIn === false
+    && Number.isFinite(cachedAuthAge)
+    && cachedAuthAge < GPT_SESSION_AUTH_TTL_MS;
+  const viewVisible = Boolean(
+    account?.view
+    && !account.view.webContents.isDestroyed()
+    && typeof account.view.isVisible === "function"
+    && account.view.isVisible()
+  );
+  if (knownUnlogged && !viewVisible && isBackgroundGptProbeLabel(label)) {
+    logGptProbeSkipped(accountId, "known-unlogged", label);
+    return {
+      ...GPT_PAGE_READINESS_FALLBACK,
+      authenticationRequired: true,
+      authChecked: true,
+      authLoggedIn: false,
+      authEmail: cachedAuth.authEmail || "",
+      authName: cachedAuth.authName || "",
+      authPlan: cachedAuth.authPlan || "",
+      authSource: "session-cache",
+      productionReady: false,
+      errorCode: "GPT_AUTH_REQUIRED"
+    };
+  }
   const contents = account?.view?.webContents;
   if (!contents || contents.isDestroyed()) return { ...GPT_PAGE_READINESS_FALLBACK, errorCode: "GPT_PAGE_NOT_READY" };
   const targetUrl = contents.getURL();
@@ -2038,6 +2296,43 @@ async function probeGptPageReadiness(account, label = "readiness", timeoutMs = 3
   );
   const normalized = { ...GPT_PAGE_READINESS_FALLBACK, ...(state && typeof state === "object" ? state : {}) };
   const readTimedOut = Boolean(normalized.readTimedOut);
+  normalized.productionReady = isGptPageProductionReady(normalized);
+
+  // 登录态仲裁：结构信号只是"疑似"，服务端会话才是"实锤"。
+  // 只在"结构上疑似登录问题"或"页面明明读到了却没就绪"时才去问服务端，
+  // 健康窗口不额外增加网络开销。
+  let authSource = normalized.authenticationRequired ? "structural" : "";
+  const shouldAskSession = !readTimedOut && (normalized.authenticationRequired || !normalized.productionReady);
+  if (shouldAskSession) {
+    const session = await probeGptSessionAuth(account, 4000);
+    if (session && session.authChecked) {
+      normalized.authChecked = true;
+      normalized.authLoggedIn = Boolean(session.authLoggedIn);
+      normalized.authEmail = session.authEmail || "";
+      normalized.authName = session.authName || "";
+      normalized.authPlan = session.authPlan || "";
+      if (session.authLoggedIn) {
+        // 服务端明确说已登录 → 结构信号作废（页面没加载完 / 文案误命中）
+        normalized.authenticationRequired = false;
+        authSource = "";
+      } else {
+        normalized.authenticationRequired = true;
+        authSource = "session";
+      }
+    }
+  } else if (account?.sessionAuth?.authChecked) {
+    const cachedAuth = account.sessionAuth;
+    normalized.authChecked = true;
+    normalized.authLoggedIn = Boolean(cachedAuth.authLoggedIn);
+    normalized.authEmail = cachedAuth.authEmail || "";
+    normalized.authName = cachedAuth.authName || "";
+    normalized.authPlan = cachedAuth.authPlan || "";
+    if (cachedAuth.authLoggedIn) {
+      normalized.authenticationRequired = false;
+      authSource = "";
+    }
+  }
+  normalized.authSource = authSource;
   normalized.productionReady = isGptPageProductionReady(normalized);
   normalized.errorCode = normalized.authenticationRequired
     ? "GPT_AUTH_REQUIRED"
@@ -3874,7 +4169,33 @@ ipcMain.handle("desktop:production-active", async (_event, input = false) => {
   const rawAccountId = isObjectInput ? String(input.accountId || "").trim() : "";
   if (rawAccountId) {
     const accountId = assertAssignedGptAccountId(rawAccountId, { required: true });
-    if (active) productionTaskAccounts.add(accountId);
+    if (active) {
+      // 准入闸门：未登录 / 输入框都没有的账号不得进入生产池。
+      // 旧实现无条件 add，导致 worker 池里混进 5 个未登录窗口，
+      // 任务一投出去就是 GPT_AUTH_REQUIRED，白白空转（日志里 100+ 次）。
+      const account = await ensureGptAccount(accountId);
+      const readiness = await probeGptPageReadiness(account, "admit", 4000);
+      const blockedCode = readiness.slotDisabled
+        ? "GPT_SLOT_DISABLED"
+        : readiness.authenticationRequired
+          ? "GPT_AUTH_REQUIRED"
+          : (!readiness.composerReady ? "GPT_PAGE_NOT_READY" : "");
+      if (blockedCode) {
+        appendDesktopLog("gpt-worker-admit-rejected", `account=${safeGptAccountId(accountId)} code=${blockedCode} email=${readiness.authEmail || "-"} plan=${readiness.authPlan || "-"}`);
+        refreshTrayMenu();
+        return {
+          ok: false,
+          rejected: true,
+          code: blockedCode,
+          active: productionTaskActive,
+          accountIds: [...productionTaskAccounts],
+          email: readiness.authEmail || "",
+          plan: readiness.authPlan || "",
+          reasons: buildGptNotReadyReasons(account, readiness)
+        };
+      }
+      productionTaskAccounts.add(accountId);
+    }
     else productionTaskAccounts.delete(accountId);
   } else {
     // Compatibility path for the legacy single renderer worker.
@@ -3980,6 +4301,7 @@ ipcMain.on("assistant-overlay:set-mouse-events", (_event, input = {}) => {
 ipcMain.handle("desktop:gpt-status", async (_event, accountId = activeGptAccountId) => {
   const id = assertAssignedGptAccountId(accountId);
   const account = gptAccounts.get(id);
+  const slotDisabled = !isGptSlotInspectionAllowed(id);
   const contents = account?.view && !account.view.webContents.isDestroyed() ? account.view.webContents : null;
   const liveState = contents ? await probeGptPageReadiness(account, "status", 3000) : null;
   if (account?.pageState && liveState && !liveState.readTimedOut) {
@@ -3996,6 +4318,7 @@ ipcMain.handle("desktop:gpt-status", async (_event, accountId = activeGptAccount
     available: Boolean(WebContentsView),
     accountId: id,
     loaded: Boolean(contents),
+    slotDisabled: slotDisabled || Boolean(liveState?.slotDisabled),
     ready: Boolean(contents && account?.pageState?.domReady && liveState?.extensionReady),
     productionReady: Boolean(contents && (
       liveState?.productionReady
@@ -4009,6 +4332,12 @@ ipcMain.handle("desktop:gpt-status", async (_event, accountId = activeGptAccount
     extensionReady: Boolean(liveState?.extensionReady),
     composerReady: Boolean(liveState?.composerReady),
     authenticationRequired: Boolean(liveState?.authenticationRequired),
+    authChecked: Boolean(liveState?.authChecked),
+    authLoggedIn: Boolean(liveState?.authLoggedIn),
+    authEmail: String(liveState?.authEmail || ""),
+    authName: String(liveState?.authName || ""),
+    authPlan: String(liveState?.authPlan || ""),
+    authSource: String(liveState?.authSource || ""),
     chatConversation: Boolean(liveState?.chatConversation),
     conversationState: liveState?.conversationState || null,
     pageState: account?.pageState || null,
@@ -4029,6 +4358,41 @@ ipcMain.handle("desktop:gpt-status", async (_event, accountId = activeGptAccount
   };
 });
 
+// 账号真实身份：服务端会话（邮箱 / 套餐）——UI 与运维脚本的唯一真源。
+ipcMain.handle("desktop:gpt-session-identity", async (_event, input = {}) => {
+  const accountId = assertAssignedGptAccountId(input.accountId || activeGptAccountId);
+  const account = await ensureGptAccount(accountId);
+  const value = await probeGptSessionAuth(account, 6000, { force: input.force === true });
+  return {
+    ok: Boolean(value && value.authChecked),
+    accountId,
+    loggedIn: Boolean(value && value.authLoggedIn),
+    email: value ? String(value.authEmail || "") : "",
+    name: value ? String(value.authName || "") : "",
+    plan: value ? String(value.authPlan || "") : "",
+    checkedAt: new Date().toISOString(),
+    error: value ? String(value.authError || "") : "会话探测超时"
+  };
+});
+
+// 工作台服务健康：给界面/运维一个"服务是不是还活着"的明确答案。
+ipcMain.handle("desktop:server-health", async () => {
+  const probe = await probeWorkbenchServer();
+  return {
+    ok: probe === "ready",
+    probe,
+    port: APP_PORT,
+    pid: serverProcess?.pid || 0,
+    consecutiveFailures: workbenchServerFailures,
+    restarting: workbenchServerRestarting,
+    lastRestartAt: workbenchServerLastRestartAt ? new Date(workbenchServerLastRestartAt).toISOString() : ""
+  };
+});
+
+ipcMain.handle("desktop:server-restart", async (_event, input = {}) => {
+  return restartWorkbenchServerChild(String(input.reason || "manual"));
+});
+
 ipcMain.handle("desktop:gpt-show", async (_event, input = {}) => {
   hideWechatDraftView();
   hideOnlinePlatformViews();
@@ -4041,13 +4405,30 @@ ipcMain.handle("desktop:gpt-show", async (_event, input = {}) => {
   view.setBounds(safeGptBounds(input.bounds || input));
   view.setBorderRadius(16);
   view.setVisible(true);
-  const liveReady = await view.webContents.executeJavaScript(`({
-    readyState: document.readyState,
-    extensionReady: document.documentElement.dataset.tbGptProductionExtension === "ready" || Boolean(document.getElementById("tb-gpt-production-extension-marker")),
-    extensionVersion: document.documentElement.dataset.tbGptProductionExtensionVersion || document.getElementById("tb-gpt-production-extension-marker")?.content || "",
-    extensionSource: document.documentElement.dataset.tbGptProductionExtensionSource || "",
-    composerReady: Boolean(document.querySelector('#prompt-textarea, textarea[data-id="root"], [contenteditable="true"]'))
-  })`, true).catch(() => ({ readyState: "", extensionReady: false, extensionVersion: "", extensionSource: "", composerReady: false }));
+  // 主题门禁的另一半：隐藏窗口切主题时被跳过，切到该槽位时在这里补注入（后台执行，不拖慢切换）
+  applyEmbeddedGptTheme(account, gptThemeName).catch(() => {});
+  // 切换槽位必须秒响应。渲染进程繁忙时 executeJavaScript 会挂好几秒甚至十几秒
+  // （日志里的 gpt-execute-timeout label=inspect/theme 就是同一个原因），
+  // 旧实现无界 await 它，导致"点了 D 要等几秒界面才动"。这里最多等 800ms，
+  // 超时就用已知状态兜底——展示切换不该被页面探测拖住。
+  const showProbeFallback = {
+    readyState: account.pageState?.domReady ? "complete" : "",
+    extensionReady: Boolean(account.extensionRuntimeReady || account.pageState?.extensionReady),
+    extensionVersion: "",
+    extensionSource: "",
+    composerReady: false,
+    probeTimedOut: true
+  };
+  const liveReady = await Promise.race([
+    view.webContents.executeJavaScript(`({
+      readyState: document.readyState,
+      extensionReady: document.documentElement.dataset.tbGptProductionExtension === "ready" || Boolean(document.getElementById("tb-gpt-production-extension-marker")),
+      extensionVersion: document.documentElement.dataset.tbGptProductionExtensionVersion || document.getElementById("tb-gpt-production-extension-marker")?.content || "",
+      extensionSource: document.documentElement.dataset.tbGptProductionExtensionSource || "",
+      composerReady: Boolean(document.querySelector('#prompt-textarea, textarea[data-id="root"], [contenteditable="true"]'))
+    })`, true).catch(() => ({ ...showProbeFallback, probeTimedOut: false })),
+    new Promise((resolve) => setTimeout(() => resolve(showProbeFallback), 800))
+  ]);
   return {
     ok: true,
     accountId,
@@ -4133,7 +4514,22 @@ ipcMain.handle("desktop:gpt-theme", async (_event, input = {}) => {
   gptThemeName = ["neo", "glass", "midnight", "midnight-glass"].includes(input.theme) ? input.theme : "neo";
   assistantOverlayState = { ...assistantOverlayState, theme: gptThemeName };
   sendAssistantOverlayState();
-  const results = await Promise.all([...gptAccounts.values()].map((account) => applyEmbeddedGptTheme(account, gptThemeName)));
+  // 错峰 + 门禁（2026-10-22）：多分区并发注入曾把单 CDP 通道打满（gpt-execute-timeout 风暴）。
+  // 隐藏且无在途任务的窗口不注入——切到该槽位时 gpt-show 会补注入；禁用/未注册槽位直接跳过。
+  const results = [];
+  for (const account of gptAccounts.values()) {
+    const id = safeGptAccountId(account?.id);
+    if (!isGptSlotInspectionAllowed(id)) { results.push(false); continue; }
+    const visible = Boolean(
+      account?.view
+      && !account.view.webContents.isDestroyed()
+      && typeof account.view.isVisible === "function"
+      && account.view.isVisible()
+    );
+    if (!visible && !account?.pendingGptTask) { results.push(false); continue; }
+    results.push(await applyEmbeddedGptTheme(account, gptThemeName));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
   return { ok: true, theme: gptThemeName, dark: embeddedGptPalette(gptThemeName).dark, updated: results.filter(Boolean).length };
 });
 
@@ -4194,11 +4590,20 @@ ipcMain.handle("desktop:gpt-navigate", async (_event, input = {}) => {
   const account = await ensureGptAccount(accountId);
   const contents = account.view.webContents;
   const action = String(input.action || "reload");
+  // 导航/刷新一律"发起即返回"。loadURL 的 Promise 要等 did-finish-load，
+  // ChatGPT 首屏 3~8 秒，旧实现无界 await 它，用户点刷新/主页就会觉得"点了没反应，
+  // 过几秒才动"。这里只等 500ms 让地址栏先更新，剩下的加载交给页面自己跑。
+  const raceNavigate = async (promise) => {
+    await Promise.race([
+      promise.catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 500))
+    ]);
+  };
   if (action === "back" && contents.canGoBack()) contents.goBack();
   else if (action === "forward" && contents.canGoForward()) contents.goForward();
   else if (action === "url") {
     const targetUrl = safeBrowserUrl(input.targetUrl);
-    await contents.loadURL(targetUrl);
+    await raceNavigate(contents.loadURL(targetUrl));
   }
   else if (action === "home" || action === "new-chat") {
     const profiles = readBrowserProfiles();
@@ -4210,12 +4615,17 @@ ipcMain.handle("desktop:gpt-navigate", async (_event, input = {}) => {
       profile.lastInvalidConversationUrl = "";
       writeBrowserProfiles(profiles);
     }
-    await contents.loadURL(GPT_URL);
+    await raceNavigate(contents.loadURL(GPT_URL));
   }
-  else contents.reload();
+  else {
+    contents.reload();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   return {
     ok: true,
     accountId,
+    // stillLoading=true 表示导航已发起、页面还在加载；UI 应显示加载态而不是等它跑完。
+    stillLoading: contents.isLoading(),
     url: contents.getURL(),
     canGoBack: contents.canGoBack(),
     canGoForward: contents.canGoForward(),
@@ -4450,50 +4860,14 @@ ipcMain.handle("desktop:gpt-diagnostic", async (_event, accountId = activeGptAcc
       notReadyReasons: ["GPT 窗口尚未创建"]
     };
   }
-  const liveState = await executeGptJavaScriptBounded(contents, `(() => {
-    const url = String(location.href || "");
-    const bodyText = String(document.body?.innerText || "").slice(0, 8000).toLowerCase();
-    const readyState = document.readyState;
-    const composerReady = Boolean(document.querySelector('#prompt-textarea, textarea[data-id="root"], [contenteditable="true"]'));
-    const authenticationSignal = ["one-time code", "one time code", "verification code", "verify your identity", "check your email", "sign in", "log in", "\u4e00\u6b21\u6027\u9a8c\u8bc1\u7801", "\u9a8c\u8bc1\u7801", "\u68c0\u67e5\u90ae\u7bb1", "\u767b\u5f55"]
-      .some((signal) => bodyText.includes(signal));
-    const terminalAuthenticationSignal = ["session has expired", "your session has expired", "\u4f1a\u8bdd\u5df2\u8fc7\u671f", "\u8bf7\u91cd\u65b0\u767b\u5f55"]
-      .some((signal) => bodyText.includes(signal));
-    let parsedUrl = null;
-    try { parsedUrl = new URL(url); } catch (_) { parsedUrl = null; }
-    const pathname = String(parsedUrl?.pathname || "");
-    const authenticationUrl = parsedUrl?.hostname === "auth.openai.com"
-      || pathname.startsWith("/auth/login")
-      || pathname.startsWith("/auth/signup")
-      || pathname.startsWith("/api/auth/signin");
-    const chatConversation = (parsedUrl?.hostname === "chatgpt.com" || parsedUrl?.hostname === "www.chatgpt.com")
-      && (/^\\/c\\/[a-z0-9_-]+(?:\\/|$)/i.test(pathname) || /^\\/g\\/[a-z0-9_-]+\\/c\\/[a-z0-9_-]+(?:\\/|$)/i.test(pathname));
-    const extensionReady = document.documentElement.dataset.tbGptProductionExtension === "ready" || Boolean(document.getElementById("tb-gpt-production-extension-marker"));
-    const extensionVersion = document.documentElement.dataset.tbGptProductionExtensionVersion || document.getElementById("tb-gpt-production-extension-marker")?.content || "";
-    const extensionSource = document.documentElement.dataset.tbGptProductionExtensionSource || "";
-    const sidebarVisible = Boolean(document.querySelector("#tb-gpt-production-sidebar, .tb-gpt-sidebar"));
-    const bodySnippet = bodyText.slice(0, 500);
-    return {
-      url,
-      readyState,
-      extensionReady,
-      extensionVersion,
-      extensionSource,
-      composerReady,
-      authenticationRequired: authenticationUrl || terminalAuthenticationSignal || (!composerReady && authenticationSignal),
-      chatConversation,
-      sidebarVisible,
-      bodySnippet,
-      hostname: parsedUrl?.hostname || "",
-      pathname
-    };
-  })()`, 4000, {
+  const liveState = await executeGptJavaScriptBounded(contents, gptDiagnosticScript(), 4000, {
     url: contents?.getURL() || GPT_URL,
     readyState: "",
     extensionReady: false,
     extensionVersion: "",
     extensionSource: "",
     composerReady: false,
+    signInFormVisible: false,
     authenticationRequired: false,
     chatConversation: false,
     sidebarVisible: false,
@@ -4519,12 +4893,7 @@ ipcMain.handle("desktop:gpt-diagnostic", async (_event, accountId = activeGptAcc
       notifyGptLoadingChanged(id, false);
     }
   }
-  const notReadyReasons = [];
-  if (!account?.pageState?.domReady) notReadyReasons.push("DOM 未加载完成");
-  if (!liveState?.extensionReady) notReadyReasons.push("扩展未注入页面");
-  if (!liveState?.composerReady) notReadyReasons.push("ChatGPT 输入框未找到");
-  if (!liveState?.chatConversation) notReadyReasons.push(`URL 不是对话页: ${liveState?.hostname}${liveState?.pathname}`);
-  if (liveState?.authenticationRequired) notReadyReasons.push("需要登录或验证码");
+  const notReadyReasons = buildGptNotReadyReasons(account, liveState);
   const productionReady = Boolean(contents && account?.pageState?.domReady && liveState?.extensionReady && liveState?.composerReady && liveState?.chatConversation && !liveState?.authenticationRequired);
   return {
     ok: true,
@@ -4769,6 +5138,7 @@ async function restartApp({ source = "automation", interactive = false } = {}) {
     if (result.response !== 1) return { ok: false, cancelled: true };
   }
   appendDesktopLog("desktop-restart", source);
+  quittingApp = true;
   setTimeout(() => {
     app.relaunch();
     // app.exit() bypasses before-quit. Reap the server child explicitly or
@@ -4819,7 +5189,12 @@ function createTray() {
 
 function probeWorkbenchServer() {
   return new Promise((resolve) => {
-    const request = http.get(APP_URL, { timeout: 1200 }, (response) => {
+    // 打专用健康端点，而不是首页。
+    // 首页要拼装整份工作台数据（实测 /index.html 需 8s、/ 需 0.4s），
+    // 用首页做探针会把"慢"误判成"死"，看门狗于是反复重启本来健康的服务。
+    // /api/runtime-info 是专门留的最轻探针（实测 5ms）。
+    const probeUrl = new URL("api/runtime-info", APP_URL).toString();
+    const request = http.get(probeUrl, { timeout: 2000 }, (response) => {
       response.resume();
       resolve(classifyWorkbenchPortProbe({ statusCode: response.statusCode }));
     });
@@ -4829,6 +5204,53 @@ function probeWorkbenchServer() {
     });
     request.on("error", (error) => resolve(classifyWorkbenchPortProbe({ errorCode: error.code })));
   });
+}
+
+// ========================================================
+// 服务子进程的运行体：必须用"真正的 node"，不能用 electron 冒充
+// ========================================================
+// 事实（2026-10-21，两次独立复现，同一份 server.js）：
+//   ① node.exe 启动         → /api/runtime-info 20ms 返回 200（PORT=4399 / 4398 各测一遍）
+//   ② electron.exe + ELECTRON_RUN_AS_NODE=1 启动
+//        → netstat 显示 LISTENING、TCP 也连得上，但一个字节都不回包
+//          （原生 net.connect 探测：TIMEOUT after 6011ms；received=""）
+//   这就是"端口假活"：不是端口被占、不是代码慢、不是看门狗误判，
+//   而是运行体本身不回包。看门狗只能反复重启，前端所有请求立刻超时。
+// 结论：优先系统 node.exe；只有实在找不到时才退回 electron，并把证据写进日志。
+function resolveNodeExecutable() {
+  const explicit = String(process.env.TB_NODE_EXECUTABLE || "").trim();
+  if (explicit) {
+    try {
+      if (fs.existsSync(explicit)) return { executable: explicit, realNode: true, source: `env:${explicit}` };
+      appendDesktopLog("server-runner-env-missing", explicit);
+    } catch {}
+  }
+  const executableName = process.platform === "win32" ? "node.exe" : "node";
+  const candidates = [];
+  // 打包版优先用随包带的 node（发布时把 node.exe 放到 runtime 根目录）
+  if (app.isPackaged) {
+    try { candidates.push(path.join(runtimeAppRoot(), executableName)); } catch {}
+    try { if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, executableName)); } catch {}
+  }
+  if (process.platform === "win32") {
+    candidates.push("C:\\Program Files\\nodejs\\node.exe");
+    candidates.push("C:\\Program Files (x86)\\nodejs\\node.exe");
+  }
+  for (const entry of String(process.env.PATH || "").split(path.delimiter)) {
+    const trimmed = String(entry || "").trim();
+    if (!trimmed) continue;
+    candidates.push(path.join(trimmed, executableName));
+  }
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate)) {
+        return { executable: candidate, realNode: true, source: `auto:${candidate}` };
+      }
+    } catch {}
+  }
+  // 兜底：打包环境且没带 node 时只能退回 electron 自带 node。
+  // 这条路已知会假活 —— 记日志留证据，交给看门狗兜，不要静默。
+  return { executable: process.execPath, realNode: false, source: "electron-fallback" };
 }
 
 async function ensureServer() {
@@ -4844,11 +5266,24 @@ async function ensureServer() {
   const releaseRoot = app.isPackaged
     ? (process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.env.PORTABLE_EXECUTABLE_FILE || process.execPath))
     : path.resolve(__dirname, "..", "..", "releases");
-  serverProcess = childProcess.spawn(process.execPath, [serverFile], {
+  const nodeRunner = resolveNodeExecutable();
+  appendDesktopLog(
+    "server-runner",
+    `executable=${nodeRunner.executable} realNode=${nodeRunner.realNode ? 1 : 0} source=${nodeRunner.source}`
+  );
+  if (!nodeRunner.realNode) {
+    appendDesktopLog(
+      "server-runner-warning",
+      "未找到可用的 node.exe，退回 electron 内置 node 运行服务；该路径已知会出现『端口在听但不回包』，看门狗会介入"
+    );
+  }
+  serverProcess = childProcess.spawn(nodeRunner.executable, [serverFile], {
     cwd: path.dirname(serverFile),
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
+      // 只有退回 electron 时才需要这个开关；用真 node 时设了反而会让 node
+      // 试图按 electron 的方式解析，语义不正确。
+      ...(nodeRunner.realNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
       PORT: APP_PORT,
       CONTENT_INSTANCE_ID,
       CONTENT_INSTANCE_LABEL,
@@ -4859,12 +5294,25 @@ async function ensureServer() {
       TEAMBUILDING_RELEASE_ROOT: releaseRoot
     },
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"]
+    // stdout 丢给 null：子进程在 stdout 管道上写满缓冲（主进程忙于别的活时
+    // 没人读）会同步阻塞它自己的事件循环，表现为"端口在听、但一个请求都不回"。
+    // 服务的关键信息走 stderr 与主进程日志，stdout 不需要保留。
+    stdio: ["ignore", "ignore", "pipe"]
   });
   serverProcess.stdout?.on("data", (chunk) => appendDesktopLog("server", chunk));
   serverProcess.stderr?.on("data", (chunk) => appendDesktopLog("server-error", chunk));
   serverProcess.on("error", (error) => appendDesktopLog("server-spawn-error", error?.stack || error?.message || String(error)));
-  serverProcess.on("exit", (code, signal) => appendDesktopLog("server-exit", `code=${code} signal=${signal || ""}`));
+  serverProcess.on("exit", (code, signal) => {
+    appendDesktopLog("server-exit", `code=${code} signal=${signal || ""}`);
+    if (stoppingServer || quittingApp) return;
+    // 第二层自愈：子进程意外退出（崩溃 / 自检退出）时自动重拉，
+    // 不再依赖人工点托盘重启。以前只记一行日志，坏了就一直坏。
+    appendDesktopLog("server-auto-restart", `after-exit code=${code} signal=${signal || ""}`);
+    setTimeout(() => {
+      if (stoppingServer || quittingApp) return;
+      restartWorkbenchServerChild(`child-exit:${code ?? ""}`).catch(() => {});
+    }, 1500);
+  });
   // Cold-starting Electron's server child can take longer when two isolated
   // instances initialize together. Keep the UI startup bounded but do not
   // label a healthy child as failed after the old 7.5s window.
@@ -4880,9 +5328,91 @@ async function ensureServer() {
   throw new Error("本地工作台服务未能启动");
 }
 
+// ========================================================
+// 工作台服务看门狗（2026-10-21 新增）
+//
+// 实测故障：HTTP 子进程会"假活"——TCP 能连上、但一个字节都不回。
+// 表现就是界面点刷新/主页像没反应、API 全部转圈。
+// 旧实现只在启动时 ensureServer 一次，之后再也不检查，坏掉就只能人工重启。
+//
+// 这里每 30s 探一次：连续 3 次没响应（约 90s）才判定卡死，然后
+// 收掉旧子进程 → 等端口释放 → 重新拉起。正常运行时零副作用。
+// ========================================================
+const WORKBENCH_WATCHDOG_INTERVAL_MS = 30_000;
+const WORKBENCH_WATCHDOG_FAILURE_LIMIT = 3;
+let workbenchWatchdogTimer = null;
+let workbenchServerFailures = 0;
+let workbenchServerRestarting = false;
+let workbenchServerLastRestartAt = 0;
+
+async function restartWorkbenchServerChild(reason = "watchdog") {
+  if (workbenchServerRestarting) return { ok: false, skipped: "busy" };
+  workbenchServerRestarting = true;
+  stoppingServer = true;
+  try {
+    appendDesktopLog("server-watchdog-restart", `reason=${reason} pid=${serverProcess?.pid || 0}`);
+    const child = serverProcess;
+    serverProcess = null;
+    if (child && !child.killed) {
+      try { child.kill(); } catch {}
+      for (let i = 0; i < 20; i += 1) {
+        if (child.exitCode !== null || child.signalCode) break;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      if (child.exitCode === null && !child.signalCode) {
+        try { child.kill("SIGKILL"); } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    }
+    // 等端口真正释放，避免新子进程 EADDRINUSE
+    for (let i = 0; i < 20; i += 1) {
+      const probe = await probeWorkbenchServer();
+      if (probe !== "ready") break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    await ensureServer();
+    workbenchServerFailures = 0;
+    workbenchServerLastRestartAt = Date.now();
+    appendDesktopLog("server-watchdog-recovered", `pid=${serverProcess?.pid || 0}`);
+    return { ok: true };
+  } catch (error) {
+    appendDesktopLog("server-watchdog-failed", String(error?.message || error));
+    return { ok: false, error: String(error?.message || error) };
+  } finally {
+    workbenchServerRestarting = false;
+    stoppingServer = false;
+  }
+}
+
+function startWorkbenchServerWatchdog() {
+  if (workbenchWatchdogTimer) return;
+  workbenchWatchdogTimer = setInterval(async () => {
+    if (workbenchServerRestarting) return;
+    if (Date.now() - workbenchServerLastRestartAt < 60_000) return;
+    const probe = await probeWorkbenchServer();
+    if (probe === "ready") {
+      workbenchServerFailures = 0;
+      return;
+    }
+    // occupied 表示端口被别的程序占了，重启子进程也没用，只记录不重启
+    if (probe === "occupied") {
+      appendDesktopLog("server-watchdog-occupied", `port=${APP_PORT}`);
+      return;
+    }
+    workbenchServerFailures += 1;
+    appendDesktopLog("server-watchdog-unresponsive", `probe=${probe} count=${workbenchServerFailures}/${WORKBENCH_WATCHDOG_FAILURE_LIMIT}`);
+    if (workbenchServerFailures >= WORKBENCH_WATCHDOG_FAILURE_LIMIT) {
+      workbenchServerFailures = 0;
+      await restartWorkbenchServerChild(`unresponsive-${probe}`);
+    }
+  }, WORKBENCH_WATCHDOG_INTERVAL_MS);
+  workbenchWatchdogTimer.unref?.();
+}
+
 async function createWindow() {
   appendDesktopLog("desktop-start", `electron=${process.versions.electron} chrome=${process.versions.chrome}`);
   await ensureServer();
+  startWorkbenchServerWatchdog();
   const window = new BrowserWindow({
     width: 1520,
     height: 940,
@@ -5042,6 +5572,7 @@ app.on("before-quit", (event) => {
     return;
   }
   isExplicitQuit = true;
+  quittingApp = true;
   if (serverProcess && !serverProcess.killed) serverProcess.kill();
 });
 
