@@ -574,3 +574,13 @@ html.dark .tb-studio-reopen:hover { background: #0d0d0e; }
 
 html.dark #tb-gpt-production-studio .tb-empty { color: var(--muted); }
 html.dark #tb-gpt-production-studio .tb-index-result-note { color: var(--muted); background: #152530; }
+
+/* ===== 2026-10-23 需求：屏蔽 ChatGPT 左下角「使用量提醒」浮卡 =====
+   就是带 ✕ 的那张（剩余 X% 使用量 / 将于 HH:MM 重置 / 添加额度 / 升级），
+   关掉还会反复弹出，用户要求直接拦掉。
+   只做视觉隐藏：不点关闭、不碰 Cookie / 登录态 / 额度统计，纯前端隐藏。
+   锚点用卡片内按钮的 aria-label（"关闭使用量提醒"），比 class 哈希名稳定，
+   也不会误伤其它 role=status 的提示条。 */
+section[role="status"]:has(button[aria-label="关闭使用量提醒"]) {
+  display: none !important;
+}
