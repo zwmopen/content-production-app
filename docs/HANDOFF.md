@@ -1,3 +1,12 @@
+## 2026-10-23｜包元数据对齐工作台统一入口
+
+- 证据与缺口：本轮重读工作台 `config/apps.json`，`content-production` 指向本仓库 `launch-unified.bat`（4331），描述为唯一聚合核心且 A-G 是档案动态读取的账号槽位；`src/package.json` 仍称“支持隔离的 A-D 生产实例”，与当前入口和账号模型冲突。
+- 修复：将包描述改为“团队工作台统一内容制作模块，A-G 为账号槽位显示并由统一运行时档案动态读取”；不改执行逻辑、账号配置或运行服务。
+- 文件：`src/package.json`、`docs/HANDOFF.md`。
+- 验证：Node JSON 解析与描述字段断言通过；`git diff --check -- src/package.json docs/HANDOFF.md` 通过（仅有 Git 对 LF→CRLF 的提示）。
+- 未完成原因：C-6 模板同步专用服务端事务和 GET 回读仍未实现；路由扫描未发现对应 handler，既有生产派发路由不能代替模板回执。本轮未操作网页账号、上传模板/素材、发送生产任务、修改 canonical queue、重启或部署在线服务。
+- 下一动作：设计并实现与生产派发隔离的模板事务/GET 回读及离线幂等、附件 SHA 和提示词 SHA 回归；收到同账号/模板/精确会话的服务端读回前保持待核。绝对复查时间：2026-10-23 11:00 +08:00。
+
 ## 2026-10-23｜C-6 工作台契约回归纳入默认测试
 
 - 证据与缺口：`src/package.json` 默认 `npm test` 已包含状态投影和 IPC 静态测试，但未包含 `src/public/workbench-ui.test.js`；C-6 的 UI 接线断言只在定向测试时运行，日常默认回归会漏掉。
@@ -5213,5 +5222,6 @@ GPT新版generated-image-preview/search-message容器无旧conversation-turn节�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-23 08:27 | 反重力 | align package description with workbench route |
 | 2026-10-23 07:56 | 反重力 | run C-6 workbench contract by default |
 | 2026-10-23 07:52 | 反重力 | verify fixed-template account status read-only |
