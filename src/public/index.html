@@ -490,13 +490,18 @@
               </div>
 
               <div class="topbar-right">
+                <button id="btnSwitchProdViewMode" class="topbar-mode-btn" type="button" title="切换模式：大面板工作台 (低显存) / 网页前台巡检 (人工接管)">
+                  <span class="mode-icon">📊</span>
+                  <span class="mode-label" id="topbarModeLabel">大面板工作台</span>
+                  <span class="mode-tag" id="topbarModeTag">后台纯CDP·低显存</span>
+                </button>
                 <button id="btnTopOpenDetachedWindow" class="topbar-detach-btn" type="button" title="独立大窗口打开当前账号（多窗口并排展示，同时收图、上传与下载）">
                   <span class="btn-icon">🪟</span>
                   <span class="btn-label">独立大窗口</span>
                 </button>
                 <button id="btnToggleProdDrawer" class="topbar-drawer-btn" type="button" title="展开/收起制作工具" aria-expanded="true" aria-controls="prodTemplateSidebar">
                   <span class="drawer-icon">🎛️</span>
-                  <span class="drawer-label">制作抽屉</span>
+                  <span class="drawer-label" id="topbarDrawerBtnLabel">工作台面板</span>
                   <span class="drawer-arrow">◀</span>
                 </button>
               </div>
@@ -562,13 +567,25 @@
                 <div class="pts-header">
                   <div class="pts-header-main">
                     <span class="pts-icon">🎨</span>
-                    <span class="pts-title">制作抽屉与模板</span>
+                    <div class="pts-header-title-box">
+                      <span class="pts-title">内容制作大面板工作台</span>
+                      <span class="pts-sub-mode-badge" id="ptsSubModeBadge">⚡ 后台纯CDP低显存模式 (网页后台渲染)</span>
+                    </div>
                   </div>
-                  <button class="pts-collapse-btn" id="btnCloseProdDrawer" type="button" title="收起制作抽屉">▶</button>
+                  <div class="pts-header-actions">
+                    <button type="button" class="pts-action-btn pts-switch-web-btn" id="btnHeaderSwitchToWeb" title="切换到网页前台进行人工巡检（不影响后台正在生成的任务）">
+                      <span>🌐 切换网页前台</span>
+                    </button>
+                    <button class="pts-collapse-btn" id="btnCloseProdDrawer" type="button" title="收起大面板">◀</button>
+                  </div>
                 </div>
 
                 <div class="pts-body-scrollable">
-                  <!-- 00. 生产计划与排产批次 (选择计划 / 批次进度 / ➕ 创建生产计划弹窗) -->
+                  <!-- 宽屏大面板双列豪华工作台 (大面板模式下两列并排，低显存静默运行；小屏自适应折叠) -->
+                  <div class="pts-big-panel-columns" id="ptsBigPanelColumns">
+                    <!-- 左列：排产计划、人机控制、母版学习、素材派发 -->
+                    <div class="pts-col-left" id="ptsColLeft">
+                      <!-- 00. 生产计划与排产批次 (选择计划 / 批次进度 / ➕ 创建生产计划弹窗) -->
                   <div class="pts-section pts-plan-sec" id="ptsPlanSection">
                     <div class="pts-sec-label">
                       <span>00</span> <strong>生产计划与批次</strong>
@@ -625,14 +642,13 @@
                       </div>
                     </div>
                   </div>
-                  <!-- 01. 核心生产流水线 (4步闭环 · V4.8.8 标准作业程序) -->
-                  <div class="pts-section pts-flow-sec" id="ptsFlowSection">
-                    <div class="pts-sec-label">
-                      <span>01</span> <strong>核心生产流水线 (4步闭环)</strong>
-                      <span class="pts-plan-badge" id="ptsWorkflowStateBadge">状态二 · 等待素材</span>
-                    </div>
 
-                    <!-- 人机双轨模式控制行 -->
+                      <div class="pts-section pts-flow-sec" id="ptsFlowSection">
+                        <div class="pts-sec-label">
+                          <span>01</span> <strong>核心生产流水线 (输入与计划)</strong>
+                          <span class="pts-plan-badge" id="ptsWorkflowStateBadge">状态二 · 等待素材</span>
+                        </div>
+                        <!-- 人机双轨模式控制行 -->
                     <div class="prod-auto-manual-switch pts-auto-manual-row" id="prodAutoManualSwitch" style="margin-bottom: 10px;">
                       <button type="button" class="switch-btn active" id="btnSwitchAuto" data-state="auto" title="开启全自动持续生产 (AI替代操作)">
                         <span class="dot-indicator running"></span>
@@ -643,8 +659,7 @@
                         <span>⏸️ 手动干预 (人工操作)</span>
                       </button>
                     </div>
-
-                    <!-- 步骤 1：母版学习与锁定 (状态一) -->
+                        <!-- 步骤 1：母版学习与锁定 (状态一) -->
                     <div class="pts-step-card" id="stepCard1TemplateLock">
                       <div class="pts-step-header">
                         <div class="pts-step-title"><span class="step-num">1</span> <strong>母版学习与锁定</strong></div>
@@ -666,8 +681,7 @@
                         </div>
                       </div>
                     </div>
-
-                    <!-- 步骤 2：素材派发与逐页计划 (状态二/三/四) -->
+                        <!-- 步骤 2：素材派发与逐页计划 (状态二/三/四) -->
                     <div class="pts-step-card" id="stepCard2MaterialDispatch">
                       <div class="pts-step-header">
                         <div class="pts-step-title"><span class="step-num">2</span> <strong>素材派发与出计划</strong></div>
@@ -699,8 +713,17 @@
                         </div>
                       </div>
                     </div>
+                      </div>
+                    </div>
 
-                    <!-- 步骤 3：确认批量出图 (状态五) -->
+                    <!-- 右列：全量成图瀑布流大视口、五版文案交付大视口、辅助操作 -->
+                    <div class="pts-col-right" id="ptsColRight">
+                      <div class="pts-section pts-flow-sec pts-flow-sec-output" id="ptsFlowSectionOutput">
+                        <div class="pts-sec-label">
+                          <span>02</span> <strong>批量成图与交付 (成果大视口)</strong>
+                          <span class="pts-plan-badge" id="ptsOutputStateBadge">3:4 原生竖版</span>
+                        </div>
+                        <!-- 步骤 3：确认批量出图 (状态五) -->
                     <div class="pts-step-card" id="stepCard3BatchGenerate">
                       <div class="pts-step-header">
                         <div class="pts-step-title"><span class="step-num">3</span> <strong>确认全量批量出图</strong></div>
@@ -723,8 +746,7 @@
                         </div>
                       </div>
                     </div>
-
-                    <!-- 步骤 4：文案交付与成品归档 (状态五收尾) -->
+                        <!-- 步骤 4：文案交付与成品归档 (状态五收尾) -->
                     <div class="pts-step-card" id="stepCard4Copywriting">
                       <div class="pts-step-header">
                         <div class="pts-step-title"><span class="step-num">4</span> <strong>五版文案与成品归档</strong></div>
@@ -747,11 +769,12 @@
                         </div>
                       </div>
                     </div>
-
-                    <!-- 辅助操作 -->
+                                            <!-- 辅助操作 -->
                     <div class="pts-secondary-actions-row" style="margin-top: 10px;">
                       <button type="button" class="pts-sub-action-btn" id="btnSidebarRetryStep" title="遇到页面交互卡顿时，重新执行当前步骤">↺ 重试当前步</button>
                       <button type="button" class="pts-sub-action-btn" id="btnSidebarSkipWork" title="当前作品异常或需跳过时，进入下一套">⏭ 跳过此作品</button>
+                    </div>
+                      </div>
                     </div>
                   </div>
                 </div>

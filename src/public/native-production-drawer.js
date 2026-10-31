@@ -16,6 +16,7 @@
     selectedTemplateId: 'T51',
     selectedMaterialPath: '',
     drawerCollapsed: false,
+    viewMode: 'big-panel', // 'big-panel' (默认大面板·低显存) 或 'browser-view' (前台网页巡检)
     workflowState: '状态二 · 等待素材',
     prompts: {
       v488: '',
@@ -70,12 +71,15 @@
     state.port = window.location.port || '4331';
 
     try {
-      const savedCollapsed = localStorage.getItem('pts_prod_drawer_collapsed');
-      if (savedCollapsed === 'true') {
-        state.drawerCollapsed = true;
+      const savedMode = localStorage.getItem('pts_view_mode');
+      if (savedMode === 'browser-view') {
+        state.viewMode = 'browser-view';
+      } else {
+        state.viewMode = 'big-panel'; // 默认为大面板工作台
       }
     } catch (_) {}
 
+    applyViewMode(state.viewMode, false);
     renderDrawerCollapseState();
     bindGlobalDrawerEvents();
     bindWorkflowEvents();
@@ -185,19 +189,128 @@
     }
   }
 
+  // 模式切换与 BrowserView 显存优化控制器 (SOP 第 3/48/49 节)
+  function applyViewMode(mode, userInitiated = false) {
+    state.viewMode = mode === 'browser-view' ? 'browser-view' : 'big-panel';
+    try { localStorage.setItem('pts_view_mode', state.viewMode); } catch (_) {}
+
+    const grid = document.querySelector('.gpt-production-test-grid') || document.getElementById('gptProductionMainGrid');
+    const sidebar = document.getElementById('prodTemplateSidebar');
+    const btnSwitchMode = document.getElementById('btnSwitchProdViewMode');
+    const modeLabel = document.getElementById('topbarModeLabel');
+    const modeTag = document.getElementById('topbarModeTag');
+    const subBadge = document.getElementById('ptsSubModeBadge');
+    const headerSwitchBtn = document.getElementById('btnHeaderSwitchToWeb');
+
+    if (state.viewMode === 'big-panel') {
+      // 1. 进入大面板工作台：全宽占据，底层 BrowserView 隐入后台释放 GPU 显存
+      if (grid) {
+        grid.classList.add('big-panel-mode');
+        grid.classList.remove('drawer-collapsed');
+      }
+      state.drawerCollapsed = false;
+      if (sidebar) sidebar.style.display = 'flex';
+
+      // 释放显存：通知 Electron 主进程隐藏 BrowserView，完全由后台纯 CDP 穿透驱动
+      if (window.gptWorkbench?.hide) {
+        window.gptWorkbench.hide().catch(() => {});
+      }
+
+      if (modeLabel) modeLabel.textContent = '大面板工作台';
+      if (modeTag) {
+        modeTag.textContent = '纯CDP低显存';
+        modeTag.style.background = 'rgba(34, 197, 94, 0.2)';
+        modeTag.style.color = '#4ade80';
+      }
+      if (subBadge) {
+        subBadge.textContent = '⚡ 后台纯CDP低显存模式 (网页后台渲染)';
+        subBadge.style.color = '#4ade80';
+      }
+      if (headerSwitchBtn) {
+        headerSwitchBtn.querySelector('span').textContent = '🌐 切换网页前台';
+      }
+
+      if (userInitiated) {
+        showToast('已切换至【大面板工作台】：网页转入后台低显存渲染，全自动化 CDP 驱动！', 'success');
+      }
+    } else {
+      // 2. 进入网页前台巡检模式：恢复 BrowserView 供人工操作与巡检
+      if (grid) {
+        grid.classList.remove('big-panel-mode');
+      }
+
+      // 唤醒并恢复 BrowserView
+      restoreEmbeddedGptViewSafely();
+
+      if (modeLabel) modeLabel.textContent = '网页前台巡检';
+      if (modeTag) {
+        modeTag.textContent = '前台渲染·人工接管';
+        modeTag.style.background = 'rgba(234, 179, 8, 0.2)';
+        modeTag.style.color = '#fde047';
+      }
+      if (subBadge) {
+        subBadge.textContent = '🌐 网页前台巡检中 (前台渲染)';
+        subBadge.style.color = '#fde047';
+      }
+      if (headerSwitchBtn) {
+        headerSwitchBtn.querySelector('span').textContent = '📊 返回大面板';
+      }
+
+      if (userInitiated) {
+        showToast('已切换至【网页前台巡检】：网页画面已呈现，允许人工直接介入排查！', 'info');
+      }
+    }
+  }
+
+  function restoreEmbeddedGptViewSafely() {
+    try {
+      const host = document.getElementById('gptEmbeddedHost');
+      if (host && window.gptWorkbench?.show) {
+        const rect = host.getBoundingClientRect();
+        if (rect.width > 50 && rect.height > 50) {
+          const bounds = {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height)
+          };
+          window.gptWorkbench.show(bounds, state.accountId).catch(() => {});
+        }
+      }
+    } catch (_) {}
+  }
+
   // 绑定全局抽屉与展开折叠
   function bindGlobalDrawerEvents() {
     const btnToggle = document.getElementById('btnToggleProdDrawer');
     const btnClose = document.getElementById('btnCloseProdDrawer');
+    const btnSwitchMode = document.getElementById('btnSwitchProdViewMode');
+    const btnHeaderSwitch = document.getElementById('btnHeaderSwitchToWeb');
 
     const toggleCollapse = () => {
-      state.drawerCollapsed = !state.drawerCollapsed;
-      try { localStorage.setItem('pts_prod_drawer_collapsed', String(state.drawerCollapsed)); } catch (_) {}
-      renderDrawerCollapseState();
+      // 在大面板模式下，收起即切换为前台网页；在抽屉模式下，收起隐藏侧栏
+      if (state.viewMode === 'big-panel') {
+        applyViewMode('browser-view', true);
+      } else {
+        state.drawerCollapsed = !state.drawerCollapsed;
+        try { localStorage.setItem('pts_prod_drawer_collapsed', String(state.drawerCollapsed)); } catch (_) {}
+        renderDrawerCollapseState();
+      }
     };
 
     btnToggle?.addEventListener('click', toggleCollapse);
     btnClose?.addEventListener('click', toggleCollapse);
+
+    // 模式切换
+    btnSwitchMode?.addEventListener('click', () => {
+      const targetMode = state.viewMode === 'big-panel' ? 'browser-view' : 'big-panel';
+      applyViewMode(targetMode, true);
+    });
+
+    btnHeaderSwitch?.addEventListener('click', () => {
+      const targetMode = state.viewMode === 'big-panel' ? 'browser-view' : 'big-panel';
+      applyViewMode(targetMode, true);
+    });
 
     // Lightbox 关闭
     const lightboxModal = document.getElementById('ptsLightboxModal');

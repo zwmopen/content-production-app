@@ -23027,3 +23027,211 @@ body.is-embedded .gpt-production-test-grid.drawer-collapsed .cdp-canvas-wrapper,
   font-family: inherit !important;
   resize: vertical !important;
 }
+
+
+/* ==============================================================
+   大面板工作台模式 (Big Panel Mode · 后台纯 CDP 低显存架构)
+   2026-10-31 重构实装：严格遵循《内容制作模块加技能SOP》第3/48/49节
+   ============================================================== */
+
+/* 1. 顶栏模式切换开关 */
+.topbar-mode-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  background: linear-gradient(135deg, rgba(30, 58, 138, 0.45), rgba(67, 56, 202, 0.45)) !important;
+  border: 1px solid rgba(99, 102, 241, 0.45) !important;
+  color: #e0e7ff !important;
+  padding: 5px 12px !important;
+  border-radius: 6px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+}
+.topbar-mode-btn:hover {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.6), rgba(79, 70, 229, 0.6)) !important;
+  border-color: #818cf8 !important;
+  color: #ffffff !important;
+  transform: translateY(-1px) !important;
+}
+.topbar-mode-btn .mode-tag {
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  background: rgba(34, 197, 94, 0.2) !important;
+  color: #4ade80 !important;
+  border: 1px solid rgba(34, 197, 94, 0.4) !important;
+  padding: 1px 6px !important;
+  border-radius: 10px !important;
+}
+
+/* 2. 主网格大面板模式：全屏独占工作台，隐藏 BrowserView 释放 GPU 显存 */
+#gptProductionMainGrid.big-panel-mode {
+  grid-template-columns: 0px 1fr !important;
+  width: 100% !important;
+  height: calc(100vh - 54px) !important;
+  background: #0b0e14 !important;
+  overflow: hidden !important;
+}
+#gptProductionMainGrid.big-panel-mode > .gpt-production-browser-panel {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+#gptProductionMainGrid.big-panel-mode > .prod-template-sidebar {
+  width: 100% !important;
+  max-width: 100% !important;
+  border-left: none !important;
+  background: #0d111a !important;
+  box-shadow: none !important;
+}
+
+/* 3. 面板头部增强 */
+.prod-template-sidebar .pts-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 12px 24px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background: rgba(15, 20, 31, 0.95) !important;
+  backdrop-filter: blur(12px) !important;
+  z-index: 10 !important;
+}
+.pts-header-title-box {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+.pts-header .pts-title {
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #f8fafc !important;
+  letter-spacing: 0.3px !important;
+}
+.pts-sub-mode-badge {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #4ade80 !important;
+  background: rgba(34, 197, 94, 0.15) !important;
+  border: 1px solid rgba(34, 197, 94, 0.35) !important;
+  padding: 2px 8px !important;
+  border-radius: 12px !important;
+}
+.pts-header-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+.pts-switch-web-btn {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  color: #cbd5e1 !important;
+  padding: 5px 12px !important;
+  border-radius: 6px !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+.pts-switch-web-btn:hover {
+  background: rgba(59, 130, 246, 0.2) !important;
+  border-color: #3b82f6 !important;
+  color: #ffffff !important;
+}
+
+/* 4. 双列大面板宽屏网格 */
+.pts-big-panel-columns {
+  display: grid !important;
+  grid-template-columns: minmax(420px, 1fr) minmax(480px, 1.25fr) !important;
+  gap: 20px !important;
+  padding: 16px 24px 60px !important;
+  max-width: 1800px !important;
+  margin: 0 auto !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+}
+.pts-col-left, .pts-col-right {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+  min-width: 0 !important;
+}
+
+/* 抽屉模式或小屏幕自适应单列 */
+#gptProductionMainGrid:not(.big-panel-mode) .pts-big-panel-columns,
+@media (max-width: 1024px) {
+  .pts-big-panel-columns {
+    grid-template-columns: 1fr !important;
+    padding: 12px 14px 40px !important;
+    gap: 12px !important;
+  }
+}
+
+/* 5. 大面板模式下的卡片视觉升级 */
+#gptProductionMainGrid.big-panel-mode .pts-step-card {
+  background: rgba(22, 27, 40, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 8px !important;
+  padding: 14px 16px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+}
+#gptProductionMainGrid.big-panel-mode .pts-step-card:hover {
+  border-color: rgba(99, 102, 241, 0.3) !important;
+}
+
+/* 大面板下的成图瀑布流 */
+#gptProductionMainGrid.big-panel-mode .pts-waterfall-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
+  gap: 12px !important;
+  max-height: 480px !important;
+  overflow-y: auto !important;
+  padding: 10px 4px !important;
+}
+#gptProductionMainGrid.big-panel-mode .pts-thumb-card {
+  position: relative !important;
+  aspect-ratio: 3 / 4 !important;
+  border-radius: 6px !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background: #090c12 !important;
+  cursor: pointer !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+}
+#gptProductionMainGrid.big-panel-mode .pts-thumb-card:hover {
+  transform: translateY(-2px) scale(1.02) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6) !important;
+  border-color: #6366f1 !important;
+}
+#gptProductionMainGrid.big-panel-mode .pts-thumb-card img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+
+/* 大面板下的文案编辑区 */
+#gptProductionMainGrid.big-panel-mode .pts-copy-textarea {
+  height: 260px !important;
+  font-family: "Cascadia Code", Consolas, Menlo, Monaco, monospace !important;
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+  padding: 10px !important;
+  background: #090c13 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 6px !important;
+  color: #e2e8f0 !important;
+}
+#gptProductionMainGrid.big-panel-mode .step1-tpl-preview-box {
+  display: flex !important;
+  gap: 12px !important;
+  align-items: center !important;
+}
+#gptProductionMainGrid.big-panel-mode .step1-tpl-preview-box img {
+  width: 80px !important;
+  height: 108px !important;
+  border-radius: 6px !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  object-fit: cover !important;
+  cursor: pointer !important;
+}
