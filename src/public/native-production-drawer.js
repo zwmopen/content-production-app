@@ -72,9 +72,9 @@
 
     try {
       const savedMode = localStorage.getItem('pts_view_mode');
-      state.viewMode = savedMode === 'web' ? 'web' : 'panel'; // 默认进入操作面板
+      state.viewMode = savedMode === 'online' ? 'online' : 'local'; // 默认进入本地模式 (大面板)
     } catch (_) {
-      state.viewMode = 'panel';
+      state.viewMode = 'local';
     }
 
     applyViewMode(state.viewMode, false);
@@ -186,20 +186,21 @@
     }
   }
 
-  // 纯粹双视图架构：【操作面板】vs【网页版】(彻底根除层级重叠与显存占用)
+  // 核心模式切换控制器：【本地模式】vs【在线模式】
+  // (a) 本地模式：操作大面板界面，纯粹后台 CDP 静默运行，无前端网页渲染，零显存占用
+  // (b) 在线模式：打开浏览器可视化界面，显示 GPT 原生网页界面，供人工查看与操作
   async function applyViewMode(mode, userInitiated = false) {
-    state.viewMode = mode === 'web' ? 'web' : 'panel';
+    state.viewMode = mode === 'online' ? 'online' : 'local';
     try { localStorage.setItem('pts_view_mode', state.viewMode); } catch (_) {}
 
-    const btnSwitchMode = document.getElementById('btnSwitchViewMode') || document.getElementById('btnSwitchProdViewMode');
     const modeIcon = document.getElementById('topbarModeIcon');
     const modeLabel = document.getElementById('topbarModeLabel');
     const modeTag = document.getElementById('topbarModeTag');
     const subBadge = document.getElementById('ptsSubModeBadge');
-    const headerSwitchBtn = document.getElementById('btnHeaderSwitchView') || document.getElementById('btnHeaderSwitchToWeb');
+    const headerSwitchBtn = document.getElementById('btnHeaderSwitchView');
 
-    if (state.viewMode === 'panel') {
-      // 1. 进入【操作面板模式】：操作面板全屏独占，GPT 网页完全转入后台隐藏模式，释放显存与显卡
+    if (state.viewMode === 'local') {
+      // 1. 【本地模式】：大面板独占前台，GPT 网页完全转入纯后台隐藏模式，释放显存与显卡
       document.body.classList.add('production-panel-active');
 
       // 强行关闭前台原生 BrowserView，纯靠后台 CDP 穿透静默驱动
@@ -207,48 +208,48 @@
         await window.gptWorkbench.hide().catch(() => {});
       }
 
-      if (modeIcon) modeIcon.textContent = '🌐';
-      if (modeLabel) modeLabel.textContent = '打开网页版';
+      if (modeIcon) modeIcon.textContent = '🖥️';
+      if (modeLabel) modeLabel.textContent = '模式：本地模式';
       if (modeTag) {
-        modeTag.textContent = '后台零显存';
-        modeTag.style.background = 'rgba(34, 197, 94, 0.2)';
-        modeTag.style.color = '#4ade80';
+        modeTag.textContent = '切至在线模式 ➔';
+        modeTag.style.background = 'rgba(59, 130, 246, 0.2)';
+        modeTag.style.color = '#93c5fd';
       }
       if (subBadge) {
-        subBadge.textContent = '⚡ 网页后台运行中 · 零显存占用 (纯CDP驱动)';
+        subBadge.textContent = '⚡ 本地模式 · 纯CDP后台静默运行 (零显存占用)';
         subBadge.style.color = '#4ade80';
       }
       if (headerSwitchBtn) {
-        headerSwitchBtn.innerHTML = '<span>🌐 打开网页版</span>';
+        headerSwitchBtn.innerHTML = '<span>🌐 切换在线模式 (浏览器网页)</span>';
       }
 
       if (userInitiated) {
-        showToast('已切换至【内容制作操作面板】：GPT 网页转入后台静默运行，零显卡与显存占用！', 'success');
+        showToast('已切换至【本地模式】：大面板控制中枢激活，GPT 网页纯后台静默运行，零显存占用！', 'success');
       }
     } else {
-      // 2. 进入【网页版模式】：展示 ChatGPT 原生网页画面供人工查看与操作
+      // 2. 【在线模式】：打开浏览器可视化界面，展示 ChatGPT 原生网页画面供人工查看与操作
       document.body.classList.remove('production-panel-active');
 
       // 恢复前台原生 BrowserView
       restoreEmbeddedGptViewSafely();
 
-      if (modeIcon) modeIcon.textContent = '📊';
-      if (modeLabel) modeLabel.textContent = '打开操作面板';
+      if (modeIcon) modeIcon.textContent = '🌐';
+      if (modeLabel) modeLabel.textContent = '模式：在线模式';
       if (modeTag) {
-        modeTag.textContent = '前台网页中';
+        modeTag.textContent = '切至本地模式 ➔';
         modeTag.style.background = 'rgba(234, 179, 8, 0.2)';
         modeTag.style.color = '#fde047';
       }
       if (subBadge) {
-        subBadge.textContent = '🌐 网页版前台运行中';
+        subBadge.textContent = '🌐 在线模式 · 浏览器画面已呈现 (人工巡检)';
         subBadge.style.color = '#fde047';
       }
       if (headerSwitchBtn) {
-        headerSwitchBtn.innerHTML = '<span>📊 打开操作面板</span>';
+        headerSwitchBtn.innerHTML = '<span>🖥️ 切换本地模式 (操作大面板)</span>';
       }
 
       if (userInitiated) {
-        showToast('已切换至【GPT 网页版】：画面已显现，允许人工直接介入操作！', 'info');
+        showToast('已切换至【在线模式】：浏览器可视化界面已打开，可直接人工操作网页！', 'info');
       }
     }
   }
@@ -277,7 +278,7 @@
     const btnHeaderSwitch = document.getElementById('btnHeaderSwitchView') || document.getElementById('btnHeaderSwitchToWeb');
 
     const toggleMode = () => {
-      const targetMode = state.viewMode === 'panel' ? 'web' : 'panel';
+      const targetMode = state.viewMode === 'local' ? 'online' : 'local';
       applyViewMode(targetMode, true);
     };
 

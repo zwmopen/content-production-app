@@ -6483,18 +6483,35 @@ async function restartApp({ source = "automation", interactive = false } = {}) {
 function refreshTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "打开图文工作台", click: restoreMainWindow },
+    { label: "🖥️ 打开内容制作大面板", click: restoreMainWindow },
+    { type: "separator" },
     {
-      label: productionTaskActive ? "暂停自动生产" : "当前没有自动任务",
-      enabled: productionTaskActive,
-      click: () => mainWindow?.webContents.send("desktop:pause-production")
+      label: productionTaskActive ? "🟢 后台自动生产中 (纯CDP运行)" : "⚡ 生产中枢就绪 (后台常驻)",
+      enabled: false
     },
     { type: "separator" },
-    { label: "重启工作台", click: () => restartApp({ source: "tray-menu", interactive: app.isPackaged }) },
-    { type: "separator" },
-    { label: "彻底退出", click: () => requestExplicitQuit() }
+    {
+      label: "🚪 退出前端 (保持后台静默运行)",
+      click: () => {
+        hideAllGptViews();
+        mainWindow?.hide();
+        appendDesktopLog("desktop-background", "user-tray-exit-frontend");
+        try {
+          if (Notification.isSupported()) {
+            new Notification({
+              title: "内容制作控制台 · 后台静默运行",
+              body: "已退出前端界面。程序与 CDP 生产任务正在后台静默运行，零显卡与显存占用。"
+            }).show();
+          }
+        } catch (_) {}
+      }
+    },
+    {
+      label: "🛑 彻底退出 (终止所有任务与服务)",
+      click: () => requestExplicitQuit()
+    }
   ]));
-  tray.setToolTip(productionTaskActive ? "图文工作台 · 自动生产中" : "图文工作台 · 后台运行");
+  tray.setToolTip(productionTaskActive ? "内容制作控制台 · 后台纯CDP生产中" : "内容制作控制台 · 后台静默运行");
 }
 
 function createTray() {

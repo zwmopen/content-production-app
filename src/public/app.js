@@ -13313,7 +13313,7 @@ async function showEmbeddedGptView() {
   if ($("#contextMenu")?.classList.contains("show")) return;
   // 核心守卫：在操作面板打开的情况下，GPT 网页处于纯后台隐藏模式，不占用显存与显卡，绝不渲染前台原生画面
   if (document.body.classList.contains("production-panel-active") ||
-      localStorage.getItem("pts_view_mode") === "panel" ||
+      localStorage.getItem("pts_view_mode") === "local" || localStorage.getItem("pts_view_mode") === "panel" || !localStorage.getItem("pts_view_mode") ||
       $("#gptProductionMainGrid")?.classList.contains("panel-mode") ||
       $("#gptProductionMainGrid")?.classList.contains("big-panel-mode")) {
     await window.gptWorkbench?.hide?.().catch(() => {});

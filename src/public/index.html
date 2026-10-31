@@ -490,11 +490,11 @@
               </div>
 
               <div class="topbar-right">
-                <!-- 核心视图双向切换：打开网页版 vs 打开操作面板 -->
-                <button id="btnSwitchViewMode" class="topbar-mode-btn" type="button" title="在【内容制作操作面板】与【GPT 网页版】之间自由切换">
-                  <span class="mode-icon" id="topbarModeIcon">🌐</span>
-                  <span class="mode-label" id="topbarModeLabel">打开网页版</span>
-                  <span class="mode-tag" id="topbarModeTag">后台零显存</span>
+                <!-- 模式切换：本地模式 (大面板·后台纯CDP) vs 在线模式 (浏览器网页) -->
+                <button id="btnSwitchViewMode" class="topbar-mode-btn" type="button" title="点击切换：本地模式 (大面板·纯CDP) / 在线模式 (浏览器网页)">
+                  <span class="mode-icon" id="topbarModeIcon">🖥️</span>
+                  <span class="mode-label" id="topbarModeLabel">模式：本地模式</span>
+                  <span class="mode-tag" id="topbarModeTag">切至在线模式 ➔</span>
                 </button>
                 <button id="btnTopOpenDetachedWindow" class="topbar-detach-btn" type="button" title="独立大窗口打开当前账号（多窗口并排展示，同时收图、上传与下载）">
                   <span class="btn-icon">🪟</span>
@@ -569,8 +569,8 @@
                     </div>
                   </div>
                   <div class="pts-header-actions">
-                    <button type="button" class="pts-switch-view-btn" id="btnHeaderSwitchView" title="打开 ChatGPT 原生网页版进行人工查看与操作（不打断后台正在运行的任务）">
-                      <span>🌐 打开网页版</span>
+                    <button type="button" class="pts-switch-view-btn" id="btnHeaderSwitchView" title="切换模式：打开浏览器可视化界面查看 GPT 网页（不打断后台正在运行的任务）">
+                      <span>🌐 切换在线模式 (浏览器网页)</span>
                     </button>
                   </div>
                 </div>
