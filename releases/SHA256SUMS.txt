@@ -1,3 +1,2 @@
-74864C8B6CFD4AAA7A3FDF087D36F441C9C4A406783F2ED2386A88AED09D7FA9  content-production-app-v2.6.0-portable.zip
-8F635699AD59F2C7E6ED185991774D39C5702BA0BDA940216A266258749D33CE  ÄÚÈÝÉú²ú-0.2.1-±ãÐ¯°æ.exe
-e974af2843736ed69a51567d2e50720d3ae55140beb519ac795c852c77e3c0b1  content-production-app-v2.7.0-stable.zip
+e6fbb7c632641e7b0b39efa902773f67f239e62ee63f950ae5ad7e69ab0a4cbd  content-production-app-v2.7.0-stable.zip
+e6fbb7c632641e7b0b39efa902773f67f239e62ee63f950ae5ad7e69ab0a4cbd  content-production-app-pre-refactor-baseline-20261031.zip

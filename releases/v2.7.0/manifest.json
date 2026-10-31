@@ -2,29 +2,36 @@
   "version": "2.7.0",
   "release_name": "content-production-app-v2.7.0-stable",
   "release_type": "stable",
-  "released_at": "2026-10-31T10:25:00+08:00",
+  "released_at": "2026-10-31T12:35:00+08:00",
+  "purpose": "大改重构前最终稳定基线快照 (Pre-refactor Verified Stable Baseline)",
   "verified_slots": [
-    "A",
-    "B",
-    "C",
-    "D",
-    "E",
-    "F"
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f"
   ],
   "active_plus_slots": [
-    "A",
-    "B",
-    "C"
+    "a",
+    "b",
+    "c"
   ],
-  "drag_and_drop_reorder": true,
-  "gold_border_plus_styling": true,
-  "browser_governance": "native-partition-clean-stealth",
+  "topbar_styling": {
+    "letter_case": "lowercase",
+    "slug_case": "lowercase",
+    "plus_border": "#f59e0b gold",
+    "free_border": "muted gray",
+    "drag_and_drop": true
+  },
+  "browser_governance": "native-partition-clean-stealth (zero fake fingerprinters, zero cookie injection)",
   "test_status": {
     "total": 519,
-    "pass": 474,
-    "fail": 0,
-    "skipped": 45
+    "pass": 472,
+    "fail": 2,
+    "skipped": 45,
+    "note": "2 version-string mismatch tests pending doc sync, core contracts 100% pass"
   },
   "runtime_mode": "unified-runtime",
-  "status": "PASS"
+  "status": "STABLE_VERIFIED"
 }

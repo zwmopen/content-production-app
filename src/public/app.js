@@ -34819,15 +34819,15 @@ function getAccountSlug(acc) {
   const name = String(email || acc?.name || acc?.id || "").trim();
   const userPart = name.includes("@") ? name.split("@")[0] : name;
   const cleaned = userPart.replace(/\s*\((plus|free)\)/i, "").trim();
-  const lettersOnly = cleaned.replace(/[^a-zA-Z]/g, "").toUpperCase();
+  const lettersOnly = cleaned.replace(/[^a-zA-Z]/g, "").toLowerCase();
   if (lettersOnly.length >= 6) {
     return lettersOnly.slice(0, 6);
   }
-  const alphaNum = cleaned.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  const alphaNum = cleaned.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
   if (alphaNum.length > 0) {
     return alphaNum.slice(0, 6);
   }
-  return "ACCT";
+  return "acct";
 }
 
 function renderProdTopbarAbcd() {
@@ -34856,7 +34856,7 @@ function renderProdTopbarAbcd() {
   const currentActive = typeof activeGptAccountId === "string" ? activeGptAccountId : (accounts[0]?.id || "account-1");
 
   const html = accounts.map((acc, index) => {
-    const letter = String.fromCharCode(65 + (index % 26));
+    const letter = String.fromCharCode(97 + (index % 26));
     const isActive = acc.id === currentActive;
     const name = acc.name || ("账号 " + (index + 1));
     const isDisabled = Boolean(acc.disabled);
@@ -35121,7 +35121,7 @@ function syncTopbarAbcdActive(activeId) {
     const visibleAccounts = (Array.isArray(gptAccounts) ? gptAccounts : []).filter((a) => !a.hidden);
     const idx = visibleAccounts.findIndex(a => a.id === activeId);
     if (idx >= 0) {
-      labelEl.textContent = `${String.fromCharCode(65 + (idx % 26))}·${visibleAccounts[idx].name || ('账号 ' + (idx + 1))}`;
+      labelEl.textContent = `${String.fromCharCode(97 + (idx % 26))}·${visibleAccounts[idx].name || ('账号 ' + (idx + 1))}`;
     } else {
       labelEl.textContent = `账号 ${activeId}`;
     }
