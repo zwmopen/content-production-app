@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>内容生产</title>
-  <link rel="stylesheet" href="/styles.css?v=2.6.53-dev" />
+  <link rel="stylesheet" href="/styles.css?v=2.6.102-dev" />
   <link rel="stylesheet" href="/template-migration.css?v=0.1.0" />
   <script>
     (function() {
@@ -449,14 +449,14 @@
           <header class="gpt-production-test-heading" style="display: none !important;">
             <div class="prod-lines-master-header">
               <div class="prod-lines-tabs" id="prodLinesTabs" role="tablist" aria-label="选择产线">
-                <button class="prod-line-tab active" data-prod-line="cdp" type="button" title="在线模式：通过 GPT 网页版/CDP 操作">
+                  <button class="prod-line-tab active" data-prod-line="cdp" type="button" title="在线模式（GPT 网页/CDP）：通过 GPT 网页版/CDP 操作">
                   <span class="prod-line-dot"></span>
-                  <span class="prod-line-name">在线模式（GPT 网页/CDP）</span>
+                  <span class="prod-line-name">GPT 在线（网页）</span>
                   <span class="prod-line-tag">实例 A / B</span>
                 </button>
                 <button class="prod-line-tab" data-prod-line="codex" type="button" title="本地模式：Codex 客户端对话生产；工作台仅登记请求">
                   <span class="prod-line-dot codex"></span>
-                  <span class="prod-line-name">本地模式（Codex 客户端）</span>
+                  <span class="prod-line-name">GPT 本地（Codex 客户端）</span>
                   <span class="prod-line-tag">当前客户端</span>
                 </button>
                 <button class="prod-line-tab" data-prod-line="gemini" type="button" title="Gemini 团建生产已停用；只读查看历史记录">
@@ -472,31 +472,29 @@
             </div>
           </header>
 
-            <!-- 极简顶栏（2026-10-22 瘦身）：左侧品牌、中间 ABCD 槽位、右侧当前模式 + 抽屉开关。
-                 已移除：自动/手动开关（搬进抽屉 04 区）、顶栏刷新（浏览器工具条有重复 🔄）、独立窗口按钮。 -->
+            <!-- 极简顶栏（2026-10-23 再瘦身）：左侧只留 ABCD 账号胶囊、右侧只留抽屉开关。
+                 已移除：🎬品牌徽章（工作台顶栏已标明"内容制作"，页面内再写一遍纯属冗余）、
+                 🎲模式指示（模式统一在制作抽屉里设置，顶栏指示已是摆设）。
+                 更早移除：自动/手动开关（搬进抽屉 04 区）、顶栏刷新、独立窗口按钮。 -->
             <header class="prod-unified-topbar" id="prodUnifiedTopbar">
               <div class="topbar-left">
-                <div class="prod-app-brand-badge" id="topbarAppBrandBadge" title="内容制作 · 多账号统一单核心中枢">
-                  <span class="app-brand-icon">🎬</span>
-                  <span class="app-brand-title">内容制作</span>
-                </div>
                 <!-- 核心多账号 ABCD 实时切换胶囊组 + 添加账号 -->
                 <div class="prod-topbar-abcd-group" id="prodTopbarAbcdGroup">
                   <button type="button" class="abcd-pill-btn active" data-account="account-1" data-inst="A" title="【A 账号】点击即刻切换"><span class="subline-dot online"></span><span>A</span></button>
                   <button type="button" class="abcd-pill-btn" data-account="account-2" data-inst="B" title="【B 账号】点击即刻切换"><span class="subline-dot"></span><span>B</span></button>
                   <button type="button" class="abcd-pill-btn" data-account="account-3" data-inst="C" title="【C 账号】点击即刻切换"><span class="subline-dot online"></span><span>C</span></button>
                   <button type="button" class="abcd-pill-btn" data-account="account-4" data-inst="D" title="【D 账号】点击即刻切换"><span class="subline-dot"></span><span>D</span></button>
-                  <button type="button" class="abcd-add-inst-btn" id="btnContentProdAddInst" title="➕ 添加新生产槽位 (E、F...)">➕</button>
+                  <button type="button" class="abcd-add-inst-btn" id="btnContentProdAddInst" title="➕ 添加新的账号">➕</button>
                   <button type="button" class="abcd-add-acc-btn" id="btnContentProdAddAccount" title="➕ 添加 / 绑定新的 ChatGPT 账号"><span>➕ 添加账号</span></button>
                 </div>
               </div>
 
               <div class="topbar-right">
-                <div class="mode-indicator-pill" id="topbarModeIndicator">
-                  <span class="mode-icon">🎲</span>
-                  <span class="mode-text">2·随机母版 (推荐)</span>
-                </div>
-                <button id="btnToggleProdDrawer" class="topbar-drawer-btn" type="button" title="点击展开/折叠右侧制作抽屉">
+                <button id="btnTopOpenDetachedWindow" class="topbar-detach-btn" type="button" title="独立大窗口打开当前账号（多窗口并排展示，同时收图、上传与下载）">
+                  <span class="btn-icon">🪟</span>
+                  <span class="btn-label">独立大窗口</span>
+                </button>
+                <button id="btnToggleProdDrawer" class="topbar-drawer-btn" type="button" title="展开/收起制作工具" aria-expanded="true" aria-controls="prodTemplateSidebar">
                   <span class="drawer-icon">🎛️</span>
                   <span class="drawer-label">制作抽屉</span>
                   <span class="drawer-arrow">◀</span>
@@ -527,10 +525,21 @@
                     <span class="address-lock-icon">🔒</span>
                     <input type="text" id="gptBrowserAddressInput" class="browser-address-input" placeholder="输入网址访问（例如 https://www.xiaohongshu.com 或回车直接打开）..." spellcheck="false" autocomplete="off" />
                     <button id="gptBrowserGoBtn" class="browser-go-btn" type="button" title="前往网址">前往 ➔</button>
+                    <div id="gptBrowserLoadingProgress" class="gpt-browser-loading-progress" hidden aria-hidden="true"><span></span></div>
+                    <span id="gptBrowserLoadingStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
                   </div>
 
                   <div class="browser-right-actions">
+                    <div class="browser-health-pill" id="browserHealthPill" title="点击查看自愈日志与健康详情">
+                      <span class="health-pulse-dot" id="healthPulseDot"></span>
+                      <span class="health-label" id="healthStateLabel">平稳运行 (正常)</span>
+                      <span class="health-heal-counter" id="healthHealCounter" title="今日自动愈合次数">2 次自愈</span>
+                    </div>
                     <span class="browser-sleep-badge" id="browserSleepBadge" title="长时间未操作的后台账号会自动节能休眠，点击切换时秒级热唤醒">⚡ 运行就绪</span>
+                    <button id="btnGptOpenDetached" class="browser-btn browser-detach-btn" type="button" title="独立窗口打开当前账号（支持多账号多窗口并排展示，同时收图、上传与下载）">
+                      <span class="btn-icon">🪟</span>
+                      <span class="btn-text">独立窗口</span>
+                    </button>
                   </div>
                 </div>
 
@@ -538,7 +547,10 @@
                   <div id="cdpLiveViewport" class="cdp-live-viewport">
                     <div class="cdp-canvas-wrapper" id="cdpCanvasWrapper">
                       <img id="cdpLiveImg" class="cdp-live-screen" alt="ChatGPT 实时操作画面" />
-                      <div id="cdpFrameError" role="status" style="padding:24px;display:none"></div>
+                      <div id="cdpFrameError" role="status" style="padding:24px;display:none">
+                        <div id="cdpFrameErrorText"></div>
+                        <button id="btnWakeCdpFrame" class="action-capsule-btn" type="button" style="margin-top:14px">恢复画面</button>
+                      </div>
                       <div id="cdpClickFeedback" class="cdp-click-indicator"></div>
                     </div>
                   </div>
@@ -556,6 +568,63 @@
                 </div>
 
                 <div class="pts-body-scrollable">
+                  <!-- 00. 生产计划与排产批次 (选择计划 / 批次进度 / ➕ 创建生产计划弹窗) -->
+                  <div class="pts-section pts-plan-sec" id="ptsPlanSection">
+                    <div class="pts-sec-label">
+                      <span>00</span> <strong>生产计划与批次</strong>
+                      <span class="pts-plan-badge" id="ptsPlanProgressBadge">秋季排产中</span>
+                    </div>
+                    <div class="pts-plan-card" id="ptsPlanCard">
+                      <div class="pts-plan-select-row">
+                        <label for="ptsPlanSelect" class="pts-plan-select-label">📋 激活计划:</label>
+                        <select id="ptsPlanSelect" class="pts-plan-select" aria-label="选择生产计划">
+                          <option value="production_realtime_plan.json" selected>🍂 秋季实时优先排产表</option>
+                          <option value="production_permanent_plan.json">🔄 永久全量轮巡计划</option>
+                        </select>
+                      </div>
+                      <div class="pts-plan-active-task" id="ptsPlanActiveTaskBox">
+                        <div class="pts-task-title-row">
+                          <span class="pts-task-id" id="ptsActiveTaskId">[REALTIME-002]</span>
+                          <span class="pts-task-status-tag" id="ptsActiveTaskStatus">进行中</span>
+                        </div>
+                        <div class="pts-task-name" id="ptsActiveTaskName">上海圆形红色系双层企业蛋糕合集来啦！</div>
+                        <div class="pts-task-progress-bar-wrap">
+                          <div class="pts-task-progress-bar" id="ptsPlanProgressBar" style="width: 1%;"></div>
+                        </div>
+                        <div class="pts-task-progress-text" id="ptsPlanProgressText">已完工 1 / 100 件 (完成率 1.0%)</div>
+                      </div>
+                      <!-- 全量批次任务清单展开面板 (可折叠查看全部 85 套任务与状态) -->
+                      <div class="pts-plan-all-tasks-section" id="ptsPlanAllTasksSection">
+                        <div class="pts-tasks-summary-bar">
+                          <div class="pts-tasks-filter-group" id="ptsPlanFilterGroup">
+                            <button type="button" class="pts-filter-btn active" data-filter="all">全部 <span id="ptsTaskCountAll">(85)</span></button>
+                            <button type="button" class="pts-filter-btn" data-filter="completed">已完成 <span id="ptsTaskCountDone">(39)</span></button>
+                            <button type="button" class="pts-filter-btn" data-filter="pending">排队中 <span id="ptsTaskCountPending">(46)</span></button>
+                          </div>
+                          <button type="button" class="pts-tasks-toggle-btn" id="btnToggleAllTasksList" title="展开/收起全部批次任务清单">
+                            <span id="ptsToggleTasksText">查看全部 85 套清单 ▾</span>
+                          </button>
+                        </div>
+                        <div class="pts-all-tasks-container" id="ptsAllTasksContainer" style="display: none;">
+                          <div class="pts-tasks-search-row">
+                            <input type="text" id="iptSearchPlanTasks" class="pts-tasks-search-input" placeholder="🔍 搜索任务编号或地名关键词..." />
+                          </div>
+                          <div class="pts-tasks-scroll-list" id="ptsPlanTasksList">
+                            <!-- 动态渲染 85 套任务卡片 -->
+                          </div>
+                        </div>
+                      </div>
+                      <div class="pts-plan-actions">
+                        <button type="button" class="pts-material-btn" id="btnOpenCreatePlanModal" style="flex: 1; background: linear-gradient(135deg, #3b82f6, #2563eb); color: #fff; font-weight: 600;">➕ 定制/创建生产计划</button>
+                        <button type="button" class="pts-material-btn" id="btnRefreshPlanProgress" title="刷新最新生产进度">🔄</button>
+                      </div>
+                      <div class="canonical-plan-readback" aria-live="polite">
+                        <div class="canonical-plan-readback-head"><span>新版内容制作计划</span><button type="button" id="btnRefreshCanonicalPlans">读取</button></div>
+                        <div id="canonicalPlansList">尚未读取</div>
+                        <div id="canonicalWorkflowStatus">账号状态尚未读取</div>
+                      </div>
+                    </div>
+                  </div>
                   <!-- 01. 核心生产模式切换 (3 大模式) -->
                   <div class="pts-section pts-mode-sec" id="ptsModeSection">
                     <div class="pts-sec-label">
@@ -581,6 +650,27 @@
                         <div class="pts-mode-text">
                           <strong>3. 固定母版</strong>
                           <small>全批次锁定单一特定母版风格</small>
+                        </div>
+                      </button>
+                      <button type="button" class="pts-mode-card" data-mode="4_template_sync" title="模式4：从统一本地模板库逐套建立在线模板对话，改名与本地完全一致并写入台账">
+                        <span class="pts-mode-icon">🔄</span>
+                        <div class="pts-mode-text">
+                          <strong>4. 同步对齐模板</strong>
+                          <small>新建对话 · 改名一致 · 写入台账</small>
+                        </div>
+                      </button>
+                      <button type="button" class="pts-mode-card" data-mode="5_material_supply" title="模式5：锁定模板URL，上传原料图与文案生成迁移计划，标记原料就绪">
+                        <span class="pts-mode-icon">📥</span>
+                        <div class="pts-mode-text">
+                          <strong>5. 补充原料</strong>
+                          <small>锁定模板URL · 上传图文 · 出计划</small>
+                        </div>
+                      </button>
+                      <button type="button" class="pts-mode-card" data-mode="6_final_packaging" title="模式6：自动按「渠道_时间_原素材标题」建夹，出图出文案并结案归档">
+                        <span class="pts-mode-icon">📦</span>
+                        <div class="pts-mode-text">
+                          <strong>6. 出成品归档</strong>
+                          <small>自动建夹 · 出图出文案 · 结案落盘</small>
                         </div>
                       </button>
                     </div>
@@ -668,6 +758,77 @@
                         </div>
                       </div>
                     </div>
+
+                    <!-- 模式 4 独占：同步对齐模板面板 -->
+                    <div class="pts-dynamic-panel" id="panelMode4TemplateSync" style="display: none;">
+                      <div class="pts-banner mode4-banner" style="background: rgba(16, 185, 129, 0.1); border-left: 3px solid #10b981; padding: 10px; border-radius: 6px; margin-bottom: 12px;">
+                        <span class="banner-icon">🔄</span>
+                        <div class="banner-text">
+                          <strong style="color: #10b981;">同步对齐模板模式</strong>
+                          <p style="font-size: 11px; color: #94a3b8; margin: 4px 0 0 0;">读取 02-模板库 文件夹，逐套新建对话、上传图片与提示词，自动将对话重命名为与本地完全一致，并记录会话链接至账号总账。</p>
+                        </div>
+                      </div>
+                      <div class="pts-panel-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                          <span style="font-size: 12px; font-weight: 600; color: #f1f5f9;">📋 模板库同步流水线</span>
+                          <span class="badge" id="ptsSyncTemplateCountBadge" style="font-size: 11px; background: rgba(16,185,129,0.2); color: #34d399; padding: 2px 6px; border-radius: 4px;">待同步: 0 套</span>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                          <button type="button" class="pts-material-btn" id="btnStartTemplateSync" style="flex: 1; background: #10b981; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 600; cursor: pointer;">▶ 开始自动同步对齐</button>
+                          <button type="button" class="pts-material-btn" id="btnPauseTemplateSync" style="background: rgba(255,255,255,0.1); color: #cbd5e1; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;">⏸️ 暂停</button>
+                        </div>
+                        <div id="ptsTemplateSyncLog" style="background: rgba(0,0,0,0.3); border-radius: 4px; padding: 8px; font-family: monospace; font-size: 11px; color: #94a3b8; max-height: 140px; overflow-y: auto;">
+                          [就绪] 点击上方按钮开始自动读取本地模板并对齐在线会话...
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 模式 5 独占：补充原料面板 -->
+                    <div class="pts-dynamic-panel" id="panelMode5MaterialSupply" style="display: none;">
+                      <div class="pts-banner mode5-banner" style="background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; padding: 10px; border-radius: 6px; margin-bottom: 12px;">
+                        <span class="banner-icon">📥</span>
+                        <div class="banner-text">
+                          <strong style="color: #3b82f6;">补充原料模式</strong>
+                          <p style="font-size: 11px; color: #94a3b8; margin: 4px 0 0 0;">锁定当前账号绑定的模板对话 URL，自动上传选定素材图集与文案，触发生成 1-10 页迁移计划，并在本地数据库中标记原料就绪。</p>
+                        </div>
+                      </div>
+                      <div class="pts-panel-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                        <div style="margin-bottom: 8px;">
+                          <div style="font-size: 11px; color: #94a3b8;">锁定模板对话链接:</div>
+                          <div id="ptsSupplyBoundUrlText" style="font-size: 11px; color: #60a5fa; word-break: break-all; margin-top: 2px;">未绑定模板 URL，请先在模式 4 或下拉中指定</div>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-top: 10px;">
+                          <button type="button" class="pts-material-btn" id="btnUploadMaterialToTemplate" style="flex: 1; background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 600; cursor: pointer;">📤 上传原料并生成迁移计划</button>
+                        </div>
+                        <div id="ptsMaterialSupplyStatusBox" style="margin-top: 8px; font-size: 11px; color: #cbd5e1; padding: 6px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                          状态: 等待上传指令
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 模式 6 独占：出成品归档面板 -->
+                    <div class="pts-dynamic-panel" id="panelMode6FinalPackaging" style="display: none;">
+                      <div class="pts-banner mode6-banner" style="background: rgba(245, 158, 11, 0.1); border-left: 3px solid #f59e0b; padding: 10px; border-radius: 6px; margin-bottom: 12px;">
+                        <span class="banner-icon">📦</span>
+                        <div class="banner-text">
+                          <strong style="color: #f59e0b;">出成品与自动归档模式</strong>
+                          <p style="font-size: 11px; color: #94a3b8; margin: 4px 0 0 0;">找到「原料上传完成」的会话，自动按「渠道_生产时间_原素材标题」在 03-成品库 建立物理文件夹，发送确定计划出图，抓取文案并双向归档。</p>
+                        </div>
+                      </div>
+                      <div class="pts-panel-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                        <div style="margin-bottom: 8px;">
+                          <div style="font-size: 11px; color: #94a3b8;">目标成品文件夹 (即将自动创建):</div>
+                          <div id="ptsTargetFinishedFolderPath" style="font-size: 11px; color: #fbbf24; font-family: monospace; word-break: break-all; margin-top: 2px;">03-成品库/...</div>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+                          <button type="button" class="pts-material-btn" id="btnConfirmPlanAndGenerateImages" style="background: #f59e0b; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 600; cursor: pointer;">🚀 发送「确定计划」开始平面出图</button>
+                          <button type="button" class="pts-material-btn" id="btnFetchCopyAndFinalize" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); padding: 6px 12px; border-radius: 6px; font-weight: 600; cursor: pointer;">📝 获取四版文案并下载归档</button>
+                        </div>
+                        <div id="ptsFinalPackagingStatusBox" style="margin-top: 8px; font-size: 11px; color: #cbd5e1; padding: 6px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                          状态: 就绪，等待指令
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <!-- 03. 素材选择与当前作品 -->
@@ -747,6 +908,12 @@
               <textarea id="gptTestMaterialSearch"></textarea>
               <textarea id="gptTestExtraPrompt"></textarea>
               <nav id="gptAccountTabs"></nav>
+              <section id="gptAccountContextInspector" class="gpt-account-context-inspector" aria-label="账号身份与当前对话只读核验">
+                <label for="gptAccountContextTarget">稳定账号只读核验</label>
+                <select id="gptAccountContextTarget" aria-label="选择稳定账号 ID"></select>
+                <button id="gptAccountContextRead" type="button">读取实际身份与当前对话</button>
+                <output id="gptAccountContextResult" role="status" aria-live="polite">尚未核验；读取不会切换或显示账号窗口，也不会发送内容。</output>
+              </section>
               <button id="btnToggleSideLibrary" type="button"></button>
             </div>
 
@@ -813,7 +980,7 @@
               </div>
             </header>
 
-            <ol class="codex-workflow-map" aria-label="本地模式（Codex 客户端）单套制作流程">
+            <ol class="codex-workflow-map" aria-label="GPT 本地（Codex 客户端）单套制作流程">
               <li data-codex-stage="material"><span>01</span><strong>选完整素材</strong><small>一个文件夹</small></li>
                   <li data-codex-stage="template"><span>02</span><strong>选母版或候选池</strong><small>核对真实目录</small></li>
               <li data-codex-stage="request"><span>03</span><strong>登记并回读</strong><small>请求有编号</small></li>
@@ -852,7 +1019,7 @@
                   <select id="codexProductionTemplates" aria-label="Codex 后端核验母版" size="3"></select>
                   <small>只显示服务端核验有效 P1/P2 的母版；随机模式可按住 Ctrl 多选。</small>
                 </label>
-                <div id="codexCapabilityMatrix" class="production-capability-matrix" aria-label="本地模式（Codex 客户端）三种制作方式的后端状态" aria-live="polite"></div>
+                <div id="codexCapabilityMatrix" class="production-capability-matrix" aria-label="GPT 本地（Codex 客户端）三种制作方式的后端状态" aria-live="polite"></div>
                 <div class="codex-template-route" role="note">
                   <strong>当前本地模式的操作边界</strong>
                   <span>工作台目前只登记请求，不会自动把文件送进 Codex 对话。若要“先发一次母版、后续逐套发素材”，可用下面的手动对话操作包；它只复制指令，不会替你新建对话、附文件或启动生图。</span>
@@ -1020,7 +1187,7 @@
               <p>筛选历史素材，预览原图和原文案；发送只准备到微信发表前，最终点击由你确认。</p>
             </div>
             <div class="moments-heading-actions">
-              <span id="momentsLibraryStatus" class="moments-library-status" aria-live="polite">正在读取素材库…</span>
+              <span id="momentsLibraryStatus" class="moments-library-status" aria-live="polite">打开朋友圈面板后读取素材库</span>
               <span id="momentsOpenModeStatus" class="moments-open-mode-status">自动打开微信</span>
               <button id="momentsScheduleStatus" class="moments-open-mode-status moments-mode-control" type="button" data-skill-moments-settings title="在技能中心设置手动触发或定时触发（自动准备）" aria-label="打开技能中心的朋友圈设置">手动触发</button><span id="momentsScheduleNext" class="moments-open-mode-status" aria-live="polite"></span><span id="momentsCollectionScheduleStatus" class="moments-open-mode-status" aria-live="polite"></span>
               <button id="momentsRefreshBtn" class="refresh-button" type="button" title="重新读取朋友圈采集整理与发布素材，不会修改原素材" aria-label="刷新朋友圈采集整理与发布">↻</button>
@@ -1475,7 +1642,6 @@
                 <div class="settings-two-columns">
                   <label><span>每轮最多生产（套）</span><input id="gptAutoAccountLimit" type="number" min="1" max="30" value="8" /></label>
                   <label><span>单帖最长等待（分钟）</span><input id="gptAutoTaskTimeout" type="number" min="5" max="60" value="30" /></label>
-                  <label><span>闲置网页释放（分钟）</span><input id="gptIdleUnloadMinutes" type="number" min="5" max="240" value="30" /></label>
                 </div>
                 <p class="settings-footnote">生产间隔已移入工作流的「随机等待」步骤——在工作流环节中直接设置每步的随机等待秒数。归档行为由最后一步「移动到成品库」环节控制（勾选启用即可归档，取消勾选则跳过）。</p>
               </div>
@@ -1517,7 +1683,7 @@
             <div class="settings-sub-group">
               <div class="settings-inline-heading"><strong>目录路径</strong></div>
               <label class="settings-wide-field"><span>下载暂存目录</span><div class="inline-setting-control"><input id="gptDownloadRoot" type="text" value="D:\Download" /><button id="chooseGptDownloadRootBtn" type="button">选择</button></div></label>
-              <label class="settings-wide-field"><span>成品库目录</span><div class="inline-setting-control"><input id="gptProductRoot" type="text" value="D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）" /><button id="chooseGptProductRootBtn" type="button">选择</button></div></label>
+              <label class="settings-wide-field"><span>成品库目录</span><div class="inline-setting-control"><input id="gptProductRoot" type="text" value="D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库" /><button id="chooseGptProductRootBtn" type="button">选择</button></div></label>
             </div>
             <div class="settings-sub-group">
               <div class="settings-inline-heading"><strong>网页功能</strong></div>
@@ -1577,10 +1743,14 @@
       <button id="contextSetFolder" type="button">设置关联文件夹</button>
       <button id="contextSetCollectionPathManual" type="button">直接输入本机地址</button>
       <button id="contextResetCollectionStage" type="button">恢复仓库默认</button>
-      <button id="contextCopyPath" type="button">复制目录地址</button>
+      <button id="contextOpenDetachedWindow" type="button" class="context-item highlight-action">🪟 单独打开此账号窗口</button>
+      <button id="contextBrowserInfo" type="button" class="context-item">🌐 浏览器信息</button>
+      <button id="contextFingerprint" type="button" class="context-item">🧬 查看指纹</button>
+      <button id="contextReloadAccount" type="button" class="context-item">🔄 重新加载此账号</button>
       <button id="contextRename" type="button">重命名</button>
       <button id="contextToggleDisable" type="button">暂时禁用</button>
       <button id="contextRemoveAccount" type="button" class="danger-action">删除账号窗口</button>
+      <button id="contextCopyPath" type="button">复制目录地址</button>
       <button id="contextTrashFolder" type="button" class="danger-action">移到回收站</button>
       <button id="contextModeSettings" type="button">修改模式设置</button>
       <button id="contextDeleteMode" type="button" class="danger-action">删除模式配置</button>
@@ -1598,13 +1768,164 @@
   <script src="/gpt-startup-stagger.js?v=0.1.0"></script>
   <script src="/gpt-patrol-scheduler.js?v=0.1.0"></script>
   <script src="/gpt-progress-display.js?v=0.1.0"></script>
+  <script src="/production-action-client.js?v=0.1.0"></script>
   <script src="/template-migration-panel.js?v=0.1.0"></script>
-  <script src="/distribution-ui.js?v=2.6.53-dev"></script>
-  <script src="/material-workspace.js?v=2.6.53-dev"></script>
-  <script src="/moments-publisher-panel.js?v=0.1.0"></script>
+  <script src="/distribution-ui.js?v=2.6.102-dev"></script>
+  <script src="/material-workspace.js?v=2.6.102-dev"></script>
+  <script src="/moments-publisher-panel.js?v=0.1.1"></script>
   <script src="/fixed-template-session.js?v=1"></script>
-  <script src="/production-request.js?v=2.6.53-dev"></script>
-  <script src="/app.js?v=2.6.53-dev"></script>
-  <script src="/native-production-drawer.js?v=1.0.0" defer></script>
+  <script src="/production-request.js?v=2.6.102-dev"></script>
+  <script src="/gpt-browser-loading-progress.js?v=2.6.102-dev"></script>
+  <script src="/gpt-template-target.js?v=2.6.102-dev"></script>
+  <script src="/app.js?v=2.6.102-dev"></script>
+  <!-- 宽屏大弹窗：定制与创建生产计划 -->
+  <div class="pts-lightbox-modal" id="modalCreateProductionPlan" style="display: none;">
+    <div class="lightbox-backdrop" id="modalCreatePlanBackdrop"></div>
+    <div class="pts-plan-modal-dialog">
+      <header class="pts-plan-modal-header">
+        <div class="pts-plan-modal-title">
+          <span style="font-size: 22px;">📅</span>
+          <div>
+            <h3>定制与创建生产计划 (一键智能生成排产表)</h3>
+            <p>按地点、季节、流量类型与关键词三维智能过滤素材库，一键生成实时执行清单并即刻激活</p>
+          </div>
+        </div>
+        <button type="button" class="lightbox-close-btn" id="btnCloseCreatePlanModal">✕</button>
+      </header>
+
+      <div class="pts-plan-modal-body">
+        <!-- 筛选控制栏 -->
+        <div class="pts-plan-filter-bar">
+          <div class="filter-group">
+            <label>📍 目的地/城市:</label>
+            <select id="filterPlanLocation">
+              <option value="all">🌟 全部目的地</option>
+              <option value="上海" selected>上海 (魔都团建/烘焙/轰趴)</option>
+              <option value="莫干山">莫干山 (高端民宿/露营)</option>
+              <option value="千岛湖">千岛湖 (自驾/游艇/环湖)</option>
+              <option value="安吉">安吉 (竹海/溯溪/野奢)</option>
+              <option value="桐庐">桐庐 (富春江/溶洞)</option>
+              <option value="杭州">杭州</option>
+              <option value="宁波">宁波</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label>🍁 季节分类:</label>
+            <select id="filterPlanSeason">
+              <option value="autumn" selected>秋季 (9—11月)</option>
+              <option value="summer">夏季 (6—8月)</option>
+              <option value="spring">春季 (3—5月)</option>
+              <option value="winter">冬季 (12—2月)</option>
+              <option value="all">全季节不限</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label>🎯 流量分类:</label>
+            <select id="filterPlanTraffic">
+              <option value="all">全部流量</option>
+              <option value="泛流量" selected>泛流量 (个人攻略/网红打卡)</option>
+              <option value="精准流量">精准流量 (企业团建方案)</option>
+            </select>
+          </div>
+
+          <div class="filter-group filter-keyword">
+            <label>🔍 关键词过滤:</label>
+            <input type="text" id="filterPlanKeyword" placeholder="如: 蛋糕/轰趴/自驾/露营..." />
+          </div>
+
+          <div class="filter-group filter-limit">
+            <label>🔢 排产条数:</label>
+            <select id="filterPlanLimit">
+              <option value="20">20 条 (快速验证)</option>
+              <option value="50">50 条 (半日标准)</option>
+              <option value="80" selected>80 条 (全日高负荷)</option>
+              <option value="150">150 条 (跨周大循环)</option>
+              <option value="300">300 条</option>
+            </select>
+          </div>
+
+          <div class="filter-actions">
+            <button type="button" class="action-btn" id="btnPreviewPlanMaterials">🔍 检索匹配素材</button>
+          </div>
+        </div>
+
+        <!-- 候选素材大表格 -->
+        <div class="pts-plan-table-wrapper">
+          <table class="pts-plan-table" id="tablePlanCandidateMaterials">
+            <thead>
+              <tr>
+                <th style="width: 45px;"><input type="checkbox" id="chkSelectAllPlanMaterials" checked /></th>
+                <th style="width: 60px;">序号</th>
+                <th style="width: 75px;">季节</th>
+                <th style="width: 85px;">地点</th>
+                <th>素材原名称 (素材包目录)</th>
+                <th style="width: 75px;">图片数</th>
+                <th style="width: 85px;">文案状态</th>
+                <th style="width: 90px;">排产状态</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyPlanCandidates">
+              <tr><td colspan="8" style="text-align:center; padding: 40px; color: #94a3b8;">点击上方“🔍 检索匹配素材”按钮载入素材列表</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <footer class="pts-plan-modal-footer">
+        <div class="footer-left">
+          <span>已选定: <strong id="lblPlanSelectedCount" style="color: #60a5fa;">0</strong> 个素材包</span>
+          <span style="margin-left: 14px; font-size: 11px; color: #94a3b8;">落盘位置: <code>config/production_realtime_plan.json</code> (自动安全备份旧表)</span>
+        </div>
+        <div class="footer-right">
+          <button type="button" class="btn-cancel" id="btnCancelCreatePlan">取消</button>
+          <button type="button" class="btn-primary" id="btnConfirmCreatePlan">🚀 一键生成并立即激活此生产计划</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- 全息健康自愈诊断详情弹窗 -->
+  <div class="pts-lightbox-modal" id="modalHealthDetail" style="display: none;">
+    <div class="lightbox-backdrop" id="modalHealthBackdrop"></div>
+    <div class="pts-plan-modal-dialog" style="max-width: 680px; height: auto; max-height: 600px;">
+      <header class="pts-plan-modal-header">
+        <div class="pts-plan-modal-title">
+          <span style="font-size: 20px;">🛡️</span>
+          <div>
+            <h3>全息健康与自愈监控诊断中心</h3>
+            <p>CDP 防风控与死锁自愈守护中枢：宁可安全休眠，绝对不触发封号风险</p>
+          </div>
+        </div>
+        <button type="button" class="lightbox-close-btn" id="btnCloseHealthModal">✕</button>
+      </header>
+      <div class="pts-plan-modal-body" style="padding: 20px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+          <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px;">
+            <div style="font-size: 11px; color: #94a3b8;">守护运行状态</div>
+            <div id="healthModalStatus" style="font-size: 16px; font-weight: 700; color: #34d399; margin-top: 4px;">平稳运行 (正常)</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px;">
+            <div style="font-size: 11px; color: #94a3b8;">防封策略与上限</div>
+            <div style="font-size: 13px; font-weight: 600; color: #f8fafc; margin-top: 4px;">最多 2 次重试 · 90s 超时必熔断</div>
+          </div>
+        </div>
+        <div style="font-size: 12px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px;">📋 最近自愈与守护事件记录:</div>
+        <div id="healthModalLogsList" style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 10px; max-height: 220px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #cbd5e1; display: flex; flex-direction: column; gap: 8px;">
+          <!-- 动态记录 -->
+        </div>
+      </div>
+      <footer class="pts-plan-modal-footer">
+        <span style="font-size: 11px; color: #94a3b8;">守护进程: cdp_safe_guard.py (PID 61004)</span>
+        <button type="button" class="btn-cancel" id="btnCloseHealthModalBottom">关闭</button>
+      </footer>
+    </div>
+  </div>
+
+  <script src="/native-production-drawer.js?v=2.6.102-dev" defer></script>
   </body>
 </html>
+
+
+

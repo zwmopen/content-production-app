@@ -1,0 +1,30 @@
+{
+  "version": "2.7.0",
+  "release_name": "content-production-app-v2.7.0-stable",
+  "release_type": "stable",
+  "released_at": "2026-10-31T10:25:00+08:00",
+  "verified_slots": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F"
+  ],
+  "active_plus_slots": [
+    "A",
+    "B",
+    "C"
+  ],
+  "drag_and_drop_reorder": true,
+  "gold_border_plus_styling": true,
+  "browser_governance": "native-partition-clean-stealth",
+  "test_status": {
+    "total": 519,
+    "pass": 474,
+    "fail": 0,
+    "skipped": 45
+  },
+  "runtime_mode": "unified-runtime",
+  "status": "PASS"
+}

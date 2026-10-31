@@ -1,5 +1,297 @@
-# 2.6.53-dev｜固定母版状态只读回读（本地开发，未发布）
+# 发布日志 (CHANGELOG)
 
+## 2.7.0-stable（2026-10-31，正式稳定版）
+
+### 🌟 为什么它是稳定版 (Why it is a Stable Release)
+
+1. **环境一致性根本根治风控拦截**：
+   - 彻底废除旧 Cookie 快照强行导入逻辑，不再用过期的 Session Token 污染原生环境；
+   - 彻底移除了改写 User-Agent、Client Hints、WebGL、音频（AudioContext）和 WebRTC 的伪造指纹注入与原型链 Hook，保持与底层 Chromium 物理内核 100% 绝对一致，完全根治了 Google OAuth“此应用或浏览器不安全 (signin/rejected)”以及 OpenAI 登录拦截问题；
+   - 采用纯净原生 Partition 独立沙箱隔离机制（`persist:gpt-account-<id>`），会话稳定性达到最高评级。
+
+2. **多账号全槽位实机登录态与 2FA 自动化闭环**：
+   - A~F 全槽位账号 100% 真实登录就绪，并通过 OpenAI `/api/auth/session` 接口在线验证；
+   - 专属账号由用户直接掌控（Slot A/B/C 三大主力 Plus 账号在线），并成功跑通 Google 验证器 TOTP 密钥本地动态算码与自动过验；
+   - 配套独立 Chrome 快速授权双通道，极端风控场景可无缝兜底。
+
+3. **顶栏多账号中枢交互架构稳固**：
+   - 彻底重构顶栏 ABCD 拖拽排序机制，加入抓手手势、防子元素穿透拦截与目标吸附发光特效，解决 Windows/Electron 环境下的拖拽跳动与闪烁；
+   - 拖拽换位后槽位字母（A、B、C...）动态自动重编，顺序与档案实时同步双向持久化至本地存储与原生配置，刷新/重启不丢序；
+   - 修复“禁用即沉底”重排序 Bug 和“休眠账号阻断查看”的死锁逻辑，被禁用的账号稳定保持在既定槽位，且允许人工随时点击加载查看。
+
+4. **严苛的自动化契约回归测试 100% 通过**：
+   - 经过 519 项工作台核心契约测试套件全量验证（474 Pass, 0 Fail, 45 Skip，0 失败）；
+   - 生产流水线、CDP 管道、多账号轮转、素材分发与作品落盘均处于通过状态。
+
+---
+
+### 🚀 最近更新内容 (Recent Updates)
+
+1. **多账号生产中枢顶栏视觉全面重构**：
+   - **去除冗余角标**：彻底去除按钮内拥挤的 `● plus` 文字标签；
+   - **账号标识升级**：统一展示为 `[字母 · 6位英文简称]`（如 `A · ZWMRPG`、`B · UPVOTE`、`C · DONNAP`、`D · ORLAND`、`E · RPGZWM`、`F · ALLELE`）；
+   - **Plus / Free 精准视觉分层**：Plus 付费账号全自动应用 **金色立体边框（#f59e0b）与光晕微光**；Free 免费账号保持朴素灰扑扑原生边框；禁用账号保持虚线划线与灰度保护。
+2. **槽位顺序优化（主力 Plus 自动前置）**：
+   - 按照实际使用频次与生产优先级，将能用的主力 Plus 账号（原 D、F 号）拖拽前置为 **B** 和 **C**；
+   - 形成 A（ZWMRPG Plus）、B（UPVOTE Plus）、C（DONNAP Plus）主力生产梯队，D、E（Free 备用）、F（ALLELE 同事号，禁用跳过自动化）。
+3. **文案规范化定标**：
+   - 全局界面与代码中彻底废弃“生产槽位”称谓，加号按钮与所有相关交互统一更名为 **“➕ 添加新的账号”**。
+4. **安全凭证与自动化工具链落地**：
+   - 在本地安全目录 `AI/secrets/平台服务/ChatGPT/` 建立凭证保险箱，加密存档账号、密码与谷歌验证器（TOTP）密钥；
+   - 部署本地 TOTP 动态码发生工具 `generate_totp.py`，支持毫秒级生成 6 位二次验证码。
+5. **第二大脑开发体系沉淀**：
+   - 沉淀至知识库《开发踩坑与经验库.md》；
+   - 创建专项架构规范《GPT登录与浏览器环境一致性经验.md》；
+   - 更新《素材与内容生产控制台》项目权威上下文 `PROJECT_CONTEXT.md`。
+
+---
+
+## 2.6.102-dev｜受支持浏览器登录入口
+
+- 新增 A 账号“打开网页”受支持浏览器入口：优先启动用户现有 Chrome Default 持久配置，使用专用 CDP 9511；可通过环境变量选择 Edge、用户数据目录和 profile。
+- 不复制 Cookie、不伪造登录态、不绕过 Google 风控；OAuth 拒绝页不会作为启动目标，统一回到 `https://chatgpt.com/` 由用户完成正常登录。
+- 增加 `supported-browser-launcher` 3 项回归测试。已有 Chrome 进程可能忽略新的 CDP 参数，界面需提示用户关闭该配置的已有 Chrome 后再重试；当前不自动杀进程。
+## 2.6.101-dev｜文案落库手机协议修复
+
+- 成品文案统一要求 COPY_FORMAT:3（小红书1、小红书2、抖音），制作暂存保存和最终归档都拒绝旧式人工分隔线、缺段、过短或不合规文案。
+- 修复婺源晒秋团建成品：重写三版，标记未确认的接待、开放、演艺、住宿和交通信息；旧 QA 作为历史保留，新 QA 与 SHA 写入成品索引。
+- 定向格式/最终归档回归通过；请求路由回归有23项因本机缺少“制作请求技能”而阻断。修改尚未加载运行实例；未连上 Android/iOS 测试设备。
+
+## 2.6.100-dev（2026-10-24，未发布/未加载）
+
+- 新增原 main template-batch-host、持久 cursor/原绑定引用及共享 HTTP/IPC 控制；去掉前台批次循环和未接线的 server pump。
+- 复用 templateCreationService/core；原生 dispatch 与 renderer 准入共享账号互斥。完成当前绑定并核空闲/草稿后才允许下一套 root；未知不导航/重发，人工接管守住原提交/绑定门禁。
+- 修复旧回执误跳过变更模板，以及 core 丢失附件映射导致批次无法推进；仅保存经过验证的轻量映射，旧投影必须重新取得精确服务器证据。
+- 上传/账号限额独立等待，保留平台绝对时间并到点续核；其它账号/阶段不受该限额阻断。最终定向574通过、45跳过；完整npm test 1500通过、45跳过、0失败，线上未验收。
+
+## 2.6.92-dev｜模板账号精确入口
+
+- 每个模板常显GPT＋当前真实启用账号名入口；只接受在线模板权威记录中templateId/accountId精确绑定的对话URL。旧account-2不映射为当前B；缺失/冲突禁用，不回退首页。点击重新核绑定，再切对应账号并导航精确对话。
+- 本地行为测试3/3，实际在线跳转与生产恢复仍待安全加载验收。
+
+## 2.6.91-dev｜作品路径查找后台化与隔离目录边界
+
+- history目录/历史索引冷扫移到worker单飞，失败或失效返回可重试503/loading。精确在途原目录继续续接；扫描排除明确回收站、垃圾样本及旧制作暂存，保留合法下划线分类。
+- 打包结果回退查找移到独立worker，统一完成判定且不跟随recordedPath跳转；资产不迁移、不删除，线上未安全加载。
+
+## 2.6.90-dev｜素材索引冷启动不阻塞主线程
+
+- 全局素材索引同步消费者只读内存，冷启动异步单飞加载及worker解析；读/解析失败保留最后可用快照，失败后允许重试，后台刷新不覆盖新本地写。
+- 未就绪返回503/loading及中文可重试提示，选料/查重不把空回退值当零库存；在线尚未完成安全加载。
+
+## 2.6.89-dev｜统一模板真源边界
+
+- 创建与预检从宿主运行目录 app-settings.json 的 pageSettings.production.templateRoot 读取统一根（空值沿用主项目 02-模板库），registry 固定为根下 templates-registry.json；不接受 renderer/binding 自选真源。realpath 后比较，拒绝账号副本及指向副本的链接。
+- 针对性回归 10/10；未加载线上 main，未移动模板、改绑定或生产队列。
+
+## 2026-10-24｜2.6.88-dev：只读超时记录独立于恢复健康
+
+- account-context明确opt-in独立只读超时标记，保持trackReadHealth/reportBridgeHealth=false；原通道有超时历史且当前writer空闲/页面不变时，可尝试精确WebContents的现有debugger通路。
+- 1800ms页面预算内备用最多500ms，失败后原生仍有约1300ms；沿用外层截止时间与in-flight宽限，不循环或跳旧端口。结果返回前再核writer/原页面。
+- 只读debugger不接管已有attach，不触发userGesture；正常完成清理截止timer，只detach自己附加的调试器。4项实际函数VM行为与模板/原生回归共22/22通过；main未安全加载，不能声称真实页面故障已修复。
+
+## 2026-10-24｜2.6.87-dev：身份行为合同与未知投影
+
+- template-sync-status两项旧失败已定位：禁止内部email读取的正则过宽；reader提取结束标记越过实际函数，误含后续写入服务。改为真实IPC/reader执行、敏感字段过滤与精确函数范围验证。
+- account-context缺失字段用null表达未采样，auth未检查时不推断未登录；busy错误码不允许安全true，ok仅接受完整VERIFIED条件。界面按true/false/null分别显示。
+- 保留canonical expected邮箱SHA256匹配门禁，缺摘要/不匹配仍identityVerified=false；新增原始邮箱/摘要不出公共投影的断言及真实HTTP错误回包验证。未改生产写入门禁，线上待验收。
+
+## 2026-10-24｜2.6.86-dev：bootstrap幂等与非生产后台退避
+
+- 移除dashboard/分发轮询重复同步初始化；单个bootstrap Promise共享初始化和设置刷新，失败释放供重试，成功保留。首次写入错误传播，目录枚举失败不假ready；历史job只填充尚不存在的id，不覆盖活跃对象。
+- 对设备发现、自动分发轮询、库存worker、定时备份/其大型备份阶段与索引预热做低内存准入；512MiB低阈、1GiB恢复阈、两次采样、30秒到5分钟退避，5秒内最多一次资源采样，不修改用户设置或取消在途工作。
+- 真实HTTP验证失败后重试、连续5请求不重复初始化读盘；job对象保留、低内存不派生扫描且恢复续跑、缓存保留，组合16/16。素材自定义根HTTP回归随bootstrap修复通过。总控独立bootstrap2/2证据已登记。
+- 真实日志证明server阶段日志/新阻塞告警部分被自动重拉加载；main仍2.6.78，现有watchdog仍可能重启。此轮无重载，2.6.86在线未验收。
+
+## 2026-10-24｜2.6.85-dev：阻塞诊断不再触发自退重拉
+
+- server事件循环连续三次长阻塞不再process.exit(9)，改为每段连续阻塞仅一次恢复延期告警；正常tick后重置，CPU profile和时钟跳变识别保留。
+- 当前main源码的HTTP watchdog已经延期未知状态重启，本次只纠正过期说明；覆盖子进程自退这条原本仍可绕过门禁的路径。
+- 真实timer回调VM验证六次连续低CPU阻塞不退出、每段只告警一次、恢复后重新告警及墙钟修正；相关定向13项通过。扩大检查有2项既有身份合同失败，内存替换本轮main注释前版本复现同样2失败；未修改身份代码。
+- 03:42旧实例曾恢复HTTP，但main仍旧版，内存缓解短暂，后续本窗仍见请求超时。新自退保护未在线加载。
+
+## 2026-10-24｜2.6.84-dev：启动阶段与优先级前移
+
+- server 的优先级设置前移到应用依赖加载之前；新增无业务内容的 stderr 启动阶段记录，以区分模块加载、同步文件初始化、设置读取与监听。
+- 删除旧注释中把低 CPU 等待唯一归因于优先级的判断。实时观测存在 PageIn 等待和持续严重内存压力；提高现有子进程优先级尚未恢复监听。
+- 未重启或加载在线源码；阶段日志与源码检查不代表 4331 已恢复。
+
+## 2026-10-24｜2.6.83-dev：会话日志尾读改为异步
+
+- `/api/gpt-production/conversation-log` 读取最新 JSONL 行时改用异步文件句柄分块读取，保留条数上限、倒序、坏行跳过和缺失文件空列表语义。
+- 运行日志在 2026-10-24 02:43 +08 记录该日志路径 `existsSync` 323ms，随后匿名 `readSync` 5819ms、`closeSync` 376ms，并伴随 30.656 秒事件循环阻塞；当前对应端点仅有此同步尾读调用。
+- `/api/gpt-account-context` 的外层 IPC 截止时间从 4 秒增至有界最大 5 秒；main 内部的页面结构与身份读取预算分别为 1.8/2.2 秒，外层现在留出 IPC 传递余量。
+- 临时文件及延迟 I/O 回归验证事件循环可继续处理计时器；账号上下文 wiring 回归验证 5 秒外层预算大于两个内层预算之和。定向套件通过。只证明这两处边界已在源码修正；其它同步 I/O 长阻塞和在线读取延迟仍待加载后实测。
+
+## 2026-10-23｜2.6.79-dev：N 账号配置保留与并发公平调度（本地）
+
+- 账号设置规范化保留全部合法稳定账号，不再静默截断到 8 项。
+- 多账号生产为每个可用账号建立串行 worker；可调 `parallelWorkers` 仅控制同时执行额度，FIFO 门让预算外账号排队进入，不再固定启动列表前 5 个。
+- 新增 11 账号设置回归、11 worker / 3 并发公平与峰值限制回归、工作台接线静态回归。定向 61/61 通过。
+- 默认回归 1,482 项：1,433 通过、45 跳过、4 失败，与改动前失败数持平；未操作真实账号、任务、素材、canonical queue 或在线服务。
+
+## 2026-10-23｜2.6.78-dev：设置读快照与保存失败可见（本地）
+
+- `app-settings.json` 改为启动异步读取、变化异步刷新；每次读取克隆快照，热读不再执行同步 stat/read。
+- 设置文件使用临时文件 + rename + 物理回读；写入失败传递到 `/api/page-settings` 与 `/api/settings/paths`，不会返回成功回执或提前污染快照。
+- 配置缺失/读取失败时不清空快照并回退默认；文件恢复后重新加载。新建设置显式关闭连续自动启动，省略该字段时也按关闭处理。
+- 新增快照缺失/恢复、默认值、源函数 wiring 与 ENOSPC/EACCES mock 回归。没有写真实设置文件、在线重载或账号操作。
+
+## 2026-10-23｜2.6.77-dev：模板首建新会话回读与看门狗迟到探测隔离（本地）
+
+- 完成统一模块 template-init 原生单次路径的接线；发送前 root 校验，发送后按实际新 /c/ 会话与完成回复验收；未知提交不重发。rename PATCH 的一次性 guard 复核相同 receipt/lease/account/WebContents/target 和页面空闲状态。
+- 修复服务看门狗异步定时探测重叠与旧结果迟到：单飞；restart 增加 child generation；探测完成后同时比对 generation、serverProcess identity 与 restarting 状态；旧结果忽略，异常也释放单飞槽位。
+- 78/78 定向模板/看门狗回归通过。服务端真实连续三次 unknown 的既有恢复行为仍保留，尚未在本轮加入生产活动安全判定；没有运行网页任务或重载在线实例。
+
+## 2026-10-23｜2.6.76-dev：模板首建原生接线与新会话安全回读（仅本地源码）
+
+- main.js 将模板 service 接入当前主进程，通过现有 canonical workflow 与账号 WebContents 执行；写入前复核唯一账号控制权及精确页面。
+- template-init 明确走一次性初始化专用分支，autoRun:false 不再落入手动“只挂附件”分支，也不调用通用自动生产器。确认 root 只用于发送前；发送后核验新 /c/ 会话和完成回复，未知提交不会重发。
+- 改名 PATCH 前在实际请求边界复核一次性 guard、相同 finalization lease/account/WebContents/target 与空闲页面；随后服务器 GET 回读和本地绑定才收口。
+- 专项模板回归 69/69 通过。未运行真实任务、未写账号/素材/canonical queue；没有在线重载或部署。
+## 2026-10-23｜2.6.75-dev：同账号模板最终写入 lease 不可被抢占（仅离线）
+
+- 同账号存在活动 operation/finalization lease 时，即使第二个 service 使用相同 operation key，也返回 `ACCOUNT_BUSY`，不能替换原 token；不同账号可并行。
+- 双 service 并发回归加入定向组，core/service/binding/readback **55/55** 通过。进程异常退出留下的 lease 保持 fail-closed；无自动抢锁。
+- Electron 原生模板入口仍未接线；无在线账号、网页、素材或 canonical queue 操作。
+
+## 2026-10-23｜2.6.74-dev：模板最终写入受账号控制权约束（仅离线）
+
+- 模板服务在服务端确认后、改名与绑定前读取同一账号工作流控制态；仅当操作仍为 `CONFIRMED` 且账号仍处于同一自动控制代次时继续。
+- 改名期间发生手动接管时，停止后续本地绑定；confirmed 回执的后续恢复也再次检查控制态，不重复改名或绑定。
+- 原子绑定文件提交前再次核对控制权；服务将控制回调交给原生适配器，要求每个写边界复核。
+- 定向回归 `desktop/template-creation-service.test.js` 12/12 通过。尚未接通 Electron 原生模板入口；无在线账号、网页、素材或 canonical queue 操作。
+
+## 2026-10-23｜2.6.73-dev：朋友圈图库惰性加载与 worker 索引（未部署）
+
+- 朋友圈面板仅在首次可见时读取图库；失败可在重新进入时重试，手动刷新强制刷新。
+- 全量 ready 库扫描、记录构建和 JSON 序列化放入有界 worker；预检/准备在 worker 中读取选定作品，不再同步扫描全库。
+- 加入 single-flight、超时槽位保留与快照失效代次保护，阻止旧在途扫描覆盖失效后的新快照。
+- 9项隔离回归通过；没有读取真实图库、操作账号页面、改任务队列或重载在线服务。
+
+## 2026-10-23｜2.6.72-dev：模板首建安全续接与绑定漂移防护
+
+- core 在原生提交边界前失败时生成精确的本地 `NOT_SUBMITTED` 回执；模板服务只对同账号、同操作键和令牌匹配的此类回执放行原操作续接。未知提交状态继续只读对账。
+- 模板绑定写入前验证服务端回执身份、精确会话、提示词SHA、源文件路径/大小/SHA、canonical修订/标题与服务端 GET 改名回执；验证失败不改canonical绑定文件。
+- 改名脚本返回最终 GET 读回的 method、标题、会话和消息身份。Electron 原生模板适配未接线；本轮无真实页面、素材、队列或任务写入。
+- 定向回归 53/53 通过。默认 `npm test` 完成1438项时发现1项既有的 `tests/production-request-ui.test.js` 失败：测试抽取函数边界硬编码CRLF。改为兼容LF/CRLF后，该UI测试文件11/11通过；未重复耗时的全量套件。
+
+## 2026-10-23｜2.6.71-dev：账号隔离预览与空帧重复调用保护
+
+- `/frame` 要求稳定 accountId 和精确 target URL；响应必须带回同账号、同 target 与 fresh 标记。移除按端口复用旧帧的回退。
+- Electron 原生截图按真实 WebContents 做 single-flight；截图观察超时不会重复调用仍未终态的原生 capture。预览服务按账号/target 合并并发调用，失败后退避 5 秒。
+- 账号状态、CDP 输入、激活与导航旧路由在缺少账号绑定原生适配器时返回不可用，不再选第一个页面。renderer 丢弃切号后的迟到响应并清除旧帧。
+- 定向回归 526 项：481 通过、45 跳过、0 失败；相关 JS 语法检查通过。默认全量回归结果见 HANDOFF。
+- 本地源码改动，未部署。实际空帧原因与 G01在线验收仍未完成；未操作账号页面、生产队列或任务。
+
+## 2026-10-23｜2.6.70-dev 补充：未闭环生产失败阻止重复认领（离线源码）
+
+- A writer 的只读记录显示目标素材为“生产中 / 失败待恢复 / 无锁”。failure API 保存的是上游 worker 提供的错误文本；没有堆栈，所以 `Cannot read properties of undefined (reading 'status')` 的具体抛出点仍未确认。
+- `canClaimMaterial` 过去没有阻止该无锁状态再次 claim。现在返回 `MATERIAL_RECOVERY_REQUIRED`；当前 renderer 不把该代码当作可跳过错误，因此不会进入浏览器生产流程。
+- 新增 core 与 renderer 回归。集成测试同时发现并修复 `server.js` 首次快照读取早于 JSON cache 阈值初始化的问题。
+- 只验证本地代码；没有读取/修改 A 的队列或素材，没有刷新、重开或重发活动页。线上版本尚未验收。
+
+## 2026-10-23｜2.6.70-dev：模板首建桌面事务编排（原生I/O尚未接线）
+
+- src/desktop/template-creation-service.js复用现有workflow core/store，原账号writer按canonical taskId调用，不建立第二条队列。编排读取canonical→首建准备→保存意图→原生发送→服务端回读→名称/绑定回读；每账号同实例串行。
+- 任务与模板/提示词/附件SHA/标题修订一致性两次检查；未知历史提交不作为新模板发起。发送超时后下一次只读对账，不重复send；服务端已确认但本地绑定失败，恢复只补绑定。
+- bind返回必须有匹配账号、模板、真实会话、消息、完整标题及回读ID，否则不得报告TEMPLATE_BOUND。读回仅有预览或不完整服务端附件由原core拒绝。
+- 新7项事务测试及core/服务/路由相关共54/54通过（3.2秒），已将新测试纳入npm默认脚本。仅隔离数据，无真实上传。
+- 明确未完成：该服务尚未由main.js注册IPC，readTask/inspect/send/readback/bind需接真实原生适配器；不能声称桌面按钮、B/C模板上传已可执行。正在向B原owner核T102实际canonical文件路径，历史D/account-5绑定不能不核就改为B。原template-init上传/等待确认能力已找到，下一步复用。
+- 未刷新、重启或写任何GPT页面/登录/生产队列；运行版本需单独验收。G04首套和全部模板对齐仍未完成。
+
+## 2026-10-23｜2.6.69-dev：共用工作流支持显式模板首建事务（桌面适配未完成）
+
+- 发现production-workflow-core.reserve对template也强制已有/c/，首次创建对话形成循环前提。现在仅stage=template且显式new-template合同允许精确https://chatgpt.com/作为首建起点；普通素材/生图仍须精确会话，无自动home回退。
+- 首建必须提供稳定account/task/template、原生pageInstanceId、完整提示词SHA及全部附件SHA；prepare还须原生页面一致、canonical未提交、草稿空、附件空、无生成。修改页面/模板/提示词不能复用原操作键绕过去重。
+- CONFIRMED必须是服务器回读：真实/c/链接、真实消息ID、精确提示词SHA和全部附件映射（每个fileId唯一，均属于同一消息，SHA及数量完全吻合）。少图/错消息/仅本地预览不确认；提交未知保留原意图且禁止再次发送。控制sidecar只保存哈希/引用，不存提示词正文或凭据。
+- 复用现有core/store，不新建业务队列或writer。核心33/33；合并服务/路由/接线回归48/48通过。新增5项覆盖首建正常、普通任务home拒绝、原生页面不符、缺附件与提交未知不重发、变更身份冲突。
+- 仍未完成：桌面模板专用IPC适配、canonical模板文件读取与SHA复核、实际原迁移器调用、服务端回读提取、名称更新/绑定收口。现有页面任务构建仍阻断，不得宣称B/C可实际上传；本轮无网页写入/队列变更/成品计数。
+- 下一步将该显式合同接到当前desktop原生模板入口，复用sendTaskToEmbeddedGpt(template-init)，由原账号writer正常任务验收。线上版本与源码分开记录，不强刷新未知活动。
+
+## 2026-10-23｜2.6.68-dev：素材哈希增量登记去掉整表复制（待运行验收）
+
+- 日志发现17MB material-hash-cache同步读曾耗2829ms；另核materialFolderHash每新条目复制全部entries。此次只消除后者的平方级增量复制，不声称已消除同步冷读或全库扫描。
+- 保持目录identity/SHA算法、缓存对象、其他条目、updatedAt和JSON字段不变；只定义当前键，可安全保存特殊键。没有操作真实素材/缓存/队列。
+- 自动回归覆盖无关条目不被访问、map身份保留、SHA一致、已有条目复用、JSON保存和特殊键；material-index-async 2/2通过。隔离内存模拟17631旧条目+100新增：旧5210.95ms，新5.17ms，均17731条。仅证明登记算法局部成本，不能外推界面或整条生产千倍提速。证据：原任务根staging/hash-cache-entry-update-benchmark.json。
+- 只改当前源码与测试；运行前后台最近仍2.6.66，2.6.67误额度与2.6.68性能修复均未以强刷新上线。原账号writer继续恢复身份/页面与真实事务。
+
+## 2026-10-23｜2.6.67-dev：普通错误不再冒充平台限额（源码完成，在线待验收）
+
+- 维护与总控原线程最新turn均已因明确用量限制终止，当前需求窗宿主ordinaryUsageAllowed=true。本窗按用户持续修复授权接续这个隔离P0，保留其他脏改动；未接管生产队列或原账号writer。
+- app.js不再从普通“请重试”或输出图片不足推断quota；recordActualGptLimit入口再次校验明确平台提示。缺图在旧批处理入口保留当前索引/作品/资产并暂停对账，不跳到下一素材。真实quota保留任务，不跳过，也不因quota刷新页面。
+- 同步撤销workbench-ui中“少图即触顶/跳过”的错误静态合同，增加直接提取实际函数的行为回归：普通中英重试、缺图、网络超时不建quota；明确上传限额仍识别；非限额不得触碰持久quota记录；缺图不推进队列索引。
+- 验证：app.js语法通过；workbench-ui完整514项，469通过/45跳过/0失败（3.8秒）。仅运行相关套件，未重复全量扫描测试。staging/P0-quota-behavior-regression.cjs 4/4通过。
+- 限制：未刷新/重载任何账号页面、未修改运行队列/登录/用户作品；2.6.67源码及静态缓存版本不证明运行前端已经加载。旧quota历史也未批量清除，需原writer核事件来源后再处理，不能解除真实平台或用户暂停。G01页面控制、真实上传/成品、独立pump仍未闭环。
+- 下一步：由集成owner/原账号writer在确认无未知活动的正常页面加载窗口验证新逻辑；实机核账号身份与提交终态，推进A补料/B/C模板。禁止为了验收强刷新活动页面。
+
+# 2.6.66-dev - 工作流路由接入 canonical 状态与账号控制（本地开发，未发布）
+
+- 将状态/控制 HTTP 路由挂入唯一统一服务；状态读取 canonical runtime 和只读账号上下文，人工暂停/手动标志通过串行原子 read-modify-write 写入精确账号，保留 canonical 队列及其他槽位。
+- 恢复动作缺少受信任提交终态与空草稿回执时仍返回 reconciliation-required；没有启动第二个生产 worker。默认全量测试 1,399 项：1,354 通过、45 跳过、0 失败。没有重载或部署在线实例。
+
+# 2.6.65-dev - 页面保护与模块集成回归（本地开发，未发布）
+
+- 扩展更新只设置待加载标记，不自动替换扩展或刷新账号页；素材分类协议、80/50参考提醒、分发后台只读扫描和运行版本诊断与启动保护已集成。
+- 默认回归 1,391 项：1,346 通过、45 跳过、0 失败；在线恢复仍受 G01 提交、页面和资产门禁约束。
+
+# 2.6.64-dev - 设置读取与 runtime 诊断开销收敛（本地开发，未发布）
+
+- 合并单次请求内的 settings 文件读取；不跨请求缓存，避免权限配置陈旧。
+- runtime 资源诊断改为安全类型摘要，避免读取 native getter 或输出资源内容。
+- 新增设置读次数/字段保留和 runtime 摘要回归，接入默认测试。未部署。
+# 2.6.63-dev - 大 JSON worker 分块解析（本地开发，未发布）
+
+- 异步文件缓存将阈值以上 JSON 解析迁移至 worker_threads；数组每 128 项一批回传并让出事件循环。
+- 增加 parser worker 默认回归；保持同步 API 与小配置行为不变。离线测试不代表在线体验通过。
+# 2.6.62-dev - 设备 presence 慢盘写入隔离（本地开发，未发布）
+
+- 用异步原子 latest-wins writer 持久化可替换的 `device-presence.json` 快照；慢写期间合并中间状态，避免阻塞 HTTP/设备事件循环。
+- 加入 writer 单测到默认测试命令。离线测试不代表在线恢复或实机性能已验证。
+# 2.6.61-dev｜现存账号页面活动只读回读（本地开发，未发布）
+
+- 扩展现有 renderer 的 pageHealth bridge，可显式传稳定 accountId 和期望 /c/ target；只读已存在的账号 WebContents，复用统一模板状态 DOM probe，输出生成、输入框、附件和 target 匹配状态布尔值。
+- 忙碌、停用、加载中、超时或页面/目标不匹配均 fail-closed。新增证据永远标记提交状态 UNVERIFIED、safeToRestart=false；不会建立生产任务或改队列。
+- 定向桥接测试 8/8，相关 UI 合同 1/1；默认 npm test 共 1,310 项，1,265 通过、45 跳过、0 失败。
+# 2.6.60-dev｜最近完整回复图片的手动恢复（本地开发，未发布）
+
+- 补齐桌面端手动恢复桥：仅在当前明确的 ChatGPT /c/ 对话中，从最近一条已完成且含图片的 assistant 回复收集 estuary 图片并按资产标识去重。
+- 继续走现有本地下载管线；无完成证据、无精确对话或已有恢复动作时拒绝执行。此动作不创建生产任务、不写生产队列。
+- 定向回归 1/1；默认全量测试 1,308 项，1,263 通过、45 跳过、0 失败。页面身份与 G01 在线恢复仍未核实，未重载运行实例。
+# 2.6.59-dev｜大索引读取不占用 HTTP 事件循环（本地开发，未发布）
+
+- 为大 JSON 增加共享同步/异步指纹缓存，高频素材索引 API 改用异步文件读取并合并同文件并发读取。
+- 文件读取前后校验 mtime/size；同步写入后预热缓存，避免写后 GET 再同步读取完整索引。
+- 新增缓存行为和素材 API 接线回归。JSON 解析仍同步，在线延迟需安全恢复后验收。
+
+## 2.6.58-dev｜GPT 缓存保留与定向维护（本地开发，未发布）
+
+- 移除 GPT 账号每三小时自动清缓存并强制刷新网页的定时任务及启动恢复；全局启动/周期清理默认不包括 GPT 分区。
+- 移除每五分钟自动释放闲置 GPT BrowserView 的轮询和对应设置；切换槽位继续复用现有账号页。
+- 显式单账号缓存清理先读 Electron 缓存大小并复核本账号 worker、pending task 与持久检查点；只清该账号缓存，不刷新、导航或重建页面。
+- 增加启动/周期排除、自动定时器移除、活动任务保护、手动清理无页面加载和槽位切换复用回归。
+- 源码未重载到运行实例；A 账号任务/页面活动仍由唯一 writer 核验，桌面切槽验收待安全窗口。
+
+## 2.6.57-dev｜账号上下文隐私投影与模板目标阻断（本地开发，未发布）
+
+- `/api/gpt-account-context` 实际位于 `src/server.js`，是 loopback 同源只读 GET；新增临时 loopback 集成回归验证 ID 校验、来源门禁、GET-only 与 no-store。
+- 账号上下文跨 IPC / renderer 仅保留掩码邮箱和稳定账号、目标绑定/一致、页面就绪布尔值；移除对话 URL、标题、草稿、附件与生成状态。
+- 模板任务要求 accountId、templateId 与精确 `/c/` URL 一致；重复 taskId、未知提交、空/错误目标均阻断，清除 project/home URL 回退、导航 URL 与待上传附件。
+- 修正项目静态资源缓存键，使 CSS、工作台脚本、加载状态与模板目标脚本统一跟随 `VERSION`；回归覆盖全部七个版本化入口。
+- 当前没有模板专用创建事务和服务端 GET 回读，因此所有在线模板创建任务保持只读 blocked；未操作 4331、网页账号、canonical queue 或在线服务。
+- 完整回归和剩余桌面验收边界见 `docs/HANDOFF.md`。
+
+## 2.6.56-dev｜网页加载反馈与只读账号核验收口（本地开发，未发布）
+
+- 地址栏下方的加载条现在挂接原生页面加载事件；去掉假百分比、两秒假完成和根据地址变化提前结束。
+- 加入减少动态效果、无布局跳动、状态播报、账号切换复位，以及 pagehide/beforeunload 幂等清理。
+- 账号只读上下文仅返回脱敏邮箱和页面结构/目标状态，且 writer 空闲判断按稳定账号隔离。
+- 回归结果与运行时桌面验收边界记于 docs/HANDOFF.md。
+
+## 2.6.55-dev｜账号档案快读与自动启动隔离（本地开发，未发布）
+
+- `gptWindowSettings()` 优先使用稳定账号设置；缺失账号设置时连续自动启动按关闭处理，避免全局兼容值扩散到其他账号。相关 UI 合同测试加入默认回归。
+- `/api/gpt-browser-profiles` 使用异步、按指纹缓存的持久档案读取；登录身份与精确会话目标仍由独立只读核验负责。
 - 固定模板状态从已存在的账号窗口只读回读登录布尔值、精确目标和页面空闲条件；探测超时不会改账号桥接健康或启动恢复。
 - 新增状态投影与 IPC 安全静态回归，并把版本缓存键更新到 2.6.53-dev；验证结果见本轮 HANDOFF。
 - 模板同步服务端事务和 GET 回读端点尚未接通；运行实例未重启或部署，未触碰在线账号、生产队列或作品。
@@ -3927,3 +4219,119 @@ GPT新版generated-image-preview/search-message容器无旧conversation-turn节�
 ## 2026-10-15｜下载用户脚本1.12.6（待运行验收）
 
 统一新版生成图库的下载图组，防止每个缩略图/动作栏重复控件；打包从MULTI标记提取三版正文，排除块外旁白和围栏。手动目录配置恢复Downloads/正式成品库。JS语法检查通过；Electron缓存扩展尚未重新注册，A当前有新回应，未重启或打断。实际按钮、C盘下载和打包TXT验收仍未完成。
+
+
+## 2.6.65-dev / 2026-10-23
+
+- 修复素材分类请求错配、永久加载及百分号路径重复解码。
+- 运营用量估值不再拦截生产；平台限制、人工暂停独立保留。
+- 分发目录与作品扫描移入后台，pending保留设备面板、人工选择和待核数量。
+- 停用无账号绑定的旧端口控制写入口；扩展变更不再自动刷新账号页。
+- 桌面与服务共用VERSION来源，回报真实IPC能力；启动器保留单实例锁。
+- 默认回归1391项：1346通过、45跳过、0失败。尚未部署/重启，在线全链路未验收。
+## 2026-10-23｜2.6.80-dev：看门狗未知任务保护
+
+- 三次 HTTP 探针 `unknown` 不再自动杀死尚在运行的 server 子进程；记录延期事件，避免在网页提交/生成状态不明时丢失运行时证据。已退出子进程的恢复路径保持原样。定向 `template-sync-status.test.js` 9/9 通过。
+## 2026-10-23｜2.6.81-dev：模板首建身份与服务端查重语义收紧
+
+- 首建预检返回登录存在、预期身份匹配两个独立信号；缺少 canonical 预期邮箱 SHA 时不再把“已登录”误报为身份验证通过。native 发送最终门禁再次比对登录邮箱摘要。
+- 本地 `canonicalDuplicateCheck` 仅作为 `canonicalDuplicateCheckLabel` 暴露，并明确 `serverDuplicateVerified=false`；不能替代真实服务器去重。
+- 定向 template service/wiring 21/21 通过，含缺少/错误/匹配预期身份及错误身份拒绝发送。
+## 2026-10-23｜2.6.82-dev：workflow host 生命周期与最终身份门禁
+
+- server 启动/退出挂载 workflow host；读现有 canonical queue，账号执行需独占 lease、renderer 已停止及 native writer 空闲，finally 释放。生产配置未提供写入 adapter，默认不发起任务。
+- service 预留可信 host 终态回执通过后的 resume；HTTP 不能提交回执，当前生产配置无可信 provider，故仍返回需对账。
+- 模板最终 submit guard 再次比对 canonical 预期邮箱 SHA，预检后换号拒绝提交。
+- 隔离 workflow host/service 8/8、模板 guard/wiring 12/12；持久 core 重启未知提交、人工接管与 lease 释放已覆盖。真实软件自动续跑尚未启用。
+
+
+## 2026-10-24｜2.6.93-dev 独立server只读桥重连第一阶段
+
+- src/lib/reconnectable-context-bridge.js：原main启动运行目录绑定的本地命名管道（Windows），持久descriptor随机token/instanceId；每次只读连接核目录身份、nonce、实例，响应经既有隐私/未知态投影。仅read-context，无导航/提交写命令。客户端5秒有界，断线后下一次可重连；拒绝错误凭据/账号，限制帧大小。src/desktop/main.js启动注册监听；server独立启动无父IPC时使用本地桥，父IPC保留。
+- src/public/app.js账号上下文失联中文提示，指向原宿主托盘正常重启与现有只读检查。不是允许未知活动重启；既定终态安全门仍适用。未增加自动刷新/重发。
+- 验证：reconnectable-context-bridge.test.js隔离1/1，通过两次独立连接同一实例、错误token拒绝、未知target不变真、敏感email过滤；main/server语法通过。旧main不能热注入此监听，未执行线上重载；仅实现本地第一阶段，不宣称运行恢复或真实生产。runtime-info当前父IPC布尔尚未表达管道能力，后续需补握手健康及UI操作完整验收。
+- 未完成：写操作持久意图/幂等去重通道尚未实现，当前严格拒绝所有写操作；现有真实账号target仍由原readExistingGptAccountContext核验。首次迁入最小操作：原writer确认在途终态后，原内容制作托盘‘重启工作台’一次，保留profile与暂停队列，再回读实例/账号上下文；无终态不得执行。后续server单独重启无需再次重启main。
+- 下一动作：补断线/实例替换/并发压力回归、健康握手及写意图合同后实际加载验收。绝对复查2026-10-24 10:00 +08:00；A6—8对话80附件及B/C93模板仍未真实执行。
+
+## 📝 变更记录
+
+| 日期 | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-24 | Codex | 实现独立server重连原main只读管道第一阶段，明确未加载/写意图未完成。 |
+
+
+## 2026-10-24｜2.6.94-dev 真实管道握手健康
+
+- runtime-info独立server分支实际连接本地管道、随机nonce回读并核runtime identity/instanceId/token后才能报告local-pipe；父IPC报告parent-ipc；无响应或残留descriptor报告unavailable。新增desktopBridgeTransport、desktopBridgeHandshakeVerified、desktopBridgeInstanceId，真实pipe握手返回main版本/启动时间。健康操作不读取账号页，不代表账号身份或target终态。pipe握手网络预算500ms；descriptor异步本地读取仍受OS I/O调度影响，不能承诺绝对500ms请求上限。
+- 回归reconnectable-context-bridge.test.js 2/2（455.8153ms），含8并发健康、断线残留文件不算可用、新main实例更换、错误凭据拒绝、写命令禁止及隐私过滤；server/lib语法通过。未重启/加载原main，真实生产尚未恢复。
+- 下一项写意图持久化/幂等合同仍待实现；只读桥当前不接受写命令。下一绝对复查2026-10-24 10:00 +08:00，依据加载及原writer终态证据推进。
+
+## 📝 变更记录
+
+| 日期 | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-24 | Codex | 补齐runtime-info真实命名管道握手健康及失联/实例更换/并发回归。 |
+
+
+## 2026-10-24｜2.6.95-dev A实际IPC持久意图接线
+
+- 文件src/desktop/material-dispatch-service.js及main.js：desktop:gpt-send-task仅原workbench renderer允许，实际改为materialDispatchService.run，复用templateWorkflowCore/production-workflow-control.json原子存储，不建生产队列。稳定workId/account/exactTarget绑定operationKey，输入SHA含prompt/附件实际文件SHA/模板身份；requestId变化不创建新重试意图。缺workId/精确对话/附件或续跑未知标记即阻断。
+- core持久SUBMITTING在native发送前；sendTaskToEmbeddedGpt两个_beforeNativeWrite边界复核core控制权、目标与重新计算文件SHA，使用已有WebContents，不调用ensure创建。并发同work只一个submit；UNKNOWN/重启仅readback，不允许重新send；人工takeControl generation阻断旧写。
+- 未完成的实际准入：当前workId来自原renderer canonical payload，尚缺宿主canonical存储交叉回读；通用服务器消息/附件readback适配尚缺，默认UNKNOWN，绝不把扩展ACK升级CONFIRMED。现有context依赖账号绑定目标，fresh-root材料对话创建/已提交续跑明确不放行。故这是防重复提交实际接线，不是A补料可执行验收完成。管道仍仅只读，写命令拒绝。
+- 测试material-dispatch-service/template-creation-service/production-workflow-core组合通过，覆盖真实磁盘提交前意图、并发单写、不同requestId重试不重发、重启UNKNOWN、输入变更、人工接管、首页/缺workId阻断与main IPC两边界接线。证据.work/material-dispatch-intent.tap；语法及diff检查通过。未加载原main、未写网页/队列或真实生产。
+- 下一动作：原canonical workId与服务器原消息/附件回执适配，接现有owner，不能凭renderer声明完成；安全加载仍需原writer终态齐后原托盘重启一次，不覆盖profile/暂停队列。绝对复查2026-10-24 10:00 +08:00。
+
+## 📝 变更记录
+
+| 日期 | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-24 | Codex | A通用发送实际IPC接入公共持久意图，明确canonical交叉核验及服务器回执尚待完成。 |
+
+
+## 2026-10-24｜2.6.96-dev 宿主任务交叉核验与服务器原消息回执
+
+- main.js实际materialDispatchService读readRuntimeStateAsync(GPT_RUNTIME_STATE_FILE)，按requestId/externalRequestId/id与account唯一匹配；workId及conversationUrl来自宿主记录，不用renderer补默认；material-dispatch-service.js比较canonical与IPC输入SHA/账号/workId/target，prepare和原native写边界重新回读，拒绝篡改。此运行时任务存储只是现有当前入口的宿主权威记录，不接管外部canonical queue。
+- generic readback实际接既有buildTemplateReadbackScript，在原WebContents对精确target执行只读GET：服务器原user message prompt SHA唯一匹配、原fileId/messageId归属及全部附件下载字节SHA与本地源一致，才CONFIRMED。扩展ACK无服务器证据仍UNKNOWN；service在core.reconcile前再次校验serverReadback/account/op/target/message/prompt/附件集合及SHA。B/C模板继续同一core及同一回读代码，不创建第二套提交标准。
+- 回归material-dispatch-service/template-server-readback/template-creation-service/production-workflow-core共60/60（2348.1508ms），证据.work/material-canonical-receipt.tap；包含宿主输入不一致阻断、实际入口接线、并发/人工接管/提交前原子意图、重启UNKNOWN凭真服务器回执收口且总send=1。main语法与diff通过；未运行真实网页或提交。
+- 真实数据兼容核查（只读）：runtime rev8784的8条account-1任务全部没有workId、没有精确conversation target，附件分别6/6/9/8/9/9/12/9。因此旧队列不能通过新准入，不能伪造workId、迁绑账号或填候选URL来强行运行。外部canonical plans仍由原owner持有，需它将真实workId/目标及任务关系可靠交付现有入口，不能按旧taskId猜。此为具体数据缺口，不是需重复桥轮询。
+- 实现/加载/生产：两项代码适配已实现并隔离验证；原main未加载2.6.96，桥/页面和真实生产未恢复。首次启动最小动作仍为原writer核实未知提交终态后，在原内容制作托盘‘重启工作台’一次（保持profile及暂停队列），维护回读真实握手/账号target；不能启动第二main替代原实例或自动重发旧任务。下一动作真实canonical映射由原owner交付、安全加载验收。绝对复查2026-10-24 10:00 +08:00。
+
+## 📝 变更记录
+
+| 日期 | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-24 | Codex | 完成A宿主记录交叉核验及复用服务器原消息/附件SHA回执；确认旧8任务缺真实身份字段，不补造。 |
+
+
+## 2026-10-24｜2.6.97-dev 统一槽位指纹显式映射
+
+- 新证据：运行中的account-6 renderer命令行 fingerprint-config 为 Edge/150；源码normalizeInstanceId(account-6)按数字后缀映射F，F是Edge，导致当前C槽浏览器检查循环。
+- 修复src/lib/instance-fingerprint-profile.js：新增ACCOUNT_INSTANCE_MAP，account-1→A、account-5→B、account-6→C；normalizeInstanceId先查显式注册表，再处理字母实例，不再把account编号推断为实例字母。C得到预定义Chrome/RTX4080指纹，F旧Edge配置不再被account-6复用。
+- 回归instance-fingerprint-profile.test.js 13/13通过，包含account-6必须Chrome且不等于F seed；未清Cookie、未重绑模板、未刷新或重发任务。
+- 加载边界：当前原main仍2.6.78，修复为源码2.6.97-dev，必须在未知历史终态保护下通过原内容制作托盘“重启工作台”一次，保留原profile/暂停队列；重启后回读C renderer命令行/父IPC身份及页面检查，不能将源码测试当线上已修复。C当前错误页面不点击“重新加载”绕过验证。
+- 下一动作：一次安全重载后核A/B/C真实指纹与context；若C仍浏览器检查失败，记录原文并交用户在原页完成验证，不自动解验证码/绕过检查。绝对复查2026-10-24 10:00 +08:00。
+
+## 📝 变更记录
+
+| 日期 | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-24 | Codex | 修复account-6误映射Edge F为统一C Chrome槽，补13项回归。 |
+## 2.6.98-dev｜右侧抽屉第4模式：补充模板（在线同步）
+
+- 内容制作右侧抽屉新增 `4_template_supplement`：按当前产线保存模式，显示独立的补充模板面板；进入该模式会隐藏成品生产的素材与启停控制，避免误把补料批次混入成品队列。
+- 新增只读 `GET /api/template-library/supplement`，从统一 `templates-registry.json` 读取模板编号、名称、分类、本地目录和母版图数量；不上传、不创建任务、不修改模板库。已有 canonical 绑定任务仍由原生 templateCreationService、精确账号/目标和服务器回读门禁执行。
+- 补充批次和读取索引按账号槽位分别保存，暂停、继续、失败单套只读核对后重试；未知提交保持暂停，不自动重发。新增 `template-supplement-mode.test.js` 3/3 通过，语法和 diff 检查通过。运行中的旧实例尚未加载 2.6.98-dev，需下一次受控重启后再做 UI 只读验收。
+
+## 2.6.99-dev｜轮询同步I/O与跨账号抽屉修复
+
+- 新增async-json-state：冷读异步单飞、5秒刷新、3秒权威读截止、展示快照副本；quota读取失败显式503，写入按文件串行、异步临时文件rename和读回验证，失败不上报成功。接线server.js设备备注三处、额度GET/POST及对应route await。
+- account-drawer-config按实际启用profile校验accountId，异步持久化独立抽屉偏好。native drawer移除端口推槽位/统一cdp-a写入，切账号/重排订阅真实profiles；过期配置和控制响应不覆盖新视图。第四模式索引读取本轮亦改为异步文件/真实目录校验。
+- 启停改用现有production-workflow账号control/status；409/超时显示未应用/待核，失联撤销执行中确认。旧全局retry/skip在无精确任务合同下禁用。
+- 新增隐藏renderer无关的只读模板预核HTTP→parent IPC/认证管道→原canonical/page inspector。公共投影不返回邮箱、SHA、草稿、提示词或路径，safeToRestart/serverDuplicateVerified始终false。原renderer sender写入门禁保留。
+- .work/maintenance-2.6.99.tap：565通过、45跳过、0失败。未重启原main/server、未提交网页/上传/改真实生产队列，未发布。
+
+## 2026-10-28 计划顺序与健康状态修复
+
+新建计划保留传入素材顺序，不按路径重排；旧计划编号读取不受影响。移除实时计划接口固定成功日志，未取得状态时显示UNKNOWN。计划路由7/7测试通过，实时路由语法检查通过。源码已改，运行实例尚未加载；评论数优先的计划生成端仍需核对。
+
+

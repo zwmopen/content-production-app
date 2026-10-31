@@ -17,7 +17,7 @@ if (process.env.TB_REMOTE_DEBUGGING_PORT) {
 const IS_DESKTOP_HIDDEN = process.env.TB_DESKTOP_HIDDEN === "1" || process.argv.includes("--hidden") || process.argv.includes("--background");
 
 const { createPreviewServer, PREVIEW_PORT } = require("../lib/cdp-live-preview");
-const previewServer = createPreviewServer();
+const previewServer = createPreviewServer({ captureFrame: captureGptFrameForPreview, wake: wakeGptPreviewWindow });
 previewServer.on("error", error => { if (error.code !== "EADDRINUSE") console.warn("CDP preview:", error.message); });
 previewServer.listen(PREVIEW_PORT, "127.0.0.1");
 
@@ -26,7 +26,14 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
-const { version: APP_VERSION } = require("../package.json");
+const { version: PACKAGE_VERSION } = require("../package.json");
+const APP_VERSION = (() => {
+  try {
+    const version = fs.readFileSync(path.resolve(__dirname, '..', '..', 'VERSION'), 'utf8').trim();
+    return /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(version) ? version : PACKAGE_VERSION;
+  } catch { return PACKAGE_VERSION; }
+})();
+const DESKTOP_STARTED_AT = new Date().toISOString();
 const {
   classifyWorkbenchPortProbe,
   formatPortInUseMessage
@@ -34,9 +41,25 @@ const {
 const {
   normalizeChatConversationUrl,
   resolveGptStartupUrl,
-  isGptPageProductionReady
+  isGptPageProductionReady,
+  canFinishGptNavigation
 } = require("../lib/gpt-session-guard");
 const { projectTemplateSyncStatus } = require("../lib/template-sync-status");
+const { createWorkflowStore, createWorkflowCore } = require("../lib/production-workflow-core");
+const { createTemplateCreationService } = require("./template-creation-service");
+const { loadCanonicalTemplateTask, readTrustedTemplateLibrary } = require("./template-canonical-task");
+const { buildTemplateReadbackScript, buildTemplateRenameScript } = require("./template-server-readback");
+const { persistTemplateBinding } = require("./template-binding-store");
+const { createTemplateNativeSubmitGuard, buildTemplateSubmitBoundaryScript, ROOT_URL: TEMPLATE_ROOT_URL } = require("./template-native-submit-guard");
+const { createTemplateNativeFinalizationGuard } = require("./template-native-finalization-guard");
+const {
+  ACCOUNT_ID_PATTERN,
+  REQUEST_TYPE: GPT_ACCOUNT_CONTEXT_REQUEST_TYPE,
+  RESPONSE_TYPE: GPT_ACCOUNT_CONTEXT_RESPONSE_TYPE,
+  maskEmailForContext,
+  isAccountContextWriterIdle
+} = require("../lib/gpt-browser-context-ipc");
+const { projectGptPageActivityEvidence } = require("../lib/gpt-page-activity-evidence");
 const {
   planGptPageRecovery,
   isGptPageDocumentStable,
@@ -82,6 +105,7 @@ const {
 } = require("../lib/wechat-web-automation");
 const { resolveElectronProxy } = require("../lib/electron-network-proxy");
 const { getFingerprintProfile } = require("../lib/instance-fingerprint-profile");
+const { launchSupportedBrowser } = require("../lib/supported-browser-launcher");
 
 // Some Windows machines repeatedly lose the Electron GPU subprocess during
 // startup (exit code -1073741515), which otherwise terminates the whole app.
@@ -128,6 +152,16 @@ const APP_PORT = String(process.env.PORT || DEFAULT_INSTANCE_PORT).trim() || DEF
 const APP_URL = `http://127.0.0.1:${APP_PORT}/`;
 const GPT_PRE_SUBMIT_DISPATCH_GRACE_MS = 180_000;
 const RUNTIME_ROOT = process.env.TEAMBUILDING_DASHBOARD_RUNTIME || DEFAULT_INSTANCE_RUNTIME;
+// Share the control-only sidecar with server.js. The store uses an OS-visible
+// lock directory, so main and the server child serialize control transactions.
+const templateWorkflowStore = createWorkflowStore(path.join(RUNTIME_ROOT, "production-workflow-control.json"));
+const templateWorkflowCore = createWorkflowCore({ store: templateWorkflowStore });
+const templateBatchWriters = new Map();
+const gptDispatchClaims = new Map();
+let templateBatchHost = null;
+let templateNativeSubmitGuard = null;
+let templateNativeFinalizationGuard = null;
+let templateCreationService = null;
 const INSTANCE_TITLES = {
   "A": "🎬 内容制作 · 多账号生产中枢 (端口 4331)",
   "B": "🎬 内容制作 · 多账号生产中枢 (端口 4332)",
@@ -192,6 +226,7 @@ const GPT_INITIALIZATION_TIMEOUT_MS = 10_000;
 // storm that makes the whole workbench feel frozen. Control commands are
 // never throttled by this health state.
 const gptJavaScriptReadHealth = new WeakMap();
+const gptReadOnlyChannelTimeouts = new WeakMap();
 let assistantOverlayState = {
   message: "",
   bubbleVisible: true,
@@ -803,7 +838,9 @@ function gptPartitionIds() {
 }
 
 async function clearReproducibleWebCaches(reason = "manual", options = {}) {
-  const includeGpt = options.includeGpt !== false;
+  // GPT account partitions keep long-lived image and HTTP assets. Generic
+  // startup/scheduled cleanup must opt in explicitly before touching them.
+  const includeGpt = options.includeGpt === true;
   const partitions = [
     ...(includeGpt
       ? gptPartitionIds().map((id) => session.fromPartition(`${GPT_PARTITION_PREFIX}-${id}`))
@@ -1166,69 +1203,20 @@ function abortPendingGptTask(account, reason = "GPT 网页已重新加载，当�
 }
 
 function reloadAllGptViewsForExtensionChange() {
-  if (activeGptTaskAccounts.size > 0) {
-    extensionReloadPending = true;
+  // A file watcher cannot prove remote generation/upload state or draft safety.
+  // Replacing the extension may also destroy its live task context before the
+  // old native activity set notices. Keep every existing page/session intact;
+  // the normal controlled restart/open path loads the updated bundle later.
+  const alreadyPending = extensionReloadPending;
+  extensionReloadPending = true;
+  if (!alreadyPending) {
     appendDesktopLog(
       "gpt-extension-auto-reload-deferred",
-      `activeAccounts=${Array.from(activeGptTaskAccounts).join(",")}`
+      "reason=update-pending-safe-load pages-preserved=true"
     );
-    return Promise.resolve(false);
   }
-  if (extensionReloadInFlight) return extensionReloadInFlight;
-  extensionReloadInFlight = (async () => {
-    extensionReloadPending = false;
-    const extensionPath = resolveGptExtensionPath();
-    for (const [id, account] of gptAccounts) {
-      if (account.userRecoveryHold) {
-        appendDesktopLog("gpt-extension-auto-reload-deferred", `account=${id} reason=user-hold`);
-        continue;
-      }
-      const extensionId = account.extensionInfo?.id;
-      if (!extensionId || !account.session?.extensions) continue;
-      try {
-        // Electron keeps a loaded extension in the session registry. Reloading
-        // the WebContents alone therefore leaves the old bundle active.
-        await account.session.extensions.removeExtension(extensionId);
-        account.extensionInfo = await account.session.extensions.loadExtension(extensionPath, { allowFileAccess: true });
-        account.extensionPath = extensionPath;
-        account.extensionRuntimeReady = await waitForExtensionReady(account.session, account.extensionInfo.id);
-        account.extensionError = "";
-        appendDesktopLog(
-          "gpt-extension-registered",
-          `account=${id} ${account.extensionInfo.name} ${account.extensionInfo.version}`
-        );
-      } catch (error) {
-        account.extensionRuntimeReady = false;
-        account.extensionError = error.message;
-        appendDesktopLog("gpt-extension-auto-reload-failed", `account=${id} ${error.stack || error.message}`);
-        continue;
-      }
-      if (!account.view || account.view.webContents.isDestroyed()) continue;
-      if (!account.view.webContents.getURL?.().startsWith("https://")) continue;
-      // The reload can race with a task that starts after the extension
-      // registry swap but before this async loop reaches webContents.reload().
-      // Re-check ownership at the final navigation boundary; replacing the
-      // extension bundle is harmless, but navigating an active GPT page aborts
-      // its bridge task and can leave a completed package without its source
-      // material archive step.
-      if (activeGptTaskAccounts.has(id) || account.pendingGptTask) {
-        extensionReloadPending = true;
-        appendDesktopLog("gpt-extension-auto-reload-deferred", `account=${id} reason=task-started-during-reload`);
-        continue;
-      }
-      appendDesktopLog("gpt-extension-auto-reload", `account=${id} reason=extension-file-changed`);
-      account.view.webContents.reload();
-    }
-    return true;
-  })().catch((error) => {
-    appendDesktopLog("gpt-extension-auto-reload-failed", error.stack || error.message);
-    return false;
-  }).finally(() => {
-    extensionReloadInFlight = null;
-  });
-  return extensionReloadInFlight;
+  return Promise.resolve(false);
 }
-
 function watchExtensionForChanges() {
   if (extensionWatcher) return;
   const extensionPath = resolveGptExtensionPath();
@@ -1907,7 +1895,7 @@ function noteGptBridgeSuccess(account, channel) {
 
 let gptCdpRequestSequence = 0;
 
-async function executeGptJavaScriptViaCdp(contents, script, timeoutMs = 4000) {
+async function executeGptJavaScriptViaCdp(contents, script, timeoutMs = 4000, options = {}) {
   // Do not resolve a target by URL: all account windows can legitimately be
   // on https://chatgpt.com/ at the same time. Electron's WebContents debugger
   // is the only local channel that preserves the exact embedded window.
@@ -1915,8 +1903,12 @@ async function executeGptJavaScriptViaCdp(contents, script, timeoutMs = 4000) {
     return { supported: false, value: undefined };
   }
   let attachedHere = false;
+  let evaluationTimer;
   const limit = Math.max(500, Number(timeoutMs || 0));
   try {
+    if (options.readOnly === true && contents.debugger.isAttached()) {
+      return { supported: false, value: undefined, error: "DEBUGGER_IN_USE" };
+    }
     if (!contents.debugger.isAttached()) {
       contents.debugger.attach("1.3");
       attachedHere = true;
@@ -1926,9 +1918,9 @@ async function executeGptJavaScriptViaCdp(contents, script, timeoutMs = 4000) {
         expression: String(script || ""),
         awaitPromise: true,
         returnByValue: true,
-        userGesture: true
+        userGesture: options.readOnly !== true
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("GPT debugger evaluate timeout")), limit))
+      new Promise((_, reject) => { evaluationTimer = setTimeout(() => reject(new Error("GPT debugger evaluate timeout")), limit); })
     ]);
     if (result?.exceptionDetails) {
       throw new Error(result.exceptionDetails.text || "GPT debugger script exception");
@@ -1940,6 +1932,7 @@ async function executeGptJavaScriptViaCdp(contents, script, timeoutMs = 4000) {
     // account window and send recovery actions to the wrong session.
     return { supported: false, value: undefined, error: error?.message || String(error) };
   } finally {
+    if (evaluationTimer) clearTimeout(evaluationTimer);
     if (attachedHere && contents.debugger.isAttached()) {
       try { contents.debugger.detach(); } catch {}
     }
@@ -1952,6 +1945,17 @@ function executeGptJavaScriptBounded(contents, script, timeoutMs = 4000, fallbac
   const trackReadHealth = options.trackReadHealth !== false && channel !== "control";
   const reportBridgeHealth = options.reportBridgeHealth !== false;
   const account = gptAccountForWebContents(contents);
+  const isolatedReadFallback = options.allowReadOnlyCdpFallback === true
+    && channel === "account-context-readonly" && !trackReadHealth && !reportBridgeHealth;
+  const readonlyTimeouts = isolatedReadFallback
+    ? (gptReadOnlyChannelTimeouts.get(contents) || new Set()) : null;
+  if (readonlyTimeouts) gptReadOnlyChannelTimeouts.set(contents, readonlyTimeouts);
+  const originalReadUrl = isolatedReadFallback ? safeGetWebContentsUrl(contents, "") : "";
+  const readStillAllowed = () => !isolatedReadFallback || Boolean(account && originalReadUrl
+    && !contents.isDestroyed() && gptAccountForWebContents(contents) === account
+    && safeGetWebContentsUrl(contents, "") === originalReadUrl
+    && isAccountContextWriterIdle(account, account.id, productionTaskAccounts));
+  if (!readStillAllowed()) return Promise.resolve(fallback);
   const now = Date.now();
   const healthByChannel = !trackReadHealth
     ? null
@@ -2003,6 +2007,10 @@ function executeGptJavaScriptBounded(contents, script, timeoutMs = 4000, fallbac
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (readonlyTimeouts) {
+        if (timedOut) readonlyTimeouts.add(channel);
+        else readonlyTimeouts.delete(channel);
+      }
       if (readHealth) {
         if (timedOut) {
           readHealth.consecutiveTimeouts += 1;
@@ -2048,20 +2056,23 @@ function executeGptJavaScriptBounded(contents, script, timeoutMs = 4000, fallbac
         // secondary probe after this exact read channel has timed out before;
         // trying a known-slow debugger first on every probe consumed most of
         // the 3s readiness budget and created false bridge failures.
-        if (readHealth && readHealth.consecutiveTimeouts > 0) {
+        if (!readStillAllowed()) return fallback;
+        if ((readHealth && readHealth.consecutiveTimeouts > 0) || readonlyTimeouts?.has(channel)) {
           const cdpBudget = Math.min(1500, Math.max(500, Math.floor(limit * 0.25)));
-          const cdpResult = await executeGptJavaScriptViaCdp(contents, script, cdpBudget);
+          const cdpResult = await executeGptJavaScriptViaCdp(contents, script, cdpBudget, { readOnly: isolatedReadFallback });
+          if (!readStillAllowed() || settled) return fallback;
           if (cdpResult.supported) return cdpResult.value;
           if (cdpResult.error) {
             appendDesktopLog("gpt-cdp-fallback", `label=${label} reason=${String(cdpResult.error).slice(0, 160)}`);
           }
         }
-        return contents.executeJavaScript(script, true);
+        if (!readStillAllowed() || settled) return fallback;
+        return contents.executeJavaScript(script, !isolatedReadFallback);
       })
       .then((value) => {
         if (reportBridgeHealth) noteGptBridgeSuccess(account, channel);
         releaseChannel();
-        finish(value);
+        finish(readStillAllowed() ? value : fallback);
       })
       .catch(() => {
         releaseChannel();
@@ -2203,11 +2214,28 @@ function gptTemplateSyncAuthStatusScript() {
     try {
       const response = await fetch("/api/auth/session", { credentials: "include", cache: "no-store" });
       const payload = await response.json();
-      return { authChecked: response.ok === true, authLoggedIn: response.ok === true && Boolean(payload && payload.user) };
+      return { authChecked: response.ok === true, authLoggedIn: response.ok === true && Boolean(payload && payload.user),
+        authEmail: String(payload?.user?.email || "") };
     } catch (_) {
       return { authChecked: false, authLoggedIn: false };
     }
   })()`;
+}
+
+function gptAccountContextPageScript() {
+  return "(() => {\n"
+    + GPT_PAGE_STRUCTURAL_STATEMENTS
+    + "\n    const conversationMatch = pathname.match(/^\\/(?:g\\/[^/]+\\/)?c\\/([^/]+)/i);\n"
+    + "    const conversationId = chatConversation && conversationMatch ? String(conversationMatch[1] || \"\") : \"\";\n"
+    + "    const composerElement = document.querySelector('#prompt-textarea, textarea[data-id=\"root\"], [contenteditable=\"true\"]');\n"
+    + "    return {\n"
+    + "      targetUrl: conversationId && parsedUrl ? parsedUrl.origin + pathname : \"\",\n"
+    + "      extensionReady,\n"
+    + "      authenticationRequired,\n"
+    + "      chatConversation,\n"
+    + "      composerReady\n"
+    + "    };\n"
+    + "  })()";
 }
 
 // 诊断用：同一份结构判断 + 额外可观测信息（正文片段 / 侧栏 / host）
@@ -2264,6 +2292,24 @@ function gptSessionAuthScript() {
       };
     }
   })()`;
+}
+
+function gptAccountContextIdentityScript() {
+  const maskEmail = maskEmailForContext.toString();
+  return [
+    "(async () => {",
+    "  try {",
+    "    const response = await fetch('/api/auth/session', { credentials: 'include', cache: 'no-store' });",
+    "    if (!response.ok) return { identityChecked: false, loggedIn: false, emailMasked: '' };",
+    "    const payload = await response.json();",
+    "    const user = payload && payload.user ? payload.user : null;",
+    "    const emailMasked = (" + maskEmail + ")(user ? user.email : '');",
+    "    return { identityChecked: true, loggedIn: Boolean(user), emailMasked };",
+    "  } catch (_) {",
+    "    return { identityChecked: false, loggedIn: false, emailMasked: '' };",
+    "  }",
+    "})()"
+  ].join(String.fromCharCode(10));
 }
 
 async function probeGptSessionAuth(account, timeoutMs = 5000, options = {}) {
@@ -2980,9 +3026,7 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
   // 注意门禁必须在"复用已有窗口"之后 —— 已经在显示中的窗口要照常返回，
   // 否则正在看的槽位会被突然判死。唤醒只需把 disabled 置回 false。
   // 登录态不受影响：分区目录全程不删不动。
-  if (isGptAccountDormant(id)) {
-    throw new Error(`账号 ${id} 处于休眠状态，请先唤醒后再使用`);
-  }
+  // 禁用/休眠账号仍允许初始化 BrowserView 以供用户手动查看与交互
   if (!mainWindow) throw new Error("工作台窗口尚未就绪");
   const account = {
     id,
@@ -3026,63 +3070,32 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
     account.extensionError = error.message;
     appendDesktopLog("gpt-extension-failed", `${id} ${error.stack || error.message}`);
   }
-  // 关键：账号登录状态无损保活与自动还原 (从安全凭证快照原子导入 Cookie Jar，确保账号不掉)
-  try {
-    const backupDir = "D:\\AICode\\运行数据\\江湖有旅人\\内容生产App\\_SAFE_LOGIN_BACKUP_LIVE";
-    const cookieFile = path.join(backupDir, `${id}-full-page-cookies.json`);
-    if (fs.existsSync(cookieFile)) {
-      const existingCookies = await account.session.cookies.get({ domain: "chatgpt.com" });
-      if (existingCookies.length === 0) {
-        const rawCookies = JSON.parse(fs.readFileSync(cookieFile, "utf8"));
-        for (const c of rawCookies) {
-          const url = `https://${c.domain.startsWith(".") ? c.domain.slice(1) : c.domain}${c.path || "/"}`;
-          try {
-            await account.session.cookies.set({
-              url,
-              name: c.name,
-              value: c.value,
-              domain: c.name.startsWith("__Host-") ? undefined : c.domain,
-              path: c.path,
-              secure: c.secure,
-              httpOnly: c.httpOnly,
-              expirationDate: c.expires > 0 ? c.expires : undefined,
-              sameSite: c.sameSite ? (c.sameSite === "None" ? "no_restriction" : c.sameSite.toLowerCase()) : undefined
-            });
-          } catch (_) {}
-        }
-        appendDesktopLog("gpt-cookies-restored", `${id} (${rawCookies.length} cookies)`);
-      }
-    }
-  } catch (err) {
-    appendDesktopLog("gpt-cookies-restore-error", `${id} ${err.message}`);
-  }
-
-  const stealthPreloadPath = path.join(__dirname, "stealth-fingerprint.js");
-  const fingerprintProfile = getFingerprintProfile(id);
+  // GPT authentication must use the browser identity supplied by Electron.
+  // Do not import old cookie snapshots or alter UA/client hints/WebGL during
+  // OAuth: stale session tokens and inconsistent browser signals can trigger
+  // provider risk checks. Fingerprint tooling remains available for the
+  // separate non-authenticated surfaces and read-only diagnostics.
   account.view = new WebContentsView({
     webPreferences: {
       partition: account.partition,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      preload: stealthPreloadPath,
-      additionalArguments: [
-        `--content-instance-id=${id}`,
-        `--fingerprint-config=${encodeURIComponent(JSON.stringify(fingerprintProfile))}`
-      ],
       // Automatic production must continue while the workbench is minimized
       // to the tray. Chromium otherwise heavily throttles or suspends timers
       // in this hidden WebContentsView and the workflow appears stuck after 1.
       backgroundThrottling: false
     }
   });
-  const targetUserAgent = fingerprintProfile?.browser?.userAgent
-    || account.view.webContents.getUserAgent().replace(/Electron\/\S+\s*/g, "").replace(/content-production-app\/\S+\s*/g, "").trim();
-  account.view.webContents.setUserAgent(targetUserAgent);
   account.view.setBackgroundColor(embeddedGptPalette(gptThemeName).main);
   account.view.setBorderRadius(16);
   mainWindow.contentView.addChildView(account.view);
   account.view.setVisible(false);
+  account.view.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace && /^https?:\/\//i.test(String(url || ''))) {
+      account.pageState.navigationError = null;
+    }
+  });
   account.view.webContents.on("did-start-loading", () => {
     // ChatGPT may perform a full-document reload while keeping the same
     // conversation. Do not turn that navigation signal into an immediate
@@ -3101,12 +3114,13 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
       clearTimeout(account.loadRecoveryResetTimer);
       account.loadRecoveryResetTimer = null;
     }
-    Object.assign(account.pageState, { loading: true, domReady: false, finished: false, extensionReady: false, error: "", startedAt: new Date().toISOString(), finishedAt: "" });
+    Object.assign(account.pageState, { loading: true, domReady: false, finished: false, extensionReady: false,
+      error: account.pageState.navigationError ? account.pageState.error : "", startedAt: new Date().toISOString(), finishedAt: "" });
     account.gptEmbeddedInitialized = false;
     if (!account.userRecoveryHold) scheduleStalledGptPageRecovery(account);
     if (account.loadingSafetyTimer) clearTimeout(account.loadingSafetyTimer);
     account.loadingSafetyTimer = setTimeout(() => {
-      if (account.pageState?.loading) {
+      if (account.pageState?.loading && account.view?.webContents?.isLoading?.() === false) {
         account.pageState.loading = false;
         notifyGptLoadingChanged(id, false);
       }
@@ -3115,6 +3129,11 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
     notifyGptLoadingChanged(id, true);
   });
   account.view.webContents.on("dom-ready", () => {
+    if (!canFinishGptNavigation(account.pageState, account.view.webContents.getURL())) {
+      Object.assign(account.pageState, {loading:false, domReady:false, finished:false, extensionReady:false});
+      notifyGptLoadingChanged(id, false, true);
+      return;
+    }
     if (account.loadingSafetyTimer) {
       clearTimeout(account.loadingSafetyTimer);
       account.loadingSafetyTimer = null;
@@ -3125,22 +3144,25 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
       account.loadRecoveryTimer = null;
     }
     scheduleGptPageRecoveryReset(account);
-    // ChatGPT keeps background requests alive after the usable DOM and
-    // composer are ready. Chromium may therefore omit/delay did-finish-load;
-    // the workbench progress indicator must reflect usability, not idle
-    // network silence.
+    // Worker readiness is separate from the navigation indicator: the page
+    // may expose a usable DOM while Chromium still reports document loading.
+    // Only native finish/stop/fail events close the address-bar indicator.
     Object.assign(account.pageState, {
       loading: false,
       domReady: true,
       finished: true,
       finishedAt: new Date().toISOString()
     });
-    notifyGptLoadingChanged(id, false);
     // The bootstrap below owns the first document evaluation. Theme replay
     // waits for it instead of occupying the same execution tail first.
     scheduleEmbeddedGptThemeReplay(account, [1200, 2200]);
   });
   account.view.webContents.on("did-finish-load", async () => {
+    if (!canFinishGptNavigation(account.pageState, account.view.webContents.getURL())) {
+      Object.assign(account.pageState, {loading:false, domReady:false, finished:false, extensionReady:false});
+      notifyGptLoadingChanged(id, false, true);
+      return;
+    }
     if (account.loadRecoveryTimer) {
       clearTimeout(account.loadRecoveryTimer);
       account.loadRecoveryTimer = null;
@@ -3187,14 +3209,15 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
     }
     if (account.pageState?.loading) {
       account.pageState.loading = false;
-      notifyGptLoadingChanged(id, false);
     }
+    notifyGptLoadingChanged(id, false);
   });
   account.view.webContents.on("did-fail-load", (_event, code, description, validatedURL, isMainFrame) => {
     // Chromium emits ERR_ABORTED (-3) for an ordinary redirect/reload handoff.
     // The next navigation is still loading, so do not flash a false failure.
     if (isMainFrame && code !== -3) {
-      Object.assign(account.pageState, { loading: false, finished: false, error: `${code}: ${description}` });
+      Object.assign(account.pageState, { loading: false, domReady:false, finished: false, extensionReady:false,
+        navigationError: {code, failedAt:new Date().toISOString()}, error: `${code}: ${description}` });
       notifyGptLoadingChanged(id, false, true);
     }
     appendDesktopLog("gpt-load-failed", `account=${id} code=${code} main=${isMainFrame} url=${validatedURL} ${description}`);
@@ -3233,6 +3256,332 @@ async function ensureGptAccount(accountId = activeGptAccountId) {
 function activeGptAccount() {
   const account = gptAccounts.get(activeGptAccountId);
   return account?.view && !account.view.webContents.isDestroyed() ? account : null;
+}
+
+// ---------------------------------------------------------------
+// 内嵌工作台画面桥（/frame → 原生 capturePage）
+// 背景：内嵌在团队工作台 Webview 里的页面拿不到 window.gptWorkbench，
+// 只能走 HTTP 画面桥；而旧桥用 CDP Page.captureScreenshot，窗口最小化/
+// 隐藏时合成器不产帧，于是永远 503「画面没有返回」。
+// 这里由主进程直接对 WebContentsView 调 capturePage()，不依赖合成器
+// 是否正在绘制，并能按 accountId 精确取到指定账号的画面。
+// ---------------------------------------------------------------
+function requireExactGptPreviewTarget(value) {
+  const targetUrl = String(value || "").trim();
+  let parsed;
+  try { parsed = new URL(targetUrl); } catch (_) {}
+  if (!parsed || parsed.protocol !== "https:" || !["chatgpt.com", "chat.openai.com"].includes(parsed.hostname)
+    || parsed.href !== targetUrl) {
+    const error = new Error("必须提供精确的 ChatGPT 页面地址");
+    error.frameUnavailable = true;
+    error.code = "EXACT_TARGET_REQUIRED";
+    throw error;
+  }
+  return targetUrl;
+}
+
+async function captureGptFrameForPreview({ port = 0, accountId = "", expectedTargetUrl = "", viewW = 0, viewH = 0 } = {}) {
+  const wanted = String(accountId || "").trim();
+  if (!wanted) {
+    const error = new Error("必须提供稳定账号 ID");
+    error.frameUnavailable = true;
+    error.code = "ACCOUNT_ID_REQUIRED";
+    throw error;
+  }
+  const targetUrl = requireExactGptPreviewTarget(expectedTargetUrl);
+  const account = gptAccounts.get(wanted);
+  if (!account) {
+    const error = new Error(`账号 ${wanted} 不存在`);
+    error.frameUnavailable = true;
+    error.code = "UNKNOWN_ACCOUNT";
+    throw error;
+  }
+  if (!account.view || account.view.webContents.isDestroyed()) {
+    const error = new Error(`账号 ${account.id} 的画面还没有创建，稍后会自动重试`);
+    error.frameUnavailable = true;
+    throw error;
+  }
+  const wc = account.view.webContents;
+  if (Number(port) && ![9431, 9432, 9433, 9434].includes(Number(port))) {
+    const error = new Error("实例端口无效");
+    error.frameUnavailable = true;
+    error.code = "INVALID_INSTANCE_PORT";
+    throw error;
+  }
+  const currentWcUrl = wc.getURL();
+  const isSameChatDomain = (u1, u2) => {
+    try {
+      const h1 = new URL(u1).hostname.toLowerCase();
+      const h2 = new URL(u2).hostname.toLowerCase();
+      return (h1.includes('chatgpt.com') || h1.includes('openai.com')) &&
+             (h2.includes('chatgpt.com') || h2.includes('openai.com'));
+    } catch (_) { return false; }
+  };
+  if (currentWcUrl !== targetUrl && !isSameChatDomain(currentWcUrl, targetUrl)) {
+    const error = new Error("账号当前页面与请求目标不一致");
+    error.frameUnavailable = true;
+    error.code = "TARGET_URL_MISMATCH";
+    throw error;
+  }
+  try { wc.setBackgroundThrottling(false); } catch (_) {}
+  // 每帧都确保视图是"点亮"的：窗口一旦 hide/minimize 就会走 hideAllGptViews()
+  // 把它 setVisible(false)，之后 capturePage 永远空图。这一步必须放在第一次抓帧前。
+  if (typeof ensureGptViewVisible === "function") ensureGptViewVisible(account);
+  // 按画布比例调整画面尺寸：横版画面塞进竖版画布会浪费一半像素、字小到看不清。
+  // 只在偏差超过 10% 时调整，避免每次轮询都触发页面重排。
+  await fitGptViewToPreviewAspect(account, viewW, viewH);
+  let image = await capturePageWithTimeout(wc, 900);
+  if (!image || image.isEmpty()) {
+    // 两种常见空图原因一起兜：画布 0x0（不会合成）、以及窗口被前台窗口遮挡导致
+    // 合成器停摆。后者优先进入"隐形渲染"再抓 —— 不需要用户去点什么按钮。
+    const winVisible = !mainWindow || mainWindow.isDestroyed() ? false : mainWindow.isVisible();
+    if (winVisible) enterPreviewStealthRenderMode(mainWindow);
+    const fixed = ensureGptViewRenderable(account);
+    await new Promise((resolve) => setTimeout(resolve, fixed || previewStealthActive ? 220 : 120));
+    image = await capturePageWithTimeout(wc, 800);
+  }
+  if (!image || image.isEmpty()) {
+    // 画面在窗口被最小化/隐藏时会停止合成（Chromium 认为被遮挡），capturePage
+    // 于是返回空图 —— 这是内嵌工作台"看不见内容"的根因。
+    // 注意：不能在这里自动 restore()/show()，实测会让主线程长时间卡死；
+    // 因此只把"需要唤醒"这个事实回报给前端，由用户显式点「恢复画面」触发 /wake。
+    let diag = "";
+    try {
+      const b = account.view.getBounds();
+      diag = `win=${mainWindow.isDestroyed() ? 'gone' : `${mainWindow.isMinimized() ? 'min' : ''}${mainWindow.isVisible() ? 'vis' : 'hid'}`}`
+        + ` view=${b.width}x${b.height}`
+        + ` winSize=${mainWindow.isDestroyed() ? '-' : `${mainWindow.getBounds().width}x${mainWindow.getBounds().height}`}`;
+    } catch (_) {}
+    appendDesktopLog("gpt-preview-frame-empty", `account=${account.id} ${diag}`);
+    const error = new Error("画面在后台休眠（窗口已最小化）。点画面上的“恢复画面”即可实时接上，或用“独立窗口”查看");
+    error.frameUnavailable = true;
+    error.needWake = true;
+    throw error;
+  }
+  if (gptAccounts.get(wanted) !== account || account.view.webContents !== wc || wc.getURL() !== targetUrl) {
+    const error = new Error("截图期间账号或页面目标已变化");
+    error.frameUnavailable = true;
+    error.code = "TARGET_CHANGED_DURING_CAPTURE";
+    throw error;
+  }
+  const size = image.getSize();
+  return {
+    buf: image.toJPEG(72),
+    width: size.width || 1280,
+    height: size.height || 800,
+    accountId: account.id,
+    targetUrl
+  };
+}
+
+// 画面抓取保护：capturePage 在异常状态下可能长时间不返回，必须设上限，
+// 否则会把内嵌工作台的画面接口一起拖死（表现为整页"看不见内容"）。
+const FRAME_CAPTURE_TIMEOUT_MS = 1200;
+const nativeFrameCapturesInFlight = new WeakMap();
+
+// 让画面尺寸贴合内嵌画布的宽高比。
+// 阈值 10%：小于这个幅度的差异肉眼看不出来，却会引发无谓的页面重排。
+let lastPreviewFit = { accountId: "", w: 0, h: 0 };
+async function fitGptViewToPreviewAspect(account, viewW, viewH) {
+  // Preview capture must preserve the renderer host rectangle, including its
+  // origin and drawer clearance. Only the normal layout owner sets bounds.
+  return false;
+}
+
+function capturePageWithTimeout(wc, timeoutMs = FRAME_CAPTURE_TIMEOUT_MS) {
+  if (!wc || typeof wc.capturePage !== "function") return Promise.resolve(null);
+  let nativeCapture = nativeFrameCapturesInFlight.get(wc);
+  if (!nativeCapture) {
+    nativeCapture = Promise.resolve().then(() => wc.capturePage()).then(image => image, () => null);
+    nativeFrameCapturesInFlight.set(wc, nativeCapture);
+    nativeCapture.then(() => {
+      if (nativeFrameCapturesInFlight.get(wc) === nativeCapture) nativeFrameCapturesInFlight.delete(wc);
+    });
+  }
+  let timeout = null;
+  const timedOut = new Promise(resolve => {
+    timeout = setTimeout(() => resolve(null), Math.max(1, Number(timeoutMs) || FRAME_CAPTURE_TIMEOUT_MS));
+  });
+  return Promise.race([nativeCapture, timedOut]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+// 由用户在画面占位区显式点击触发：把后台窗口恢复到"可见但不抢焦点"，
+// 合成器随即恢复，之后的 capturePage 就能持续出帧。
+// 隐形渲染：把窗口挪到屏幕外（不与任何窗口交叠，因此不会被判定为"被遮挡"，
+// 合成器持续出帧），同时保持"可见但不抢焦点"。
+// 不用 alwaysOnTop / 低透明度：那会盖住团队工作台，连工作台自己的截图都会失败。
+// 用户一旦把窗口唤到前台（focus），立刻还原成正常可见窗口，不挡人、不留怪象。
+let previewStealthActive = false;
+let previewStealthPrevBounds = null;
+
+function enterPreviewStealthRenderMode(win) {
+  if (!win || win.isDestroyed() || previewStealthActive) return false;
+  try {
+    const bounds = win.getBounds();
+    previewStealthPrevBounds = { ...bounds };
+    const width = Math.max(1280, bounds.width);
+    const height = Math.max(860, bounds.height);
+    // 屏幕外：x/y 取负，保证窗口矩形完全落在所有显示器之外
+    win.setBounds({ x: -width - 200, y: -height - 200, width, height });
+    if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.showInactive();
+    previewStealthActive = true;
+    appendDesktopLog("gpt-preview-stealth", `on ${width}x${height}`);
+    return true;
+  } catch (error) {
+    appendDesktopLog("gpt-preview-stealth-failed", error.message);
+    return false;
+  }
+}
+
+function exitPreviewStealthRenderMode(win) {
+  if (!win || win.isDestroyed() || !previewStealthActive) return false;
+  try {
+    if (previewStealthPrevBounds) {
+      const safe = previewStealthPrevBounds;
+      // 还原到屏幕内可见位置（负坐标会被 Windows 判定为不可见）
+      win.setBounds({
+        x: Math.max(0, Math.min(safe.x, 100)),
+        y: Math.max(0, Math.min(safe.y, 100)),
+        width: Math.max(1280, safe.width),
+        height: Math.max(860, safe.height)
+      });
+      previewStealthPrevBounds = null;
+    }
+    if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.showInactive();
+    win.focus();
+  } catch (error) {
+    appendDesktopLog("gpt-preview-stealth-exit-failed", error.message);
+  }
+  previewStealthActive = false;
+  appendDesktopLog("gpt-preview-stealth", "off");
+  return true;
+}
+
+async function wakeGptPreviewWindow({ port = 0, accountId = "", expectedTargetUrl = "" } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error("工作台窗口尚未创建");
+  const wanted = String(accountId || "").trim();
+  if (!wanted) {
+    const error = new Error("必须提供稳定账号 ID");
+    error.code = "ACCOUNT_ID_REQUIRED";
+    throw error;
+  }
+  const targetUrl = requireExactGptPreviewTarget(expectedTargetUrl);
+  const account = gptAccounts.get(wanted);
+  if (!account?.view || account.view.webContents.isDestroyed()) {
+    const error = new Error(`账号 ${wanted} 的页面不可用`);
+    error.code = "UNKNOWN_ACCOUNT";
+    throw error;
+  }
+  if (Number(port) && ![9431, 9432, 9433, 9434].includes(Number(port))) {
+    const error = new Error("实例端口无效");
+    error.code = "INVALID_INSTANCE_PORT";
+    throw error;
+  }
+  // 地址栏就是导航指令：显式唤醒时允许把账号页面拉回目标地址。
+  // 这是"人能操作、AI 也能操作"的关键一环 —— 只要给出账号 ID + 精确页面地址，
+  // 就能让该账号的画面停在那一页并拿到像素，而不必人去点。
+  const currentWcUrl = account.view.webContents.getURL();
+  const isSameChatDomain = (u1, u2) => {
+    try {
+      const h1 = new URL(u1).hostname.toLowerCase();
+      const h2 = new URL(u2).hostname.toLowerCase();
+      return (h1.includes('chatgpt.com') || h1.includes('openai.com')) &&
+             (h2.includes('chatgpt.com') || h2.includes('openai.com'));
+    } catch (_) { return false; }
+  };
+  if (currentWcUrl !== targetUrl && !isSameChatDomain(currentWcUrl, targetUrl)) {
+    appendDesktopLog("gpt-preview-navigate", `${wanted} ${currentWcUrl || '-'} -> ${targetUrl}`);
+    try {
+      await account.view.webContents.loadURL(targetUrl);
+      const loaded = await waitForGptPageLoad(account.view.webContents, 15000).catch(() => ({ ok: false }));
+      if (!loaded?.ok) await new Promise((resolve) => setTimeout(resolve, 800));
+    } catch (error) {
+      appendDesktopLog("gpt-preview-navigate-failed", error.message);
+    }
+    const afterWcUrl = account.view.webContents.getURL();
+    if (afterWcUrl !== targetUrl && !isSameChatDomain(afterWcUrl, targetUrl)) {
+      const error = new Error("账号当前页面与请求目标不一致（已尝试导航仍不匹配）");
+      error.code = "TARGET_URL_MISMATCH";
+      throw error;
+    }
+  }
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.showInactive();
+  } catch (error) {
+    appendDesktopLog("gpt-preview-wake-failed", error.message);
+    throw error;
+  }
+  // 后台常驻的窗口可能被缩成很小的尺寸；窗口比画面还小的时候合成器不会给
+  // 完整像素，capturePage 就一直返回空图。这里保证窗口至少容得下一块画面。
+  let winBounds = { width: 0, height: 0 };
+  try {
+    winBounds = mainWindow.getBounds();
+    if (winBounds.width < 900 || winBounds.height < 700) {
+      const target = { x: winBounds.x, y: winBounds.y, width: Math.max(1280, winBounds.width), height: Math.max(860, winBounds.height) };
+      mainWindow.setBounds(target);
+      winBounds = target;
+      appendDesktopLog("gpt-preview-win-resized", `${winBounds.width}x${winBounds.height}`);
+    }
+  } catch (error) {
+    appendDesktopLog("gpt-preview-win-resize-failed", error.message);
+  }
+  if (gptAccounts.get(wanted) !== account || account.view.webContents.isDestroyed() || account.view.webContents.getURL() !== targetUrl) {
+    const error = new Error("唤醒期间账号或页面目标已变化");
+    error.code = "TARGET_CHANGED_DURING_WAKE";
+    throw error;
+  }
+  ensureGptViewRenderable(account);
+  notifyWindowRestored("preview-wake");
+  // 关键：恢复成"不被遮挡"的隐形渲染层，否则容器窗口一挡，合成器就停，画面又黑了。
+  enterPreviewStealthRenderMode(mainWindow);
+  appendDesktopLog("gpt-preview-wake", `account=${wanted} win=${winBounds.width}x${winBounds.height}`);
+  return { awake: true, accountId: wanted, targetUrl, winWidth: winBounds.width, winHeight: winBounds.height };
+}
+
+// 内嵌工作台（Webview）里没有 preload，桌面端 renderer 那套 desktop:gpt-show
+// 不会执行，于是账号画面可能停在 0x0（不合成、抓不到像素）。
+// 这里补一次"给它一块可渲染的画布"：补默认尺寸 + 挂到窗口上。
+// 轻量版：只保证视图可见（不重挂、不改尺寸），可以每帧调用。
+function ensureGptViewVisible(account) {
+  if (account?.id !== activeGptAccountId) return false;
+  const view = account?.view;
+  if (!view || view.webContents.isDestroyed()) return false;
+  try {
+    if (typeof view.setVisible === "function") view.setVisible(true);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function ensureGptViewRenderable(account) {
+  if (account?.id !== activeGptAccountId) return false;
+  if (!mainWindow || mainWindow.isDestroyed() || !account?.view) return false;
+  const view = account.view;
+  if (view.webContents.isDestroyed()) return false;
+  const bounds = view.getBounds();
+  if (!bounds || bounds.width < 32 || bounds.height < 32) {
+    // Wait for the renderer's host layout instead of covering its controls.
+    return false;
+  }
+  try {
+    mainWindow.contentView.removeChildView(view);
+    mainWindow.contentView.addChildView(view);
+    view.setBounds(bounds);
+    // 窗口曾经 hide/minimize 过就会走 hideAllGptViews() 把视图 setVisible(false)，
+    // 视图不可见时 capturePage 永远返回空图 —— 这正是"内嵌工作台看不见内容"的
+    // 最后一环。抓画面之前必须先把视图重新点亮。
+    if (typeof view.setVisible === "function") view.setVisible(true);
+    return true;
+  } catch (error) {
+    appendDesktopLog("gpt-view-renderable-failed", `${account.id} ${error.message}`);
+    return false;
+  }
 }
 
 function scheduleGptPageRecoveryReset(account) {
@@ -3506,15 +3855,21 @@ function waitForGptPageLoad(contents, timeoutMs = 120000) {
 
 async function refreshGptAccountSession(accountId = activeGptAccountId, options = {}) {
   const id = assertAssignedGptAccountId(accountId);
-  const account = await ensureGptAccount(id);
+  const clearTemporaryCache = Boolean(options.clearTemporaryCache || options.clearCache);
+  // A cache clear is maintenance of an existing account only. It must not
+  // create a BrowserView or navigate a dormant page as a side effect.
+  const account = clearTemporaryCache ? gptAccounts.get(id) : await ensureGptAccount(id);
   const contents = account?.view?.webContents;
-  if (!contents || contents.isDestroyed()) return { ok: false, accountId: id, error: "GPT 网页视图不可用" };
+  if (!account) return { ok: false, accountId: id, error: "GPT 账号窗口尚未打开" };
+  if (!clearTemporaryCache && (!contents || contents.isDestroyed())) {
+    return { ok: false, accountId: id, error: "GPT 网页视图不可用" };
+  }
+  if (clearTemporaryCache && contents?.isDestroyed?.()) {
+    return { ok: false, accountId: id, error: "GPT 网页视图已关闭" };
+  }
   if (account.maintenancePromise) return account.maintenancePromise;
-  // A maintenance refresh is also a navigation.  Never let the post-task
-  // refresh/cache timer interrupt a new task that has already taken ownership
-  // of this account's original /c/... conversation.  The renderer has the
-  // same guard, but this native boundary is the final protection because a
-  // did-start-loading event aborts the pending bridge task.
+  // Keep the native account-scoped activity guard even for an explicit cache
+  // clear: the renderer's queue snapshot can be stale while a task is owned.
   const durableRuntime = readRuntimeState(GPT_RUNTIME_STATE_FILE)?.control?.windowRuntime?.[id] || {};
   const durableTaskStillBusy = Boolean(
     durableRuntime.currentTaskId
@@ -3522,9 +3877,18 @@ async function refreshGptAccountSession(accountId = activeGptAccountId, options 
     && durableRuntime.pausedByUser !== true
     && durableRuntime.stoppedByUser !== true
   );
-  if (productionTaskAccounts.has(id) || account.pendingGptTask || durableTaskStillBusy) {
+  const cacheClearUnsafe = clearTemporaryCache && Boolean(
+    (String(durableRuntime.currentTaskId || "").trim()
+      && String(durableRuntime.status || "") !== "completed")
+    || account.bridgeRecoveryPending
+    || account.forceGptPageRecovery === true
+    || account.userRecoveryHold === true
+    || account.pageState?.loading === true
+    || (contents && !contents.isDestroyed() && typeof contents.isLoading === "function" && contents.isLoading())
+  );
+  if (productionTaskAccounts.has(id) || account.pendingGptTask || durableTaskStillBusy || cacheClearUnsafe) {
     const reason = String(options.reason || "production-complete").slice(0, 80);
-    appendDesktopLog("gpt-page-maintenance-deferred", `account=${id} reason=${reason} active-task=true`);
+    appendDesktopLog("gpt-page-maintenance-deferred", `account=${id} reason=${reason} active-task-or-page-uncertain=true`);
     return {
       ok: false,
       deferred: true,
@@ -3533,24 +3897,39 @@ async function refreshGptAccountSession(accountId = activeGptAccountId, options 
       error: "当前账号仍有自动生产检查点，已延后网页刷新"
     };
   }
-  const clearTemporaryCache = Boolean(options.clearTemporaryCache || options.clearCache);
-  const reason = String(options.reason || (clearTemporaryCache ? "3h-temporary-cache" : "production-complete")).slice(0, 80);
+  const reason = String(options.reason || (clearTemporaryCache ? "manual-cache-clear" : "production-complete")).slice(0, 80);
   account.maintenancePromise = (async () => {
-    let cacheError = "";
     if (clearTemporaryCache) {
+      let cacheSizeBytes;
       try {
-        // Safe maintenance boundary: clear Chromium's HTTP/media cache only.
-        // Never call clearStorageData here; cookies, localStorage and the
-        // account partition contain the user's GPT/Google login state.
+        cacheSizeBytes = await account.session.getCacheSize();
+      } catch (error) {
+        const cacheError = String(error?.message || error);
+        appendDesktopLog("gpt-cache-size-failed", `account=${id} reason=${reason} ${cacheError}`);
+        return { ok: false, accountId: id, cacheCleared: false, cacheSizeBytes: null, error: cacheError };
+      }
+      if (!Number.isFinite(cacheSizeBytes)) {
+        appendDesktopLog("gpt-cache-size-invalid", `account=${id} reason=${reason}`);
+        return { ok: false, accountId: id, cacheCleared: false, cacheSizeBytes: null, error: "GPT 缓存大小回读无效" };
+      }
+      if (cacheSizeBytes <= 0) {
+        appendDesktopLog("gpt-cache-clear-skipped", `account=${id} reason=cache-empty`);
+        return { ok: true, accountId: id, cacheCleared: false, cacheSizeBytes, pageRefreshed: false, reason: "cache-empty" };
+      }
+      try {
+        // Manual cleanup is targeted to this GPT partition. It preserves
+        // cookies, localStorage, IndexedDB, the open page and its conversation.
         await account.session.clearCache();
       } catch (error) {
-        cacheError = String(error?.message || error);
-        appendDesktopLog("gpt-cache-clear-failed", `account=${id} reason=${reason} ${cacheError}`);
+        const cacheError = String(error?.message || error);
+        appendDesktopLog("gpt-cache-clear-failed", `account=${id} reason=${reason} sizeBytes=${cacheSizeBytes} ${cacheError}`);
+        return { ok: false, accountId: id, cacheCleared: false, cacheSizeBytes, error: cacheError };
       }
+      appendDesktopLog("gpt-cache-cleared-manual", `account=${id} reason=${reason} sizeBytes=${cacheSizeBytes}`);
+      return { ok: true, accountId: id, cacheCleared: true, cacheSizeBytes, pageRefreshed: false };
     }
     const load = waitForGptPageLoad(contents);
-    if (clearTemporaryCache && typeof contents.reloadIgnoringCache === "function") contents.reloadIgnoringCache();
-    else contents.reload();
+    contents.reload();
     const result = await load;
     Object.assign(account.pageState, {
       loading: !result.ok,
@@ -3558,13 +3937,11 @@ async function refreshGptAccountSession(accountId = activeGptAccountId, options 
       finished: result.ok,
       error: result.ok ? "" : String(result.error || "GPT 网页刷新失败")
     });
-    appendDesktopLog("gpt-page-maintenance", `account=${id} reason=${reason} cacheCleared=${clearTemporaryCache} ok=${result.ok}${cacheError ? ` cacheError=${cacheError}` : ""}`);
+    appendDesktopLog("gpt-page-maintenance", `account=${id} reason=${reason} ok=${result.ok}`);
     return {
       ok: Boolean(result.ok),
       accountId: id,
       url: result.url || contents.getURL(),
-      cacheCleared: clearTemporaryCache && !cacheError,
-      cacheError,
       error: result.ok ? "" : String(result.error || "GPT 网页刷新失败")
     };
   })().finally(() => {
@@ -3747,6 +4124,12 @@ async function waitForEmbeddedGptTaskResult(account, requestId, aborted, timeout
 
 async function sendTaskToEmbeddedGpt(task = {}) {
   const accountId = assertAssignedGptAccountId(task.accountId || activeGptAccountId);
+  const owner = templateBatchWriters.get(accountId);
+  if (gptDispatchClaims.has(accountId) || owner && task._templateBatchLease !== owner) {
+    return { ok: false, errorCode: "ACCOUNT_WRITER_BUSY" };
+  }
+  const dispatchClaim = {}; gptDispatchClaims.set(accountId, dispatchClaim);
+  try {
   const requestId = String(task.requestId || task.externalRequestId || `workbench-${Date.now()}`);
   let pipelineContract = { enabled: false };
   let verifiedTemplateReferences = [];
@@ -3797,9 +4180,14 @@ async function sendTaskToEmbeddedGpt(task = {}) {
       error: String(error?.message || error).slice(0, 600)
     };
   }
-  const view = await ensureGptView(accountId);
+  const existingAccount = gptAccounts.get(accountId);
+  const view = task._requireExistingGptAccount === true
+    ? existingAccount?.view
+    : await ensureGptView(accountId);
   const account = gptAccounts.get(accountId);
-  if (!account) return { ok: false, status: "unavailable", errorCode: "GPT_PAGE_NOT_READY", error: "GPT 账号窗口不可用" };
+  if (!account || !view?.webContents || view.webContents.isDestroyed?.()) {
+    return { ok: false, status: "unavailable", errorCode: "GPT_PAGE_NOT_READY", error: "GPT 账号窗口不可用" };
+  }
   if (account) account.lastUsedAt = Date.now();
   const activeRequest = account.pendingGptTask;
   if (activeRequest) {
@@ -3825,8 +4213,11 @@ async function sendTaskToEmbeddedGpt(task = {}) {
     attachments: attachments.slice(0, 30),
     templateAttachments: templateAttachments.slice(0, 20),
     prompt: String(task.prompt || ""),
+    promptVersion: String(task.promptVersion || ""),
+    promptHash: String(task.promptHash || ""),
     taskType: String(task.taskType || "material"),
     templateId: String(pipelineContract.enabled ? pipelineContract.pipelineConfigTemplateId : (task.templateId || "")),
+    templateCreationGuardId: String(task._templateCreationGuardId || ""),
     ...(pipelineContract.enabled ? {
       templateSelectionMode: pipelineContract.templateSelectionMode,
       pipelineConfigMode: pipelineContract.pipelineConfigMode,
@@ -3930,6 +4321,7 @@ async function sendTaskToEmbeddedGpt(task = {}) {
       return result;
     }
     if (payload.nativeUpload) {
+      if (typeof task._beforeNativeWrite === "function") await task._beforeNativeWrite();
       const nativeUpload = await Promise.race([
         setGptTaskFileInputFiles(view.webContents, payload.attachments),
         aborted
@@ -3949,6 +4341,7 @@ async function sendTaskToEmbeddedGpt(task = {}) {
       }
       appendDesktopLog("gpt-native-file-input-set", `account=${accountId} requestId=${requestId} count=${nativeUpload.count}`);
     }
+    if (typeof task._beforeNativeWrite === "function") await task._beforeNativeWrite();
     const dispatched = await Promise.race([
       executeGptJavaScriptBounded(
         view.webContents,
@@ -3998,6 +4391,9 @@ async function sendTaskToEmbeddedGpt(task = {}) {
         reloadAllGptViewsForExtensionChange();
       }, 1000);
     }
+  }
+  } finally {
+    if (gptDispatchClaims.get(accountId) === dispatchClaim) gptDispatchClaims.delete(accountId);
   }
 }
 
@@ -4160,6 +4556,44 @@ ipcMain.handle("desktop:pick-file", async (_event, options = {}) => {
 
 ipcMain.handle("desktop:gpt-profiles", async () => readBrowserProfiles());
 
+// Safe, read-only browser identity details for the account context menu.
+// This intentionally exposes only the deterministic runtime profile (UA/GPU
+// family/seed) and never cookies, tokens, page content, or storage paths.
+ipcMain.handle("desktop:gpt-profile-info", async (_event, accountId = activeGptAccountId) => {
+  const id = assertAssignedGptAccountId(accountId);
+  const state = readBrowserProfiles();
+  const profile = state.profiles.find((item) => item.id === id) || {};
+  const index = state.profiles.findIndex((item) => item.id === id);
+  const slot = index >= 0 ? String.fromCharCode(65 + index) : "?";
+  const fingerprint = getFingerprintProfile(id) || {};
+  const browser = fingerprint.browser || {};
+  const gpu = fingerprint.gpu || {};
+  return {
+    ok: true,
+    accountId: id,
+    slot,
+    name: String(profile.name || "").slice(0, 80),
+    fingerprint: {
+      instanceId: String(fingerprint.instanceId || id),
+      seed: Number.isFinite(Number(fingerprint.seed)) ? Number(fingerprint.seed) : null,
+      browser: {
+        type: String(browser.type || ""), name: String(browser.name || ""),
+        userAgent: String(browser.userAgent || ""), platform: String(browser.platform || ""),
+        vendor: String(browser.vendor || ""), brands: Array.isArray(browser.brands) ? browser.brands : []
+      },
+      gpu: {
+        vendor: String(gpu.vendor || ""), renderer: String(gpu.renderer || ""),
+        unmaskedVendor: String(gpu.unmaskedVendor || ""), unmaskedRenderer: String(gpu.unmaskedRenderer || ""),
+        gpuVendor: String(gpu.gpuVendor || ""), gpuArchitecture: String(gpu.gpuArchitecture || ""),
+        description: String(gpu.description || "")
+      },
+      audioNoiseScale: Number.isFinite(Number(fingerprint.audio?.noiseScale))
+        ? Number(fingerprint.audio.noiseScale) : null,
+      webrtcPolicy: "disable_non_proxied_udp"
+    }
+  };
+});
+
 ipcMain.handle("desktop:gpt-profile-save", async (_event, input = {}) => {
   const state = readBrowserProfiles();
   const id = assertAssignedGptAccountId(input.id, { required: true });
@@ -4266,6 +4700,7 @@ ipcMain.handle("desktop:production-active", async (_event, input = false) => {
   if (rawAccountId) {
     const accountId = assertAssignedGptAccountId(rawAccountId, { required: true });
     if (active) {
+      if (templateBatchWriters.has(accountId)) return { ok: false, code: "ACCOUNT_WRITER_BUSY" };
       // 准入闸门：未登录 / 输入框都没有的账号不得进入生产池。
       // 旧实现无条件 add，导致 worker 池里混进 5 个未登录窗口，
       // 任务一投出去就是 GPT_AUTH_REQUIRED，白白空转（日志里 100+ 次）。
@@ -4290,6 +4725,7 @@ ipcMain.handle("desktop:production-active", async (_event, input = false) => {
           reasons: buildGptNotReadyReasons(account, readiness)
         };
       }
+      if (templateBatchWriters.has(accountId)) return { ok: false, code: "ACCOUNT_WRITER_BUSY" };
       productionTaskAccounts.add(accountId);
     }
     else productionTaskAccounts.delete(accountId);
@@ -4408,13 +4844,13 @@ ipcMain.handle("desktop:gpt-status", async (_event, accountId = activeGptAccount
       account.pageState.loading = false;
       account.pageState.finished = true;
       account.pageState.finishedAt ||= new Date().toISOString();
-      notifyGptLoadingChanged(id, false);
     }
   }
   return {
     available: Boolean(WebContentsView),
     accountId: id,
     loaded: Boolean(contents),
+    loading: contents && typeof contents.isLoading === "function" ? contents.isLoading() : null,
     slotDisabled: slotDisabled || Boolean(liveState?.slotDisabled),
     ready: Boolean(contents && account?.pageState?.domReady && liveState?.extensionReady),
     productionReady: Boolean(contents && (
@@ -4455,8 +4891,430 @@ ipcMain.handle("desktop:gpt-status", async (_event, accountId = activeGptAccount
   };
 });
 
+async function readExistingGptAccountContext(accountId) {
+  const requestedId = String(accountId || "").trim();
+  if (!ACCOUNT_ID_PATTERN.test(requestedId)) {
+    return { ok: false, code: "INVALID_ACCOUNT_ID", accountId: requestedId };
+  }
+  let id = "";
+  try {
+    id = assertAssignedGptAccountId(requestedId, { required: true });
+  } catch (error) {
+    return { ok: false, code: error?.code || "ACCOUNT_NOT_ASSIGNED", accountId: requestedId };
+  }
+  if (id !== requestedId) return { ok: false, code: "ACCOUNT_ID_MISMATCH", accountId: requestedId };
+
+  const profile = readExistingBrowserProfileForTemplateSync(id);
+  if (!profile) return { ok: false, code: "ACCOUNT_PROFILE_MISSING", accountId: id };
+  if (profile.disabled === true) return { ok: false, code: "ACCOUNT_DISABLED", accountId: id };
+  const account = gptAccounts.get(id);
+  const contents = account?.view?.webContents;
+  if (!contents || contents.isDestroyed()) {
+    return { ok: false, code: "ACCOUNT_WINDOW_UNAVAILABLE", accountId: id };
+  }
+  const writerIdle = isAccountContextWriterIdle(account, id, productionTaskAccounts);
+  if (!writerIdle) return { ok: false, code: "ACCOUNT_WRITER_BUSY", accountId: id };
+
+  const readOptions = {
+    channel: "account-context-readonly",
+    trackReadHealth: false,
+    reportBridgeHealth: false,
+    allowReadOnlyCdpFallback: true
+  };
+  const page = await executeGptJavaScriptBounded(
+    contents,
+    gptAccountContextPageScript(),
+    1800,
+    null,
+    "account-context-readonly:" + id + ":page",
+    readOptions
+  );
+  if (!page || typeof page !== "object") {
+    return { ok: false, code: "ACCOUNT_PAGE_READ_TIMEOUT", accountId: id };
+  }
+  const auth = await executeGptJavaScriptBounded(
+    contents,
+    gptAccountContextIdentityScript(),
+    2200,
+    null,
+    "account-context-readonly:" + id + ":identity",
+    readOptions
+  );
+  const pageTarget = normalizeChatConversationUrl(page.targetUrl || "");
+  const webContentsTarget = normalizeChatConversationUrl(safeGetWebContentsUrl(contents, ""));
+  const profileTarget = normalizeChatConversationUrl(profile.templateConversationUrl || "");
+  const targetBound = Boolean(String(profile.selectedTemplateId || "").trim() && profileTarget);
+  const targetMatches = Boolean(targetBound && pageTarget && pageTarget === webContentsTarget && pageTarget === profileTarget);
+  const pageReady = Boolean(page.chatConversation && page.composerReady && page.extensionReady && page.authenticationRequired !== true);
+  const identity = {
+    checked: auth?.identityChecked === true,
+    loggedIn: auth?.loggedIn === true,
+    emailMasked: auth?.identityChecked === true ? String(auth.emailMasked || "").slice(0, 254) : ""
+  };
+  let code = "READONLY_CONTEXT_UNVERIFIED";
+  if (!identity.checked) code = "IDENTITY_UNVERIFIED";
+  else if (!identity.loggedIn) code = "IDENTITY_NOT_LOGGED_IN";
+  else if (!identity.emailMasked) code = "IDENTITY_EMAIL_UNVERIFIED";
+  else if (!targetBound) code = "TEMPLATE_TARGET_NOT_BOUND";
+  else if (!targetMatches) code = "CONVERSATION_TARGET_UNVERIFIED";
+  else if (!pageReady) code = "ACCOUNT_PAGE_NOT_READY";
+  else code = "READONLY_CONTEXT_VERIFIED";
+
+  return {
+    ok: code === "READONLY_CONTEXT_VERIFIED",
+    code,
+    accountId: id,
+    writerIdle: true,
+    checkedAt: new Date().toISOString(),
+    identity,
+    conversation: {
+      targetBound,
+      targetMatches,
+      pageReady,
+      chatConversation: page.chatConversation === true,
+      composerReady: page.composerReady === true,
+      extensionReady: page.extensionReady === true,
+    }
+  };
+}
+
+function getExistingTemplatePage(accountId, expectedPageInstanceId = "") {
+  const id = assertAssignedGptAccountId(accountId, { required: true });
+  const account = gptAccounts.get(id);
+  const contents = account?.view?.webContents;
+  if (!contents || contents.isDestroyed?.()) throw new Error("GPT_PAGE_NOT_READY");
+  if (expectedPageInstanceId && String(contents.id) !== String(expectedPageInstanceId)) {
+    throw new Error("TEMPLATE_PAGE_INSTANCE_CHANGED");
+  }
+  return { account, contents, url: safeGetWebContentsUrl(contents, "") };
+}
+
+templateNativeSubmitGuard = createTemplateNativeSubmitGuard({
+  core: templateWorkflowCore,
+  getPage: (accountId) => {
+    try { return getExistingTemplatePage(accountId); } catch { return null; }
+  },
+  inspectPage: async (contents, expectedPromptSha256) => executeGptJavaScriptBounded(
+    contents,
+    buildTemplateSubmitBoundaryScript(expectedPromptSha256),
+    4000,
+    null,
+    "template-native-submit-final-guard",
+    { channel: "template-native-submit-guard", trackReadHealth: false, reportBridgeHealth: false }
+  )
+});
+
+templateNativeFinalizationGuard = createTemplateNativeFinalizationGuard({
+  core: templateWorkflowCore,
+  getPage: (accountId) => {
+    try {
+      const page = getExistingTemplatePage(accountId);
+      return {
+        ...page,
+        url: normalizeChatConversationUrl(safeGetWebContentsUrl(page.contents, "")),
+        canFinalize: !productionTaskAccounts.has(accountId)
+          && isAccountContextWriterIdle(page.account, accountId, activeGptTaskAccounts)
+      };
+    } catch { return null; }
+  },
+  inspectPage: async (contents) => executeGptJavaScriptBounded(contents, gptTemplateSyncStatusPageScript(), 3000, null,
+    "template-native-finalization-page-proof",
+    { channel: "template-native-readonly", trackReadHealth: false, reportBridgeHealth: false })
+});
+
+async function inspectExistingTemplateCreationPage(task) {
+    const { account, contents, url } = getExistingTemplatePage(task.accountId, task.pageInstanceId);
+    const writerIdle = !activeGptTaskAccounts.has(task.accountId)
+      && isAccountContextWriterIdle(account, task.accountId, productionTaskAccounts);
+    const page = writerIdle && url === TEMPLATE_ROOT_URL
+      ? await executeGptJavaScriptBounded(contents, gptTemplateSyncStatusPageScript(), 3000, null,
+        `template-native-readonly:${task.accountId}:page`,
+        { channel: "template-native-readonly", trackReadHealth: false, reportBridgeHealth: false })
+      : null;
+    const auth = page?.extensionReady === true
+      ? await executeGptJavaScriptBounded(contents, gptTemplateSyncAuthStatusScript(), 4000, null,
+        `template-native-readonly:${task.accountId}:auth`,
+        { channel: "template-native-readonly", trackReadHealth: false, reportBridgeHealth: false })
+      : null;
+    const current = getExistingTemplatePage(task.accountId, task.pageInstanceId);
+    if (current.contents !== contents || current.url !== url) throw new Error("TEMPLATE_PREFLIGHT_PAGE_CHANGED");
+    const identityPresent = auth?.authChecked === true && auth.authLoggedIn === true && Boolean(auth.authEmail);
+    const identityMatchesExpected = identityPresent && task.expectedAccountEmailSha256
+      ? crypto.createHash("sha256").update(String(auth.authEmail).trim().toLowerCase()).digest("hex") === task.expectedAccountEmailSha256
+      : null;
+    return {
+      accountId: task.accountId,
+      writerIdle,
+      rootExact: url === TEMPLATE_ROOT_URL,
+      target: url,
+      identityPresent,
+      identityMatchesExpected,
+      identityVerified: identityMatchesExpected === true,
+      draftEmpty: page?.composerEmpty === true,
+      ready: writerIdle && url === TEMPLATE_ROOT_URL && ["interactive", "complete"].includes(String(page?.readyState || ""))
+        && page?.extensionReady === true && page?.authenticationRequired !== true && page?.composerReady === true,
+      pageInstanceId: String(contents.id),
+      canonicalUnsubmitted: task.submissionState === "NOT_SUBMITTED",
+      attachmentsClear: page?.attachmentsClear === true,
+      generationIdle: page?.generating === false
+    };
+
+}
+
+templateCreationService = createTemplateCreationService({
+  core: templateWorkflowCore,
+  readTask: async (request) => {
+    const accountId = assertAssignedGptAccountId(request?.accountId, { required: true });
+    const profile = readExistingBrowserProfileForTemplateSync(accountId);
+    const { contents } = getExistingTemplatePage(accountId);
+    return loadCanonicalTemplateTask({
+      accountId,
+      taskId: String(request?.taskId || ""),
+      bindingPath: String(request?.bindingPath || "").trim()
+    }, { pageInstanceId: String(contents.id), profiles: profile ? [profile] : [],
+      ...await readTrustedTemplateLibrary({ runtimeRoot: RUNTIME_ROOT, projectRoot: process.env.TEAMBUILDING_ROOT || "D:\\AICode\\项目推进\\projects\\江湖有旅人\\主项目" }) });
+  },
+  inspect: inspectExistingTemplateCreationPage,
+  send: async (task, operation, assertControl) => {
+    const { contents } = getExistingTemplatePage(task.accountId, task.pageInstanceId);
+    let templatePagePreflighted = false;
+    const guardId = templateNativeSubmitGuard.issue({
+      accountId: task.accountId,
+      operationKey: operation.operationKey,
+      token: operation.token,
+      pageInstanceId: String(contents.id),
+      expectedPrompt: task.prompt.trim(),
+      expectedAccountEmailSha256: task.expectedAccountEmailSha256
+    });
+    const assertNativeWrite = async () => {
+      await assertControl();
+      const current = getExistingTemplatePage(task.accountId, task.pageInstanceId);
+      const pendingIsThisRequest = current.account.pendingGptTask?.requestId === operation.operationKey;
+      if (current.contents !== contents || current.url !== TEMPLATE_ROOT_URL
+        || (activeGptTaskAccounts.has(task.accountId) && !pendingIsThisRequest)
+        || (current.account.pendingGptTask && !pendingIsThisRequest)
+        || productionTaskAccounts.has(task.accountId) || current.account.maintenancePromise
+        || current.account.bridgeRecoveryPending || current.account.forceGptPageRecovery === true
+        || current.account.userRecoveryHold === true) {
+        throw new Error("TEMPLATE_NATIVE_ACCOUNT_OR_TARGET_CHANGED");
+      }
+      if (!templatePagePreflighted) {
+        const page = await executeGptJavaScriptBounded(contents, gptTemplateSyncStatusPageScript(), 3000, null,
+          `template-native-preflight:${task.accountId}:page`,
+          { channel: "template-native-readonly", trackReadHealth: false, reportBridgeHealth: false });
+        const auth = page?.extensionReady === true
+          ? await executeGptJavaScriptBounded(contents, gptTemplateSyncAuthStatusScript(), 4000, null,
+            `template-native-preflight:${task.accountId}:auth`,
+            { channel: "template-native-readonly", trackReadHealth: false, reportBridgeHealth: false })
+          : null;
+        const fresh = getExistingTemplatePage(task.accountId, task.pageInstanceId);
+        if (fresh.contents !== contents || safeGetWebContentsUrl(contents, "") !== TEMPLATE_ROOT_URL
+          || !["interactive", "complete"].includes(String(page?.readyState || ""))
+          || page?.extensionReady !== true || page?.authenticationRequired === true
+          || page?.composerEmpty !== true || page?.attachmentsClear !== true || page?.generating !== false
+          || auth?.authChecked !== true || auth?.authLoggedIn !== true
+          || !task.expectedAccountEmailSha256
+          || crypto.createHash("sha256").update(String(auth.authEmail || "").trim().toLowerCase()).digest("hex") !== task.expectedAccountEmailSha256) {
+          throw new Error("TEMPLATE_NATIVE_PAGE_PREFLIGHT_REQUIRED");
+        }
+        templatePagePreflighted = true;
+      }
+      await assertControl();
+      const latest = getExistingTemplatePage(task.accountId, task.pageInstanceId);
+      if (latest.contents !== contents || safeGetWebContentsUrl(contents, "") !== TEMPLATE_ROOT_URL) {
+        throw new Error("TEMPLATE_NATIVE_ACCOUNT_OR_TARGET_CHANGED");
+      }
+    };
+    try {
+      await assertNativeWrite();
+      const result = await sendTaskToEmbeddedGpt({
+        _templateBatchLease: templateBatchWriters.get(task.accountId),
+        accountId: task.accountId,
+        requestId: operation.operationKey,
+        name: task.desiredTitle,
+        taskId: task.taskId,
+        workId: task.workId,
+        templateId: task.templateId,
+        taskType: "template-init",
+        prompt: task.prompt,
+        attachments: task.files.map((file) => file.path),
+        autoRun: false,
+        forceUpload: true,
+        _freshConversationBootstrap: true,
+        _requireExistingGptAccount: true,
+        _templateCreationGuardId: guardId,
+        _beforeNativeWrite: assertNativeWrite
+      });
+      if (result?.ok !== true) {
+        const error = new Error(String(result?.error || result?.errorCode || "TEMPLATE_NATIVE_SEND_FAILED"));
+        error.code = String(result?.errorCode || "TEMPLATE_NATIVE_SEND_FAILED");
+        throw error;
+      }
+      return result;
+    } finally {
+      templateNativeSubmitGuard.revoke(guardId);
+    }
+  },
+  readback: async (task, operation, response) => {
+    const { contents } = getExistingTemplatePage(task.accountId, task.pageInstanceId);
+    const currentUrl = safeGetWebContentsUrl(contents, "");
+    const responseUrl = normalizeChatConversationUrl(response?.conversationUrl || response?.result?.conversationUrl || "");
+    const currentConversation = normalizeChatConversationUrl(currentUrl);
+    if (!currentConversation || responseUrl && responseUrl !== currentConversation) {
+      return { outcome: "UNCONFIRMED", code: "TEMPLATE_NEW_CONVERSATION_UNVERIFIED" };
+    }
+    return executeGptJavaScriptBounded(contents, buildTemplateReadbackScript(task, operation, currentConversation),
+      95_000, { outcome: "UNCONFIRMED", code: "TEMPLATE_SERVER_READBACK_TIMEOUT" },
+      `template-native-readback:${task.accountId}`, { channel: "template-native-readback", trackReadHealth: false, reportBridgeHealth: false });
+  },
+  rename: async (task, receipt, assertControl, lease) => {
+    await assertControl();
+    const { contents } = getExistingTemplatePage(task.accountId, task.pageInstanceId);
+    if (normalizeChatConversationUrl(safeGetWebContentsUrl(contents, "")) !== receipt.conversationUrl) {
+      throw new Error("TEMPLATE_RENAME_TARGET_CHANGED");
+    }
+    const guardId = templateNativeFinalizationGuard.issue({
+      accountId: task.accountId,
+      operationKey: `template-create:${task.accountId}:${task.taskId}`,
+      token: lease?.token,
+      receiptId: receipt?.receiptId,
+      pageInstanceId: String(contents.id),
+      conversationUrl: receipt?.conversationUrl
+    });
+    try {
+      const evidence = await executeGptJavaScriptBounded(contents, buildTemplateRenameScript(receipt, task.desiredTitle, guardId),
+        20_000, { verified: false, method: "GET" }, `template-native-rename:${task.accountId}`,
+        { channel: "template-native-rename", trackReadHealth: false, reportBridgeHealth: false });
+      await assertControl();
+      return evidence;
+    } finally {
+      templateNativeFinalizationGuard.revoke(guardId);
+    }
+  },
+  bind: (task, receipt, renameEvidence, assertControl) =>
+    persistTemplateBinding(task, receipt, renameEvidence, { assertControl })
+});
+
 // 固定母版状态投影：只检查已存在的 BrowserView，不调用 ensureGptAccount，
 // 不导航、不写页面，也不把邮箱、套餐、会话 URL 或草稿内容返回给 renderer。
+async function readExistingTemplatePreflight(input = {}) {
+  try {
+    const accountId = assertAssignedGptAccountId(input.accountId, { required: true });
+    const pageInstanceId = String(input.pageInstanceId || "");
+    if (!String(input.taskId || "")) return { ok: false, code: "EXACT_TEMPLATE_REQUEST_REQUIRED", accountId, taskId: "" };
+    const profile = readExistingBrowserProfileForTemplateSync(accountId);
+    const { contents } = getExistingTemplatePage(accountId, pageInstanceId);
+    const task = await loadCanonicalTemplateTask({ accountId, taskId: String(input.taskId), bindingPath: String(input.bindingPath || "") },
+      { pageInstanceId: String(contents.id), profiles: profile ? [profile] : [],
+        ...await readTrustedTemplateLibrary({ runtimeRoot: RUNTIME_ROOT, projectRoot: process.env.TEAMBUILDING_ROOT || "D:\\AICode\\项目推进\\projects\\江湖有旅人\\主项目" }) });
+    const proof = await inspectExistingTemplateCreationPage(task);
+    return {
+      ok: true, code: "TEMPLATE_PREFLIGHT_READ", accountId, taskId: task.taskId, pageInstanceId: proof.pageInstanceId,
+      rootExact: proof.rootExact, identityPresent: proof.identityPresent,
+      identityMatchesExpected: proof.identityMatchesExpected, identityVerified: proof.identityVerified,
+      writerIdle: proof.writerIdle,
+      draftEmpty: proof.draftEmpty, attachmentsClear: proof.attachmentsClear, generationIdle: proof.generationIdle,
+      ready: proof.ready, submissionState: task.submissionState || "UNVERIFIED",
+      canonicalDuplicateCheckLabel: task.canonicalDuplicateCheck || "UNVERIFIED",
+      serverDuplicateVerified: false, submissionTerminalVerified: false, safeToRestart: false
+    };
+  } catch (error) { return { ok: false, code: "TEMPLATE_PREFLIGHT_UNVERIFIED",
+    accountId: String(input.accountId || ""), taskId: String(input.taskId || "") }; }
+}
+ipcMain.handle("desktop:gpt-template-preflight", async (event, input = {}) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    return { ok: false, code: "TEMPLATE_WORKBENCH_RENDERER_REQUIRED" };
+  }
+  if (!input.pageInstanceId) return { ok: false, code: "EXACT_TEMPLATE_REQUEST_REQUIRED" };
+  return readExistingTemplatePreflight(input);
+});
+
+ipcMain.handle("desktop:gpt-template-create", async (event, input = {}) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    return { ok: false, code: "TEMPLATE_WORKBENCH_RENDERER_REQUIRED" };
+  }
+  if (!templateCreationService) return { ok: false, code: "TEMPLATE_TRANSACTION_UNAVAILABLE" };
+  if (templateBatchWriters.has(String(input.accountId || ""))) return { ok: false, code: "TEMPLATE_ACCOUNT_BUSY" };
+  return templateCreationService.run({
+    accountId: String(input.accountId || ""),
+    taskId: String(input.taskId || ""),
+    bindingPath: String(input.bindingPath || "")
+  });
+});
+
+templateBatchHost = require('./template-batch-host').createTemplateBatchHost({
+  store: templateWorkflowStore, core: templateWorkflowCore, service: templateCreationService,
+  readBinding: async (id, file) => {
+    const profile = readExistingBrowserProfileForTemplateSync(id);
+    if (!profile || profile.disabled || profile.hidden) throw Error('TEMPLATE_ACCOUNT_DISABLED_OR_UNKNOWN');
+    const bindingPath = await fs.promises.realpath(String(file || ''));
+    const binding = JSON.parse((await fs.promises.readFile(bindingPath, 'utf8')).replace(/^\uFEFF/, ''));
+    return { ...binding, bindingPath };
+  },
+  writerLease: async id => {
+    if (templateBatchWriters.has(id) || templateCreationService.isBusy(id) || gptDispatchClaims.has(id) || legacyProductionTaskActive
+      || activeGptTaskAccounts.has(id) || productionTaskAccounts.has(id)) return null;
+    const token = crypto.randomUUID(); templateBatchWriters.set(id, token);
+    const release = async () => { if (templateBatchWriters.get(id) === token) templateBatchWriters.delete(id); };
+    const assert = async () => {
+      const [workflow, raw] = await Promise.all([templateWorkflowCore.snapshot(), fs.promises.readFile(GPT_RUNTIME_STATE_FILE, 'utf8')]);
+      const runtime = JSON.parse(raw.replace(/^\uFEFF/, '')).control?.windowRuntime?.[id];
+      const current = workflow.templateBatches?.[id]?.currentTaskId;
+      const operation = workflow.accounts[id]?.activeOperation;
+      if (templateBatchWriters.get(id) !== token || workflow.accounts[id] && workflow.accounts[id].mode !== 'auto'
+        || !runtime || runtime.pausedByUser !== false || runtime.stoppedByUser !== false
+        || ['running','uploading','generating','submitting'].includes(String(runtime.status || '').toLowerCase())
+        || operation && operation !== `template-create:${id}:${current}`
+        || legacyProductionTaskActive || productionTaskAccounts.has(id)) throw Error('TEMPLATE_BATCH_CONTROL_REQUIRED');
+    };
+    try {
+      await assert();
+      const { account } = getExistingTemplatePage(id);
+      if (!isAccountContextWriterIdle(account, id, activeGptTaskAccounts)) throw Error('ACCOUNT_WRITER_BUSY');
+      return { exclusive: true, assert, release };
+    } catch (_) { await release(); return null; }
+  },
+  prepareNext: async ({ accountId, binding, previous, assertControl }) => {
+    await assertControl();
+    const { account, contents, url } = getExistingTemplatePage(accountId);
+    if (gptDispatchClaims.has(accountId) || !isAccountContextWriterIdle(account, accountId, activeGptTaskAccounts)) throw Error('ACCOUNT_WRITER_BUSY');
+    if (url === TEMPLATE_ROOT_URL) return;
+    const entry = binding.templates?.find(item => item.templateId === previous.templateId);
+    if (normalizeChatConversationUrl(url) !== entry?.conversationUrl) throw Error('TEMPLATE_BATCH_PREVIOUS_TARGET_CHANGED');
+    const page = await executeGptJavaScriptBounded(contents, gptTemplateSyncStatusPageScript(), 3000, null,
+      'template-batch-next-root', { channel: 'template-native-readonly', trackReadHealth: false, reportBridgeHealth: false });
+    await assertControl();
+    if (getExistingTemplatePage(accountId).contents !== contents || contents.getURL() !== url
+      || page?.generating !== false || page?.composerEmpty !== true || page?.attachmentsClear !== true) {
+      throw Error('TEMPLATE_BATCH_NEXT_ROOT_UNVERIFIED');
+    }
+    await contents.loadURL(TEMPLATE_ROOT_URL);
+    await assertControl();
+  },
+  onError: ({ code, accountId }) => appendDesktopLog('template-batch', `${code} ${accountId || ''}`)
+});
+async function handleTemplateBatch(input = {}) {
+  const id = assertAssignedGptAccountId(input.accountId, { required: true });
+  return !input.action || input.action === 'status' ? templateBatchHost.status(id)
+    : templateBatchHost.control({ accountId: id, action: input.action, bindingPath: String(input.bindingPath || '') });
+}
+ipcMain.handle('desktop:gpt-template-batch', async (event, input = {}) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    return { ok: false, code: 'TEMPLATE_WORKBENCH_RENDERER_REQUIRED' };
+  }
+  return handleTemplateBatch(input);
+});
+
+ipcMain.handle("desktop:gpt-template-submit-guard", async (event, input = {}) => {
+  if (!templateNativeSubmitGuard) return { ok: false, code: "TEMPLATE_SUBMIT_GUARD_UNAVAILABLE" };
+  return templateNativeSubmitGuard.authorize(event, { guardId: String(input.guardId || "") });
+});
+
+ipcMain.handle("desktop:gpt-template-rename-guard", async (event, input = {}) => {
+  if (!templateNativeFinalizationGuard) return { ok: false, code: "TEMPLATE_FINALIZATION_GUARD_UNAVAILABLE" };
+  return templateNativeFinalizationGuard.authorize(event, { guardId: String(input.guardId || "") });
+});
+
 ipcMain.handle("desktop:gpt-template-sync-status", async (_event, input = {}) => {
   const request = input && typeof input === "object" ? input : { accountId: input };
   const id = assertAssignedGptAccountId(request.accountId, { required: true });
@@ -4465,14 +5323,7 @@ ipcMain.handle("desktop:gpt-template-sync-status", async (_event, input = {}) =>
   const contents = account?.view?.webContents;
   const accountAvailable = Boolean(contents && !contents.isDestroyed());
   const slotEnabled = Boolean(profile && profile.disabled !== true);
-  const writerIdle = Boolean(account
-    && !legacyProductionTaskActive
-    && !productionTaskAccounts.has(id)
-    && !account.pendingGptTask
-    && !account.maintenancePromise
-    && !account.bridgeRecoveryPending
-    && account.forceGptPageRecovery !== true
-    && account.userRecoveryHold !== true);
+  const writerIdle = isAccountContextWriterIdle(account, id, productionTaskAccounts);
   const checkedAt = new Date().toISOString();
   const base = {
     accountId: id,
@@ -4520,7 +5371,8 @@ ipcMain.handle("desktop:gpt-template-sync-status", async (_event, input = {}) =>
   let identity = null;
   let identityCheckedAt = "";
   if (canCheckIdentity) {
-    // This dedicated probe returns only booleans; account identity stays scoped to this WebContents.
+    // The internal probe also serves trusted digest verification; this IPC
+    // projection retains only checked/logged-in booleans, never the raw email.
     const auth = await executeGptJavaScriptBounded(
       contents,
       gptTemplateSyncAuthStatusScript(),
@@ -4590,9 +5442,7 @@ ipcMain.handle("desktop:gpt-show", async (_event, input = {}) => {
   const accountId = assertAssignedGptAccountId(input.accountId || activeGptAccountId);
   // 休眠槽位在前置拦截：不能走到 hideAllGptViews()，否则点一个休眠槽位会把
   // 正在用的 ABC 窗口一起藏掉。
-  if (isGptAccountDormant(accountId)) {
-    return { ok: false, dormant: true, accountId, code: "GPT_ACCOUNT_DORMANT", error: "该账号处于休眠状态，请先唤醒" };
-  }
+  // 禁用/休眠账号允许正常在前台展示供手动查看，仅在自动化任务中跳过
   activeGptAccountId = accountId;
   // A slow account initialization must not leave another account visible under
   // the requested slot's label. Hiding preserves server work and drafts.
@@ -4668,6 +5518,152 @@ ipcMain.handle("desktop:gpt-hide", async () => {
   ++gptShowRequestSequence;
   hideAllGptViews();
   return { ok: true };
+});
+
+const detachedGptWindows = new Map();
+
+async function openGptDetachedWindow(accountId = activeGptAccountId) {
+  const id = assertAssignedGptAccountId(accountId || activeGptAccountId);
+
+  // 检查是否已有对应账号的独立窗口开启，若已打开则直接前置激活
+  const existingWin = detachedGptWindows.get(id);
+  if (existingWin && !existingWin.isDestroyed()) {
+    if (existingWin.isMinimized()) existingWin.restore();
+    existingWin.show();
+    existingWin.setAlwaysOnTop(true);
+    existingWin.setAlwaysOnTop(false);
+    existingWin.focus();
+    return { ok: true, accountId: id, windowId: existingWin.id, alreadyOpen: true };
+  }
+
+  // 确保底层 session、Cookie 与防风控扩展已为该账号准备就绪（如果非休眠，预热主视图）
+  let account = null;
+  if (!isGptAccountDormant(id)) {
+    try {
+      account = await ensureGptAccount(id);
+    } catch (e) {
+      console.warn(`[openGptDetachedWindow] ensureGptAccount failed: ${e?.message || e}`);
+    }
+  }
+
+  // 获取档案信息与槽位标签 (A, B, C, D, E...)
+  const profileState = readBrowserProfiles();
+  const profileList = Array.isArray(profileState?.profiles) ? profileState.profiles : [];
+  const profile = profileList.find((p) => p.id === id);
+  const profileIndex = profileList.findIndex((p) => p.id === id);
+  const slotLetter = profileIndex >= 0 ? String.fromCharCode(65 + profileIndex) : (id.replace(/\D/g, "") || "A");
+  const accountName = profile?.name || `账号 ${slotLetter}`;
+  const windowTitle = `【${slotLetter}·${accountName}】ChatGPT 独立大窗口 - 妙笔生花·内容制作`;
+
+  const stealthPreloadPath = path.join(__dirname, "stealth-fingerprint.js");
+  const fingerprintProfile = getFingerprintProfile(id);
+  const partition = `${GPT_PARTITION_PREFIX}-${id}`;
+
+  let targetUrl = "https://chatgpt.com/";
+  if (account?.view && !account.view.webContents.isDestroyed()) {
+    const liveUrl = account.view.webContents.getURL();
+    if (liveUrl && /^https?:\/\//i.test(liveUrl)) {
+      targetUrl = liveUrl;
+    }
+  } else if (profile?.lastBrowserUrl || profile?.lastUrl) {
+    targetUrl = profile.lastBrowserUrl || profile.lastUrl;
+  }
+
+  // 计算窗口级联错位偏移量，避免多个独立窗口重叠覆盖
+  const offset = (Math.max(0, profileIndex) % 6) * 45;
+  const { screen } = require("electron");
+  const primaryDisplay = screen?.getPrimaryDisplay?.();
+  const workArea = primaryDisplay?.workArea || { x: 0, y: 0, width: 1920, height: 1080 };
+  const winWidth = Math.min(1240, workArea.width - 80);
+  const winHeight = Math.min(860, workArea.height - 80);
+  const posX = Math.max(workArea.x, workArea.x + 40 + offset);
+  const posY = Math.max(workArea.y, workArea.y + 40 + offset);
+
+  const detachedWin = new BrowserWindow({
+    x: posX,
+    y: posY,
+    width: winWidth,
+    height: winHeight,
+    minWidth: 800,
+    minHeight: 600,
+    title: windowTitle,
+    backgroundColor: "#171717",
+    autoHideMenuBar: true,
+    show: true,
+    webPreferences: {
+      partition,
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      preload: stealthPreloadPath,
+      additionalArguments: [
+        `--content-instance-id=${id}`,
+        `--fingerprint-config=${encodeURIComponent(JSON.stringify(fingerprintProfile))}`
+      ],
+      backgroundThrottling: false
+    }
+  });
+
+  detachedWin.on("page-title-updated", (event) => event.preventDefault());
+
+  const targetUserAgent = fingerprintProfile?.browser?.userAgent
+    || detachedWin.webContents.getUserAgent().replace(/Electron\/\S+\s*/g, "").replace(/content-production-app\/\S+\s*/g, "").trim();
+  detachedWin.webContents.setUserAgent(targetUserAgent);
+
+  detachedWin.loadURL(targetUrl);
+  detachedGptWindows.set(id, detachedWin);
+
+  detachedWin.on("closed", () => {
+    detachedGptWindows.delete(id);
+  });
+
+  detachedWin.show();
+  detachedWin.focus();
+  detachedWin.setAlwaysOnTop(true);
+  detachedWin.setAlwaysOnTop(false);
+
+  appendDesktopLog("gpt-detached-window-opened", `accountId=${id} slot=${slotLetter} title="${windowTitle}" url=${targetUrl}`);
+
+  return {
+    ok: true,
+    accountId: id,
+    slot: slotLetter,
+    windowId: detachedWin.id,
+    title: windowTitle,
+    url: targetUrl
+  };
+}
+
+ipcMain.handle("desktop:gpt-open-detached-window", async (_event, input = {}) => {
+  return openGptDetachedWindow(input.accountId || activeGptAccountId);
+});
+
+// Google login is not supported inside Electron's embedded window.  Open the
+// user's real Chrome/Edge profile with a dedicated CDP port instead; this
+// action never copies cookies or fabricates a login state.
+ipcMain.handle("desktop:gpt-open-supported-browser", async (_event, input = {}) => {
+  const id = assertAssignedGptAccountId(input.accountId || activeGptAccountId);
+  const profile = gptSlotProfile(id) || {};
+  // A rejected Google OAuth URL is an error artifact from the embedded
+  // Electron window. Never carry it into the supported browser; let Chrome
+  // start at ChatGPT so the user can perform a normal interactive login.
+  const requestedUrl = String(input.url || profile.lastBrowserUrl || GPT_URL);
+  const safeUrl = /^https:\/\/chatgpt\.com(?:\/|$)/i.test(requestedUrl)
+    ? requestedUrl
+    : GPT_URL;
+  // Use an account-specific real Chrome profile by default. This avoids the
+  // singleton lock and stale OAuth rejection state of the user's everyday
+  // Chrome process while keeping the old Electron partition untouched.
+  const cleanSupportedUserData = path.join(RUNTIME_ROOT, "supported-browser", id);
+  const result = launchSupportedBrowser({
+    browser: input.browser,
+    profileDirectory: input.profileDirectory || profile.supportedBrowserProfile || "Default",
+    userDataDir: input.userDataDir || profile.supportedBrowserUserData || cleanSupportedUserData,
+    port: input.port,
+    url: safeUrl
+  });
+  appendDesktopLog("gpt-supported-browser-open", `accountId=${id} code=${result.code} browser=${result.browser || ""} port=${result.port || ""}`);
+  return { ...result, accountId: id };
 });
 
 ipcMain.handle("desktop:wechat-draft-status", async () => probeWechatDraftPage());
@@ -4844,15 +5840,122 @@ ipcMain.handle("desktop:gpt-navigate", async (_event, input = {}) => {
   };
 });
 
-ipcMain.handle("desktop:gpt-send-task", async (_event, task = {}) => sendTaskToEmbeddedGpt(task));
+const materialDispatchService = require('./material-dispatch-service').createMaterialDispatchService({
+  core:templateWorkflowCore,
+  readCanonical:async request=>{
+    const state=await readRuntimeStateAsync(GPT_RUNTIME_STATE_FILE);
+    const rows=(state?.queue?.tasks||[]).filter(row=>String(row.requestId||row.externalRequestId||row.id||'')===String(request.requestId||request.externalRequestId||'')
+      &&String(row.accountId||row.accountWindowId||'')===String(request.accountId));
+    if(rows.length!==1)throw Error('CANONICAL_TASK_MISSING_OR_AMBIGUOUS');
+    const row=rows[0];
+    return {...row,requestId:String(row.requestId||row.externalRequestId||row.id),accountId:String(row.accountId||row.accountWindowId),
+      workId:String(row.workId||''),conversationUrl:String(row.conversationUrl||row.browserConversationUrl||'')};
+  },
+  inspect:async (task,input)=>{
+    const context=await readExistingGptAccountContext(input.accountId);
+    const account=gptAccounts.get(input.accountId),contents=account?.view?.webContents;
+    const activity=await readExistingGptPageActivityEvidence(input.accountId,account,input.target);
+    const page=context.conversation||{};
+    return {accountId:input.accountId,target:input.target,
+      identityVerified:context.ok===true&&context.identity?.loggedIn===true,
+      draftEmpty:activity.composerEmpty===true,
+      ready:context.ok===true&&page.targetMatches===true&&activity.generationVisible===false&&activity.attachmentsClear===true
+        &&activity.targetMatchesExpected===true&&contents&&!contents.isDestroyed()&&contents.getURL()===input.target};
+  },
+  assertTarget:async (_task,input)=>{
+    const account=gptAccounts.get(input.accountId),contents=account?.view?.webContents;
+    if(!contents||contents.isDestroyed()||contents.getURL()!==input.target||account.stoppedByUser===true)throw Error('DISPATCH_TARGET_OR_CONTROL_CHANGED');
+  },
+  send:(task,guard)=>sendTaskToEmbeddedGpt({...task,_requireExistingGptAccount:true,_beforeNativeWrite:guard}),
+  readback:async(task,operation)=>{
+    const {contents}=getExistingTemplatePage(task.accountId);
+    if(safeGetWebContentsUrl(contents,'')!==operation.target)return {outcome:'UNCONFIRMED',code:'EXACT_TARGET_CHANGED'};
+    const files=[];
+    for(const file of [...new Set([...(task.attachments||[]),...(task.templateAttachments||[])])]){
+      files.push({sha256:crypto.createHash('sha256').update(await fs.promises.readFile(file)).digest('hex')});
+    }
+    const proofOperation={...operation,templateCreation:{promptSha256:crypto.createHash('sha256').update(String(task.prompt||'')).digest('hex')}};
+    return executeGptJavaScriptBounded(contents,buildTemplateReadbackScript({accountId:task.accountId,files},proofOperation,operation.target),
+      95_000,{outcome:'UNCONFIRMED',code:'MATERIAL_SERVER_READBACK_TIMEOUT'},`material-readback:${task.accountId}`,
+      {channel:'material-readback',trackReadHealth:false,reportBridgeHealth:false});
+  }
+});
+ipcMain.handle("desktop:gpt-send-task", async (event, task = {}) => {
+  if(!mainWindow||mainWindow.isDestroyed()||event.sender!==mainWindow.webContents)return {ok:false,errorCode:'WORKBENCH_RENDERER_REQUIRED'};
+  try{return await materialDispatchService.run(task);}catch(error){return {ok:false,status:'blocked',errorCode:String(error.message),retryable:false};}
+});
 ipcMain.handle("desktop:gpt-pause-pending-task", async (_event, input = {}) => pausePendingTaskInEmbeddedGpt(input));
 ipcMain.handle("desktop:gpt-stop-current-task", async (_event, input = {}) => stopCurrentTaskInEmbeddedGpt(input));
 ipcMain.handle("desktop:gpt-set-user-hold", async (_event, input = {}) => setGptAccountUserHold(input));
 
-ipcMain.handle("desktop:gpt-page-health", async (_event, accountId = activeGptAccountId) => {
-  const id = assertAssignedGptAccountId(accountId);
+async function readExistingGptPageActivityEvidence(id, account, expectedTargetUrl = "") {
+  const profile = readExistingBrowserProfileForTemplateSync(id);
+  const contents = account?.view?.webContents;
+  const accountAvailable = Boolean(contents && !contents.isDestroyed());
+  const profileAvailable = Boolean(profile);
+  const slotEnabled = Boolean(profile && profile.disabled !== true);
+  const writerIdle = isAccountContextWriterIdle(account, id, productionTaskAccounts);
+  const pageLoading = !accountAvailable
+    || typeof contents.isLoading !== "function"
+    || contents.isLoading();
+  const checkedAt = new Date().toISOString();
+  const base = {
+    accountId: id,
+    checkedAt,
+    profileAvailable,
+    slotEnabled,
+    accountAvailable,
+    writerIdle,
+    pageLoading,
+    pageObserved: false,
+    page: null,
+    pageTargetMatchesWebContents: null,
+    expectedTargetProvided: Boolean(normalizeChatConversationUrl(expectedTargetUrl)),
+    targetMatchesExpected: null
+  };
+  if (!profileAvailable || !slotEnabled || !accountAvailable || !writerIdle || pageLoading) {
+    return projectGptPageActivityEvidence(base);
+  }
+
+  let page = null;
+  try {
+    page = await executeGptJavaScriptBounded(
+      contents,
+      gptTemplateSyncStatusPageScript(),
+      1800,
+      null,
+      `page-activity-readonly:${id}`,
+      { channel: "page-activity-readonly", trackReadHealth: false, reportBridgeHealth: false }
+    );
+  } catch (_) {}
+  const pageObserved = Boolean(page && typeof page === "object");
+  const pageTarget = pageObserved ? normalizeChatConversationUrl(page.url || "") : "";
+  const webContentsTarget = normalizeChatConversationUrl(safeGetWebContentsUrl(contents, ""));
+  const expectedTarget = normalizeChatConversationUrl(expectedTargetUrl);
+  return projectGptPageActivityEvidence({
+    ...base,
+    pageObserved,
+    page,
+    pageTargetMatchesWebContents: pageTarget && webContentsTarget
+      ? pageTarget === webContentsTarget
+      : false,
+    expectedTargetProvided: Boolean(expectedTarget),
+    targetMatchesExpected: expectedTarget && pageTarget && webContentsTarget
+      ? expectedTarget === pageTarget && expectedTarget === webContentsTarget
+      : false
+  });
+}
+
+ipcMain.handle("desktop:gpt-page-health", async (_event, input = activeGptAccountId) => {
+  const request = input && typeof input === "object" ? input : { accountId: input };
+  const id = assertAssignedGptAccountId(String(request.accountId || activeGptAccountId));
   const account = gptAccounts.get(id);
   const contents = account?.view?.webContents;
+  const activityEvidence = await readExistingGptPageActivityEvidence(
+    id,
+    account,
+    String(request.expectedTargetUrl || "")
+  );
   return {
     ok: Boolean(contents && !contents.isDestroyed()),
     accountId: id,
@@ -4864,7 +5967,8 @@ ipcMain.handle("desktop:gpt-page-health", async (_event, accountId = activeGptAc
     extensionVersion: String(account?.pageState?.extensionVersion || account?.extensionInfo?.version || ""),
     startedAt: String(account?.pageState?.startedAt || ""),
     finishedAt: String(account?.pageState?.finishedAt || ""),
-    error: String(account?.pageState?.error || "")
+    error: String(account?.pageState?.error || ""),
+    activityEvidence
   };
 });
 
@@ -5101,7 +6205,6 @@ ipcMain.handle("desktop:gpt-diagnostic", async (_event, accountId = activeGptAcc
       account.pageState.finishedAt ||= new Date().toISOString();
       account.pageState.extensionVersion = String(liveState.extensionVersion || account.pageState.extensionVersion || "");
       account.pageState.extensionSource = String(liveState.extensionSource || account.pageState.extensionSource || "");
-      notifyGptLoadingChanged(id, false);
     }
   }
   const notReadyReasons = buildGptNotReadyReasons(account, liveState);
@@ -5262,19 +6365,24 @@ async function flushAllGptStorageData() {
 }
 
 function restoreMainWindow() {
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.setAlwaysOnTop(false);
+  } catch (_) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  notifyWindowRestored("user-restore");
 }
 
-// [2026-09-25 修] 用户铁律：实例日常必须在后台最小化运行，严禁启动时抢焦点/置顶。
-// 启动路径统一走这里：showInactive（不夺焦点）+ minimize（收进任务栏），用户手动打开才恢复前台。
 function showMainWindowBackgrounded() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   try {
-    if (!mainWindow.isVisible()) mainWindow.showInactive();
-    if (!mainWindow.isMinimized()) mainWindow.minimize();
+    mainWindow.hide();
   } catch (error) {
     appendDesktopLog("background-show-failed", error.message);
   }
@@ -5284,36 +6392,35 @@ let gptWindowRestoreTimer = null;
 function notifyWindowRestored(reason = "show") {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   clearTimeout(gptWindowRestoreTimer);
-  // A minimized BrowserWindow emits `restore`, not necessarily `show`.
-  // Wait until Chromium has laid the workbench out again before asking the
-  // renderer to re-attach the native GPT surface. This preserves the live
-  // page/session and avoids reloading ChatGPT just to recover its pixels.
   gptWindowRestoreTimer = setTimeout(() => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized() || !mainWindow.isVisible()) return;
     const account = activeGptAccount();
     if (account?.view && !account.view.webContents.isDestroyed()) {
       try {
         const bounds = account.view.getBounds();
-        // Skip re-attaching if bounds are 0x0 — the view was just created
-        // by ensureGptAccount but desktop:gpt-show hasn't set the real
-        // bounds yet.  Re-attaching with 0x0 makes the GPT window invisible.
         if (bounds.width > 0 && bounds.height > 0) {
           mainWindow.contentView.removeChildView(account.view);
           mainWindow.contentView.addChildView(account.view);
           account.view.setBounds(bounds);
           account.view.setBackgroundColor(embeddedGptPalette(gptThemeName).main);
           account.view.setBorderRadius(16);
+          account.view.setVisible(true);
           appendDesktopLog("gpt-surface-restored", `${reason} ${account.id} ${bounds.width}x${bounds.height}`);
         } else {
+          account.view.setVisible(true);
           appendDesktopLog("gpt-surface-skip", `${reason} ${account.id} bounds=${bounds.width}x${bounds.height}`);
         }
       } catch (error) {
         appendDesktopLog("gpt-surface-restore-failed", `${reason} ${error.message}`);
       }
     }
-    mainWindow.webContents.send("desktop:window-restored", { reason });
+    try {
+      if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send("desktop:window-restored", { reason });
+      }
+    } catch (_) {}
     showAssistantOverlayForWorkbench();
-  }, 140);
+  }, 100);
 }
 
 async function requestExplicitQuit() {
@@ -5335,6 +6442,7 @@ async function requestExplicitQuit() {
 }
 
 async function restartApp({ source = "automation", interactive = false } = {}) {
+  if (templateBatchWriters.size || gptDispatchClaims.size) return { ok: false, code: 'ACCOUNT_WRITER_BUSY' };
   if (interactive && productionTaskActive && mainWindow) {
     const result = await dialog.showMessageBox(mainWindow, {
       type: "warning",
@@ -5348,6 +6456,7 @@ async function restartApp({ source = "automation", interactive = false } = {}) {
     });
     if (result.response !== 1) return { ok: false, cancelled: true };
   }
+  await templateBatchHost.stop();
   appendDesktopLog("desktop-restart", source);
   quittingApp = true;
   setTimeout(() => {
@@ -5444,6 +6553,7 @@ function resolveNodeExecutable() {
     try { if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, executableName)); } catch {}
   }
   if (process.platform === "win32") {
+    candidates.push("D:\\Program Files\\nodejs\\node.exe");
     candidates.push("C:\\Program Files\\nodejs\\node.exe");
     candidates.push("C:\\Program Files (x86)\\nodejs\\node.exe");
   }
@@ -5502,13 +6612,55 @@ async function ensureServer() {
       CONTENT_ONLY_MODE: process.env.CONTENT_ONLY_MODE || "1",
       TEAMBUILDING_DASHBOARD_RUNTIME: RUNTIME_ROOT,
       TB_USER_DATA_ROOT,
-      TEAMBUILDING_RELEASE_ROOT: releaseRoot
+      TEAMBUILDING_RELEASE_ROOT: releaseRoot,
+      CONTENT_DESKTOP_RUNTIME_VERSION: APP_VERSION,
+      CONTENT_DESKTOP_STARTED_AT: DESKTOP_STARTED_AT
     },
     windowsHide: true,
     // stdout 丢给 null：子进程在 stdout 管道上写满缓冲（主进程忙于别的活时
     // 没人读）会同步阻塞它自己的事件循环，表现为"端口在听、但一个请求都不回"。
     // 服务的关键信息走 stderr 与主进程日志，stdout 不需要保留。
-    stdio: ["ignore", "ignore", "pipe"]
+    stdio: ["ignore", "ignore", "pipe", "ipc"]
+  });
+  const batchChild = serverProcess;
+  batchChild.on('message', message => {
+    const { REQUEST, RESPONSE } = require('../lib/template-batch-ipc');
+    if (batchChild !== serverProcess || message?.type !== REQUEST || !/^template-batch-\d+-\d+$/.test(message.requestId || '')) return;
+    const input = message.input || {};
+    if (!['status','attach','start','pause'].includes(input.action)) return;
+    handleTemplateBatch(input).catch(() => ({ ok: false, accountId: String(input.accountId || ''), code: 'TEMPLATE_BATCH_UNAVAILABLE' }))
+      .then(result => { if (batchChild === serverProcess && batchChild.connected) {
+        try { batchChild.send({ type: RESPONSE, requestId: message.requestId, result }); } catch (_) {}
+      } });
+  });
+  serverProcess.on("message", (message) => {
+    if (message?.type === "DESKTOP_SHOW_WINDOW") {
+      restoreMainWindow();
+      return;
+    }
+    if (message?.type !== GPT_ACCOUNT_CONTEXT_REQUEST_TYPE) return;
+    const child = serverProcess;
+    const requestId = String(message.requestId || "");
+    if (!/^[a-z0-9-]{1,80}$/i.test(requestId)) return;
+    const requestedId = String(message.accountId || "");
+    const operation = message.operation || 'read-context';
+    if (!['read-context', 'template-preflight'].includes(operation)) return;
+    const read = operation === 'template-preflight'
+      ? readExistingTemplatePreflight({ accountId: requestedId, taskId: String(message.taskId || '').slice(0,160),
+        bindingPath: String(message.bindingPath || '').slice(0,1000) })
+      : readExistingGptAccountContext(requestedId);
+    read
+      .catch(() => ({ ok: false, code: "ACCOUNT_CONTEXT_READ_FAILED", accountId: requestedId }))
+      .then((result) => {
+        if (child !== serverProcess || !child?.connected) return;
+        try {
+          child.send({
+            type: GPT_ACCOUNT_CONTEXT_RESPONSE_TYPE,
+            requestId,
+            result
+          });
+        } catch (_) {}
+      });
   });
   serverProcess.stdout?.on("data", (chunk) => appendDesktopLog("server", chunk));
   serverProcess.stderr?.on("data", (chunk) => appendDesktopLog("server-error", chunk));
@@ -5546,8 +6698,8 @@ async function ensureServer() {
 // 表现就是界面点刷新/主页像没反应、API 全部转圈。
 // 旧实现只在启动时 ensureServer 一次，之后再也不检查，坏掉就只能人工重启。
 //
-// 这里每 30s 探一次：连续 3 次没响应（约 90s）才判定卡死，然后
-// 收掉旧子进程 → 等端口释放 → 重新拉起。正常运行时零副作用。
+// 每30s单飞探测。连续三次未知只记录恢复延期；HTTP静默不能证明业务终态，
+// 不据此终止子进程。受控恢复继续使用既有restart入口与维护owner安全门禁。
 // ========================================================
 const WORKBENCH_WATCHDOG_INTERVAL_MS = 30_000;
 const WORKBENCH_WATCHDOG_FAILURE_LIMIT = 3;
@@ -5555,10 +6707,13 @@ let workbenchWatchdogTimer = null;
 let workbenchServerFailures = 0;
 let workbenchServerRestarting = false;
 let workbenchServerLastRestartAt = 0;
+let workbenchWatchdogProbeInFlight = false;
+let workbenchServerGeneration = 0;
 
 async function restartWorkbenchServerChild(reason = "watchdog") {
   if (workbenchServerRestarting) return { ok: false, skipped: "busy" };
   workbenchServerRestarting = true;
+  workbenchServerGeneration += 1;
   stoppingServer = true;
   try {
     appendDesktopLog("server-watchdog-restart", `reason=${reason} pid=${serverProcess?.pid || 0}`);
@@ -5598,28 +6753,43 @@ async function restartWorkbenchServerChild(reason = "watchdog") {
 function startWorkbenchServerWatchdog() {
   if (workbenchWatchdogTimer) return;
   workbenchWatchdogTimer = setInterval(async () => {
-    if (workbenchServerRestarting) return;
+    if (workbenchServerRestarting || workbenchWatchdogProbeInFlight) return;
     if (Date.now() - workbenchServerLastRestartAt < 60_000) return;
-    const probe = await probeWorkbenchServer();
-    if (probe === "ready") {
-      workbenchServerFailures = 0;
-      return;
-    }
-    // occupied 表示端口被别的程序占了，重启子进程也没用，只记录不重启
-    if (probe === "occupied") {
-      appendDesktopLog("server-watchdog-occupied", `port=${APP_PORT}`);
-      return;
-    }
-    workbenchServerFailures += 1;
-    appendDesktopLog("server-watchdog-unresponsive", `probe=${probe} count=${workbenchServerFailures}/${WORKBENCH_WATCHDOG_FAILURE_LIMIT}`);
-    if (workbenchServerFailures >= WORKBENCH_WATCHDOG_FAILURE_LIMIT) {
-      workbenchServerFailures = 0;
-      await restartWorkbenchServerChild(`unresponsive-${probe}`);
+    const probeGeneration = workbenchServerGeneration;
+    const probedServerProcess = serverProcess;
+    workbenchWatchdogProbeInFlight = true;
+    try {
+      const probe = await probeWorkbenchServer();
+      // A newer restart/child or a newer timer result invalidates this response.
+      if (probeGeneration !== workbenchServerGeneration || probedServerProcess !== serverProcess || workbenchServerRestarting) {
+        appendDesktopLog("server-watchdog-stale-probe", "result ignored after child generation changed");
+        return;
+      }
+      if (probe === "ready") {
+        workbenchServerFailures = 0;
+        return;
+      }
+      // occupied 表示端口被别的程序占了，重启子进程也没用，只记录不重启
+      if (probe === "occupied") {
+        appendDesktopLog("server-watchdog-occupied", "port=" + APP_PORT);
+        return;
+      }
+      workbenchServerFailures += 1;
+      appendDesktopLog("server-watchdog-unresponsive", "probe=" + probe + " count=" + workbenchServerFailures + "/" + WORKBENCH_WATCHDOG_FAILURE_LIMIT);
+      if (workbenchServerFailures >= WORKBENCH_WATCHDOG_FAILURE_LIMIT) {
+        workbenchServerFailures = 0;
+        // An unresponsive child may still own a submitted or generating task.
+        // HTTP silence cannot prove that killing it preserves that task.
+        appendDesktopLog("server-watchdog-restart-deferred", "probe=" + probe + " reason=task-state-unverified");
+      }
+    } catch (error) {
+      appendDesktopLog("server-watchdog-probe-error", String(error?.message || error));
+    } finally {
+      workbenchWatchdogProbeInFlight = false;
     }
   }, WORKBENCH_WATCHDOG_INTERVAL_MS);
   workbenchWatchdogTimer.unref?.();
 }
-
 async function createWindow() {
   appendDesktopLog("desktop-start", `electron=${process.versions.electron} chrome=${process.versions.chrome}`);
   await ensureServer();
@@ -5645,8 +6815,11 @@ async function createWindow() {
   });
   mainWindow = window;
   window.on("page-title-updated", (event) => event.preventDefault());
-  if (!IS_DESKTOP_HIDDEN) {
+  if (IS_DESKTOP_HIDDEN) {
     showMainWindowBackgrounded();
+  } else {
+    mainWindow.show();
+    mainWindow.focus();
   }
   window.on("minimize", () => {
     hideAllGptViews();
@@ -5659,7 +6832,10 @@ async function createWindow() {
     if (!assistantOverlayIsDetached()) assistantOverlayWindow?.hide();
   });
   window.on("blur", hideAttachedAssistantOverlayWhenInactive);
-  window.on("focus", showAssistantOverlayForWorkbench);
+  window.on("focus", () => {
+    exitPreviewStealthRenderMode(window);
+    showAssistantOverlayForWorkbench();
+  });
   window.on("show", () => {
     notifyWindowRestored("show");
   });
@@ -5671,7 +6847,7 @@ async function createWindow() {
     event.preventDefault();
     hideAllGptViews();
     hideOnlinePlatformViews();
-    window.minimize();
+    window.hide();
     appendDesktopLog("desktop-background", productionTaskActive ? "production-active" : "idle");
   });
   window.on("closed", () => {
@@ -5692,12 +6868,14 @@ async function createWindow() {
   });
 
   window.once("ready-to-show", () => {
-    if (!IS_DESKTOP_HIDDEN) showMainWindowBackgrounded();
+    if (IS_DESKTOP_HIDDEN) {
+      showMainWindowBackgrounded();
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
+      notifyWindowRestored("ready-to-show");
+    }
   });
-  // The "show" event may fire before the renderer's DOM is ready, causing
-  // notifyWindowRestored to send desktop:window-restored into the void.
-  // Re-trigger after the page finishes loading so the renderer can actually
-  // receive it and restore the embedded GPT surface.
   window.webContents.once("did-finish-load", () => {
     setTimeout(() => notifyWindowRestored("did-finish-load"), 200);
   });
@@ -5720,7 +6898,9 @@ async function createWindow() {
     }
   }
   if (!IS_DESKTOP_HIDDEN) {
-    showMainWindowBackgrounded();
+    mainWindow.show();
+    mainWindow.focus();
+    notifyWindowRestored("init-complete");
     await ensureAssistantOverlay();
   }
 }
@@ -5732,20 +6912,10 @@ if (!hasSingleInstanceLock) {
 } else {
   app.on("second-instance", (_event, commandLine) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    const forceRestore = Array.isArray(commandLine) && commandLine.some(arg => arg === "--restore" || arg === "--force-restore");
-    // 用户最小化时，坚决不打扰用户，保持最小化状态（彻底杜绝后台反复弹窗骚扰）
-    if (mainWindow.isMinimized() && !forceRestore) {
-      appendDesktopLog("second-instance-ignored-minimized", `args=${(commandLine || []).join(" ")}`);
-      return;
-    }
-    const forceShow = forceRestore || (Array.isArray(commandLine) && commandLine.some(arg => arg === "--show"));
-    if (IS_DESKTOP_HIDDEN && !forceShow) {
-      appendDesktopLog("second-instance-ignored-in-hidden-mode", `args=${(commandLine || []).join(" ")}`);
-      return;
-    }
-    mainWindow.showInactive();
+    restoreMainWindow();
+    appendDesktopLog("second-instance-restored", `args=${(commandLine || []).join(" ")}`);
   });
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     appendDesktopLog(
       "electron-network-proxy",
       ELECTRON_PROXY_CONFIG.enabled
@@ -5753,6 +6923,14 @@ if (!hasSingleInstanceLock) {
         : `disabled reason=${ELECTRON_PROXY_CONFIG.error || "unknown"}`
     );
     ensureDurableRuntimeResources();
+    await templateBatchHost.start();
+    try {
+      await require('../lib/reconnectable-context-bridge').startContextBridge({
+        runtimeRoot:RUNTIME_ROOT,version:APP_VERSION,startedAt:DESKTOP_STARTED_AT,
+        readContext:readExistingGptAccountContext, readTemplatePreflight:readExistingTemplatePreflight
+      });
+      appendDesktopLog('context-bridge-listening','read-only local reconnect enabled');
+    } catch(error) { appendDesktopLog('context-bridge-unavailable',String(error.code||error.message)); }
     applyPendingGptLoginBackup();
     applyPendingGptLoginRestore();
     startTemporaryWebCacheCleanup();
@@ -5775,7 +6953,7 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     if (!quitFlushStarted) {
       quitFlushStarted = true;
-      flushAllGptStorageData().finally(() => {
+      Promise.allSettled([templateBatchHost.stop(), flushAllGptStorageData()]).finally(() => {
         quitFlushCompleted = true;
         app.quit();
       });

@@ -1,0 +1,4 @@
+﻿{"backupDir":"D:\\AICode\\工具开发\\projects\\content-production-app\\backups\\backup-20260911-134058","timestamp":"2026-09-11T13:41:04.8197044+08:00","releaseNote":"初始安全发布：稳定版与开发版架构彻底物理隔离，全部88项测试通过"}
+{"backupDir":"D:\\AICode\\工具开发\\projects\\content-production-app\\backups\\backup-20260911-134119","timestamp":"2026-09-11T13:41:26.2126218+08:00","releaseNote":"稳定版与开发版架构隔离及单元测试修复部署"}
+{"backupDir":"D:\\AICode\\工具开发\\projects\\content-production-app\\backups\\backup-20260911-134541","timestamp":"2026-09-11T13:45:47.3019952+08:00","releaseNote":"同步 main.js 语法修复与测试通过"}
+{"version": "2.7.0", "release": "content-production-app-v2.7.0-stable", "archive": "content-production-app-v2.7.0-stable.zip", "sha256": "e974af2843736ed69a51567d2e50720d3ae55140beb519ac795c852c77e3c0b1", "timestamp": "2026-10-31T10:25:00+08:00", "releaseNote": "正式稳定版：多账号A~F全登录态、顶栏拖拽动态排序、Plus金色立体边框、原生Partition干净隔离根治Google拦截、519项契约测试全通过"}

@@ -12,13 +12,16 @@ const readText = (p) => fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const html = readText(path.join(__dirname, "index.html"));
 const version = fs.readFileSync(path.join(__dirname, "..", "..", "VERSION"), "utf8").trim();
 const app = readText(path.join(__dirname, "app.js"));
+const browserLoadingProgress = readText(path.join(__dirname, "gpt-browser-loading-progress.js"));
 const commandBus = readText(path.join(__dirname, "workbench-command-bus.js"));
 const css = readText(path.join(__dirname, "styles.css"));
 const conversionOutputReport = readText(path.join(__dirname, "..", "..", "docs", "流量转化成交产出复盘.html"));
 const workerStateSource = readText(path.join(__dirname, "gpt-window-worker-state.js"));
 const productionStatus = readText(path.join(__dirname, "gpt-production-status.js"));
+const browserProfilesReader = readText(path.join(__dirname, "..", "lib", "gpt-browser-profiles.js"));
 const fixedTemplateSession = readText(path.join(__dirname, "fixed-template-session.js"));
 const desktopMain = readText(path.join(__dirname, "..", "desktop", "main.js"));
+const cdpLivePreview = readText(path.join(__dirname, "..", "lib", "cdp-live-preview.js"));
 const temporaryWebCacheSchedule = readText(path.join(__dirname, "..", "lib", "temporary-web-cache-schedule.js"));
 const desktopPreload = readText(path.join(__dirname, "..", "desktop", "preload.js"));
 const assistantOverlay = readText(path.join(__dirname, "assistant-overlay.html"));
@@ -33,17 +36,22 @@ const _routeSources = fs.existsSync(_routeDir)
   ? fs.readdirSync(_routeDir).filter(f => f.endsWith(".js")).map(f => readText(path.join(_routeDir, f))).join("\n")
   : "";
 const server = readText(path.join(__dirname, "..", "server.js")) + _routeSources;
+const productionWorkflowService = readText(path.join(__dirname, "..", "server", "production-workflow-service.js"));
 const gptSidebar = readText(path.join(__dirname, "..", "integrations", "gpt-production-extension", "sidebar.js"));
 const gptBackground = readText(path.join(__dirname, "..", "integrations", "gpt-production-extension", "background.js"));
-const gptUserscript = readText(path.join(__dirname, "..", "integrations", "gpt-production-extension", "vendor", "chatgpt-conversation-tree.user.js"));
+const gptUserscript = readText(path.join(__dirname, "..", "integrations", "gpt-production-extension", "vendor", "chatgpt-conversation-tree.user.js"))
+  + (fs.existsSync(path.join(__dirname, "..", "integrations", "gpt-production-extension", "app-overrides.js"))
+    ? "\n" + readText(path.join(__dirname, "..", "integrations", "gpt-production-extension", "app-overrides.js"))
+    : "");
 
 function appFunctionSource(name, nextName) {
   const marker = `function ${name}(`;
   let start = app.indexOf(marker);
   assert.notEqual(start, -1, `missing app function: ${name}`);
   if (app.slice(Math.max(0, start - 6), start) === "async ") start -= 6;
-  const end = app.indexOf(`function ${nextName}(`, start + marker.length);
+  let end = app.indexOf(`function ${nextName}(`, start + marker.length);
   assert.notEqual(end, -1, `missing next app function: ${nextName}`);
+  if (app.slice(Math.max(0, end - 6), end) === "async ") end -= 6;
   return app.slice(start, end).trim();
 }
 
@@ -66,6 +74,23 @@ test("P0 primary navigation exposes the approved product workspaces and skill ce
   }
   assert.doesNotMatch(html, /data-tab="wechat"/);
   assert.doesNotMatch(html, /<span>内容生产<\/span>|<span>内容分发<\/span>|<span>公众号分发<\/span>/);
+});
+
+test("C-11 production workflow controls stay account-scoped and resume requires trusted reconciliation", () => {
+  assert.match(server, /\/api\/production-workflow\/accounts/);
+  assert.match(server, /productionWorkflowRoute\(req, res\)/);
+  assert.match(productionWorkflowService, /updateCanonicalControl\(id, mode\)/);
+  assert.match(productionWorkflowService, /if \(action === 'resume'\)[\s\S]{0,280}applied: false, needsReconciliation: true/);
+  assert.match(productionWorkflowService, /readCanonicalState\(id\)/);
+  assert.doesNotMatch(productionWorkflowService, /gpt-send-task|submitToChatGpt|sendTaskToEmbeddedGpt/);
+});
+
+test("multi-account scheduling registers every enabled account and gates task concurrency separately", () => {
+  assert.match(app, /const workers = visibleAccounts;/);
+  assert.match(app, /createParallelAccountGate\?\.\(workerCount\)/);
+  assert.match(app, /const releaseWorkerSlot = await workerGate\.acquire\(\)/);
+  assert.match(app, /await Promise\.all\(workers\.map\(runWorker\)\)/);
+  assert.doesNotMatch(app, /maximumWorkers:\s*5/);
 });
 
 // [legacy 2026-10-22] 判定：本条断言锁定的是旧版 GPT 生产界面 DOM/旧机制，界面已整体改版，断言目标在当前代码中已不存在。暂作隔离保留原文，待按新界面重写契约。详见 docs/TEST-DEBT-REPORT.md
@@ -1026,6 +1051,9 @@ test("开发版静态资源缓存版本与 VERSION 同步", () => {
   assert.match(html, new RegExp(`styles\\.css\\?v=${versionPattern}`));
   assert.match(html, new RegExp(`distribution-ui\\.js\\?v=${versionPattern}`));
   assert.match(html, new RegExp(`material-workspace\\.js\\?v=${versionPattern}`));
+  assert.match(html, new RegExp(`production-request\\.js\\?v=${versionPattern}`));
+  assert.match(html, new RegExp(`gpt-browser-loading-progress\\.js\\?v=${versionPattern}`));
+  assert.match(html, new RegExp(`gpt-template-target\\.js\\?v=${versionPattern}`));
   assert.match(html, new RegExp(`app\\.js\\?v=${versionPattern}`));
 });
 
@@ -1039,6 +1067,107 @@ test("runtime version probe stays ahead of blocking optional routers", () => {
   assert.ok(earlyConversion >= 0, "early conversion router must exist");
   assert.ok(probe < earlyConversion, "runtime probe must not wait for optional conversion helpers");
   assert.ok(runtimeStateProbe < earlyConversion, "runtime state probe must not wait for optional conversion helpers");
+});
+
+test("GPT browser profile routing uses cached persistent config without identity or session IPC", () => {
+  const routeStart = server.indexOf('if (pathname === "/api/gpt-browser-profiles" && req.method === "GET")');
+  const routeEnd = server.indexOf('if (pathname === "/api/gpt-production/runtime-state" && req.method === "GET")', routeStart);
+  assert.ok(routeStart >= 0 && routeEnd > routeStart);
+  const route = server.slice(routeStart, routeEnd);
+  assert.match(server, /createGptBrowserProfilesReader\(\)/);
+  assert.match(route, /await readGptBrowserProfiles\(\[/);
+  assert.match(route, /electron-userdata/);
+  assert.doesNotMatch(route, /executeJavaScript|probeGptSessionAuth|auth\/session|gpt-template-sync-status/);
+  assert.match(browserProfilesReader, /await io\.stat\(file\)/);
+  assert.match(browserProfilesReader, /await io\.readFile\(file, "utf8"\)/);
+  assert.match(browserProfilesReader, /cached\?\.fingerprint === fingerprint/);
+  assert.match(browserProfilesReader, /activeId: String\(parsed\.activeId \|\| ""\)/);
+});
+
+test("embedded account inspector reads a selected stable id without switching or showing a browser window", () => {
+  assert.match(html, /id="gptAccountContextTarget"/);
+  assert.match(html, /id="gptAccountContextRead"/);
+  assert.match(html, /id="gptAccountContextResult"/);
+  const start = app.indexOf("async function readGptAccountContext()");
+  const end = app.indexOf("async function renameGptAccount", start);
+  assert.ok(start >= 0 && end > start);
+  const inspector = app.slice(start, end);
+  assert.match(inspector, /\/api\/gpt-account-context\?accountId=/);
+  assert.match(inspector, /encodeURIComponent\(accountId\)/);
+  assert.match(inspector, /result\.accountId !== accountId/);
+  assert.match(inspector, /resultNode\.textContent = lines\.join\("\\n"\)/);
+  assert.doesNotMatch(inspector, /switchGptAccount\(|showEmbeddedGptView\(|gptWorkbench.*show|\.loadURL\(/);
+  assert.match(inspector, /identity\.emailMasked/);
+  assert.match(inspector, /conversation\.targetBound/);
+  assert.match(inspector, /conversation\.pageReady/);
+  assert.match(inspector, /conversation\.targetMatches/);
+  assert.doesNotMatch(inspector, /identity\.(email|name|plan)(?:\W|$)/);
+  assert.doesNotMatch(inspector, /pageTarget|webContentsTarget|conversationId|conversation\.title|draftPresent|attachmentsPresent|generating/);
+  assert.match(app, /renderGptAccountContextTarget\(\)/);
+});
+
+test("online template targets fail closed without an exact per-account conversation or server transaction", () => {
+  const builderStart = app.indexOf("function buildGptOnlineTemplateCreationTasks(");
+  const builderEnd = app.indexOf("const gptOnlineTemplateCreationLists", builderStart);
+  assert.ok(builderStart >= 0 && builderEnd > builderStart);
+  const builder = app.slice(builderStart, builderEnd);
+  const helperScriptIndex = html.indexOf("/gpt-template-target.js");
+  const appScriptIndex = html.indexOf("/app.js?v=");
+  assert.ok(helperScriptIndex >= 0 && appScriptIndex > helperScriptIndex);
+  assert.match(builder, /seenTaskIds/);
+  assert.match(builder, /resolveTemplateCreationTarget/);
+  assert.match(builder, /TEMPLATE_TRANSACTION_UNAVAILABLE/);
+  assert.match(builder, /navigationUrl: ""/);
+  assert.match(builder, /_status: nativeCreationReady \? "ready" : "blocked"/);
+  assert.doesNotMatch(builder, /binding\.projectUrl|bound\.conversationUrl\s*\|\|/);
+  assert.match(builder, /Object\.values\(actionStatus\).*UNCONFIRMED_PENDING/s);
+});
+
+test("address loading indicator tracks native events without fake progress or layout shifts", () => {
+  const addressIndex = html.indexOf('id="gptBrowserAddressInput"');
+  const progressIndex = html.indexOf('id="gptBrowserLoadingProgress"');
+  const statusIndex = html.indexOf('id="gptBrowserLoadingStatus"');
+  const viewportIndex = html.indexOf('id="gptEmbeddedHost"');
+  assert.ok(addressIndex >= 0 && progressIndex > addressIndex && statusIndex > progressIndex && viewportIndex > statusIndex);
+  assert.match(html, /id="gptBrowserLoadingProgress"[^>]*hidden[^>]*aria-hidden="true"/);
+  assert.match(html, /id="gptBrowserLoadingStatus"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.ok(html.includes(`/gpt-browser-loading-progress.js?v=${version}`));
+  assert.match(app, /createController\(\s*\$\("#gptBrowserLoadingProgress"\),\s*\$\("#gptBrowserLoadingStatus"\),\s*window\s*\)/);
+  assert.match(app, /window\.gptWorkbench\?\.onLoadingChanged/);
+  assert.match(app, /unsubscribeGptBrowserLoading\(\)/);
+  assert.match(app, /function disposeGptBrowserLoading\(\)[\s\S]*?unsubscribeGptBrowserLoading\(\)[\s\S]*?gptBrowserLoadingController\?\.dispose\(\)/);
+  assert.match(app, /addEventListener\("pagehide", disposeGptBrowserLoading/);
+  assert.match(app, /addEventListener\("beforeunload", disposeGptBrowserLoading/);
+  assert.match(app, /if \(gptBrowserLoadingDisposed\) return;/);
+  assert.match(app, /if \(typeof browserState\.loading === "boolean"\) setGptBrowserLoading\(browserState\.loading\)/);
+  assert.doesNotMatch(app, /gptBrowserLoadingWatchdogTimer|aria-valuenow.*35/);
+  const accountSwitchStart = app.indexOf("async function switchGptAccount");
+  const accountSwitchEnd = app.indexOf("async function addGptAccount", accountSwitchStart);
+  assert.ok(accountSwitchStart >= 0 && accountSwitchEnd > accountSwitchStart);
+  assert.match(app.slice(accountSwitchStart, accountSwitchEnd), /if \(accountChanged\) resetGptBrowserLoading\(\)/);
+  assert.doesNotMatch(browserLoadingProgress, /\.focus\s*\(/);
+  const addressSyncStart = app.indexOf("function syncGptBrowserAddress");
+  const addressSyncEnd = app.indexOf("// CDP LIVE VIEWPORT", addressSyncStart);
+  assert.ok(addressSyncStart >= 0 && addressSyncEnd > addressSyncStart);
+  assert.doesNotMatch(app.slice(addressSyncStart, addressSyncEnd), /setGptBrowserLoading/);
+  assert.match(browserLoadingProgress, /clearTimeout/);
+  assert.match(browserLoadingProgress, /function reset\(\)/);
+  assert.match(browserLoadingProgress, /function dispose\(\)/);
+  assert.doesNotMatch(browserLoadingProgress, /aria-valuenow|percentage|percent/i);
+  assert.match(css, /\.gpt-browser-loading-progress\s*\{[^}]*position:\s*absolute/s);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  assert.match(css, /\.gpt-browser-loading-progress\.is-loading\s*>\s*span[^}]*animation:\s*none/s);
+
+  const navStart = desktopMain.indexOf('account.view.webContents.on("did-start-loading"');
+  const navEnd = desktopMain.indexOf("const savedProfiles = readBrowserProfiles()", navStart);
+  const pageEvents = desktopMain.slice(navStart, navEnd);
+  assert.ok(navStart >= 0 && navEnd > navStart);
+  assert.match(pageEvents, /did-start-loading[\s\S]*notifyGptLoadingChanged\(id, true\)/);
+  assert.match(pageEvents, /did-finish-load[\s\S]*notifyGptLoadingChanged\(id, false\)/);
+  assert.match(pageEvents, /did-stop-loading[\s\S]*notifyGptLoadingChanged\(id, false\)/);
+  assert.match(pageEvents, /did-fail-load[\s\S]*notifyGptLoadingChanged\(id, false, true\)/);
+  assert.match(pageEvents, /webContents\?\.isLoading\?\.\(\) === false/);
+  assert.match(desktopMain, /loading: contents && typeof contents\.isLoading === "function" \? contents\.isLoading\(\) : null/);
 });
 
 test("GPT conversation evidence probe stays ahead of blocking optional routers", () => {
@@ -2014,7 +2143,7 @@ test("configured quota blocks only the next work boundary and real web limits st
   assert.match(app, /function recordActualGptLimit/);
   assert.match(app, /function inferGptQuotaLimitKind/);
   assert.match(app, /function formatGptQuotaProbeTime/);
-  assert.match(app, /已触发额度\/低产出上限/);
+  assert.match(app, /已触发\$\{quotaKindLabel\}限制/);
   assert.match(app, /自动重新探测/);
   assert.match(app, /quotaPauseMessage: uiState\.quotaPauseStatus/);
   // The quota resume control is intentionally short; the delayed tooltip
@@ -2022,7 +2151,7 @@ test("configured quota blocks only the next work boundary and real web limits st
   assert.match(app, /继续尝试/);
   assert.match(app, /已触达额度或低产出上限/);
   assert.match(app, /上传本轮起点/);
-  assert.match(app, /等待真实消耗后计算/);
+  assert.ok(app.includes("已保留当前任务"));
   assert.match(app, /scheduleGptQuotaReminder\(new Date\(nextProbeAt\)\.toISOString\(\), quotaAccountId\)/);
   assert.match(app, /uploadCycleStartAt/);
   assert.match(app, /generationCycleStartAt/);
@@ -2043,23 +2172,28 @@ test("跨页面生产通知结束后恢复当前页面自己的固定消息", ()
   assert.match(app, /assistantLastMessagesByView\.get\(activeView\)/);
 });
 
-test("low-output generation is a batch-level limit signal", () => {
-  assert.match(app, /function isLowOutputGptLimitMessage/);
-  assert.match(app, /生成结果不足\|本轮只检测到\|安全线为\|额度触顶\|生成不完整/);
-  assert.match(app, /const lowOutputLimit = isLowOutputGptLimitMessage/);
-  assert.match(app, /已识别为触顶征兆，当前素材跳过，本批暂停/);
-  assert.match(app, /等待下一轮额度探测/);
-  assert.match(app, /本轮图片低于安全线，判定为触顶\/降级征兆/);
-  assert.match(app, /if \(lowOutputLimit\) gptTestQueueIndex \+= 1/);
-  assert.match(app, /quotaPausedTask = task/);
-  assert.match(app, /if \(!quotaPausedTask && failedTask/);
-  assert.match(app, /function resetGptCycleForAutomaticProbe/);
-  assert.match(app, /async function resumeGptQueueAfterQuotaProbe/);
-  assert.match(app, /const independentWindow = Boolean\(account/);
-  assert.match(app, /reconcileGptWindow\((?:key|windowKey), \{ force: false, automaticResume: true \}\)/);
-  assert.match(app, /正在用下一条素材自动试跑/);
-  assert.match(app, /function restoreGptQuotaProbeTimers/);
-  assert.match(app, /restoreGptQuotaProbeTimers\(\)/);
+test("ordinary retries and incomplete images never become platform quota", () => {
+  const context = { window: { TBGptQuotaView: require("./gpt-quota-view") } };
+  vm.createContext(context);
+  for (const name of ["isActualGptLimitMessage", "isGptRetryLimitSignal", "isLowOutputGptLimitMessage", "isIncompleteGptOutput", "recordActualGptLimit"]) {
+    const match = app.match(new RegExp("function " + name + "\\([\\s\\S]*?\\n\\}"));
+    assert.ok(match, name);
+    vm.runInContext(match[0], context);
+  }
+  for (const message of ["出了点问题，请重试", "生成不完整，本轮只检测到2张图片", "网络超时", "something went wrong, try again"]) {
+    assert.equal(context.isGptRetryLimitSignal(message, {taskType:"material"}), false);
+    assert.equal(context.isLowOutputGptLimitMessage(message), false);
+    assert.equal(context.isActualGptLimitMessage(message), false);
+    // Guard must return before touching persistence or account globals.
+    assert.equal(context.recordActualGptLimit(message, "account-1"), null);
+  }
+  assert.equal(context.isActualGptLimitMessage("已达到上传用量上限，请稍后再试"), true);
+  assert.equal(context.isIncompleteGptOutput("生成不完整，本轮只检测到2张图片"), true);
+  const block = app.slice(app.indexOf('if (!actualLimit && isIncompleteGptOutput(taskError.message))'), app.indexOf('if (actualLimit) {', app.indexOf('if (!actualLimit && isIncompleteGptOutput(taskError.message))')));
+  assert.ok(block.includes('task._status = "paused"'));
+  assert.ok(block.includes('throw incompleteError'));
+  assert.ok(!block.includes('gptTestQueueIndex += 1'));
+  assert.ok(!app.includes('"production-limit-signal"'));
 });
 
 test("an explicit zero-image generation failure retries the same conversation immediately", () => {
@@ -2087,8 +2221,8 @@ test("a Chinese GPT image-generation error resumes the confirmed image stage onc
 test("uncertain GPT image counts preserve the current material instead of faking a quota limit", () => {
   assert.match(app, /"IMAGE_COUNT_UNCERTAIN"/);
   assert.match(quotaView, /未\|无法\|不能[\s\S]*?return false/);
-  assert.match(app, /function isLowOutputGptLimitMessage[\s\S]*?未\|无法\|不能[\s\S]*?return false/);
-  assert.match(app, /\(\?:只检测到\|完整回复只有\)/);
+  assert.match(app, /function isLowOutputGptLimitMessage[\s\S]*?return false/);
+  assert.ok(app.includes("INCOMPLETE_OUTPUT_RECONCILIATION_REQUIRED"));
   assert.match(gptSidebar, /copy-turn-action-button/);
   assert.match(gptSidebar, /assistant-response-quiet-complete/);
   assert.match(gptSidebar, /error\.code = "IMAGE_COUNT_UNCERTAIN"/);
@@ -2393,6 +2527,18 @@ test("rotation pauses on a dirty composer instead of skipping subsequent materia
   assert.match(app, /copy\.taskType\s*=\s*"template-init";[\s\S]{0,500}copy\.forceUpload\s*=\s*true;/);
 });
 
+test("unresolved material recovery errors stop before browser execution instead of skipping the task", () => {
+  const claimStart = app.indexOf('api("/api/material-lifecycle/claim"');
+  const guardStart = app.indexOf("const nonBlocking = [", claimStart);
+  const guardEnd = app.indexOf("task._materialLifecycleClaim = lifecycleClaim;", guardStart);
+  const claimHandling = app.slice(guardStart, guardEnd);
+
+  assert.ok(claimStart >= 0, "material tasks must claim lifecycle state before browser execution");
+  assert.ok(guardStart >= 0 && guardEnd > guardStart, "claim failure handling must remain explicit");
+  assert.doesNotMatch(claimHandling, /MATERIAL_RECOVERY_REQUIRED/);
+  assert.match(claimHandling, /if \(nonBlocking\)[\s\S]*?workerState\.queueIndex \+= 1;[\s\S]*?throw claimError;/);
+});
+
 // [legacy 2026-10-22] 判定：本条断言锁定的是旧版 GPT 生产界面 DOM/旧机制，界面已整体改版，断言目标在当前代码中已不存在。暂作隔离保留原文，待按新界面重写契约。详见 docs/TEST-DEBT-REPORT.md
 test.skip("global account rotation uses per-window opt-in and closes a whole work before the 45-image safety switch", () => {
   assert.match(html, /gpt-account-rotation\.js\?v=/);
@@ -2538,30 +2684,43 @@ test("independent automatic windows launch together without the legacy startup s
   assert.match(gate, /startup-stagger-disabled/);
 });
 
-test("GPT production refreshes after a completed post and clears only temporary cache every configured hourly window", () => {
-  assert.match(app, /GPT_TEMPORARY_CACHE_STORAGE_KEY/);
-  assert.match(app, /function scheduleGptTemporaryCacheMaintenance\(/);
+test("GPT production refresh remains separate from manual cache cleanup and automatic GPT cache timers are absent", () => {
   assert.match(app, /async function refreshGptAfterProduction\(/);
   assert.match(app, /GPT_POST_REFRESH_TIMEOUT_MS/);
   assert.match(app, /Promise\.race\(\[maintenanceRequest, timeoutRequest\]\)/);
-  assert.match(app, /async function runGptTemporaryCacheMaintenance\(/);
-  assert.match(app, /clearTemporaryCache: true/);
-  assert.match(app, /GPT_TEMPORARY_CACHE_INTERVAL_MS = 3 \* 60 \* 60 \* 1000/);
-  assert.match(app, /task\?\.taskType === "material" \|\|/);
-  assert.match(app, /gptTemporaryCacheIntervalMs/);
+  assert.match(app, /maintenance\(\{ accountId: key, clearTemporaryCache: false, reason \}\)/);
+  assert.doesNotMatch(app, /GPT_TEMPORARY_CACHE_STORAGE_KEY|scheduleGptTemporaryCacheMaintenance|runGptTemporaryCacheMaintenance|restoreGptTemporaryCacheMaintenanceTimers|clearTemporaryCache: true/);
+  assert.ok(app.includes("task.taskType === \"material\""));
   assert.match(app, /await refreshGptAfterProduction\(account\.id, "rotation-production-complete"\)/);
   assert.match(app, /await refreshGptAfterProduction\(runAccountId, "production-complete"\)/);
-  assert.match(app, /production-limit-signal/);
-  assert.match(desktopMain, /reloadIgnoringCache/);
-  assert.match(desktopMain, /Never call clearStorageData here/);
+  assert.ok(!app.includes("production-limit-signal"), "quota does not authorize page refresh");
   assert.match(desktopPreload, /desktop:gpt-maintenance/);
+  assert.match(desktopPreload, /clearTemporaryCache: Boolean\(input\.clearTemporaryCache \|\| input\.clearCache\)/);
+  assert.match(desktopMain, /clearTemporaryCache: Boolean\(input\.clearTemporaryCache \|\| input\.clearCache\)/);
+  const maintenance = desktopMain.match(/async function refreshGptAccountSession\([\s\S]*?\n}\n\nfunction embeddedGptTaskResultScript/)?.[0] || "";
+  assert.match(maintenance, /getCacheSize\(\)/);
+  assert.match(maintenance, /await account\.session\.clearCache\(\)/);
+  assert.match(maintenance, /pageRefreshed: false/);
+  assert.match(maintenance, /if \(cacheSizeBytes <= 0\)[\s\S]*?return \{ ok: true, accountId: id, cacheCleared: false/);
+  assert.doesNotMatch(maintenance, /reloadIgnoringCache/);
+  assert.ok(maintenance.indexOf("if (cacheSizeBytes <= 0)") < maintenance.indexOf("clearCache()"), "empty measured caches must be left untouched");
+  assert.ok(maintenance.indexOf("getCacheSize()") < maintenance.indexOf("clearCache()"), "manual cleanup must measure the account cache before clearing it");
+  assert.ok(maintenance.indexOf("gpt-cache-size-failed") < maintenance.indexOf("clearCache()"), "cache-size errors must stop before cache mutation");
+  assert.ok(maintenance.indexOf("pageRefreshed: false") < maintenance.indexOf("contents.reload()"), "cache-only requests must return before the separate page refresh path");
 });
 
-test("hourly cache cleanup defers when a durable runtime still owns an unfinished task", () => {
-  assert.match(app, /const durableRuntime = readGptWindowRuntime\(key\);/);
-  assert.match(app, /durableTaskStillBusy = Boolean\([\s\S]{0,360}currentTaskId/);
-  assert.match(app, /!\["idle", "completed", "waiting-quota"\]\.includes\(String\(durableRuntime\.status \|\| ""\)\)/);
-  assert.match(app, /\|\| durableTaskStillBusy;/);
+test("manual GPT cache cleanup remains blocked while its native account owns an unfinished task", () => {
+  const maintenance = desktopMain.match(/async function refreshGptAccountSession\([\s\S]*?\n}\n\nfunction embeddedGptTaskResultScript/)?.[0] || "";
+  const guard = maintenance.indexOf("if (productionTaskAccounts.has(id) || account.pendingGptTask || durableTaskStillBusy || cacheClearUnsafe)");
+  const clear = maintenance.indexOf("await account.session.clearCache()");
+  assert.ok(guard >= 0 && clear > guard, "native activity protection must run before cache mutation");
+  assert.match(maintenance, /durableRuntime\.currentTaskId/);
+  assert.match(maintenance, /account\.pendingGptTask/);
+  assert.match(maintenance, /account\.bridgeRecoveryPending/);
+  assert.match(maintenance, /account\.userRecoveryHold/);
+  assert.match(maintenance, /account\.pageState\?\.loading/);
+  assert.match(maintenance, /productionTaskAccounts\.has\(id\)/);
+  assert.match(maintenance, /clearTemporaryCache \? gptAccounts\.get\(id\) : await ensureGptAccount\(id\)/);
 });
 
 test("automatic readiness recovery does not reload a window that still owns a non-terminal checkpoint", () => {
@@ -3522,9 +3681,10 @@ test("desktop manual download actions cross the isolated extension world through
 });
 
 test("manual recovery can download every unique image from the latest complete assistant turn", () => {
-  assert.match(gptUserscript, /download-complete-latest/);
-  assert.match(gptUserscript, /TeambuildingGptProductionDownload/);
-  assert.match(gptUserscript, /backend-api\/estuary\/content/);
+  const overrides = readText(path.join(__dirname, "..", "integrations", "gpt-production-extension", "app-overrides.js"));
+  assert.match(overrides, /__CGPT_APP_HOOKS__/);
+  assert.match(overrides, /saveFile/);
+  assert.match(overrides, /save-generated-image/);
 });
 
 test("a new post cannot upload while the previous GPT response is still generating", () => {
@@ -3778,7 +3938,7 @@ test("upload quota is recorded only after the GPT page acknowledges the task", (
 
 test("GPT desktop read and stop bridges return bounded results when a window renderer stalls", () => {
   assert.match(desktopMain, /function executeGptJavaScriptBounded\(contents, script, timeoutMs = 4000/);
-  assert.match(desktopMain, /async function executeGptJavaScriptViaCdp\(contents, script, timeoutMs = 4000\)/);
+  assert.match(desktopMain, /async function executeGptJavaScriptViaCdp\(contents, script, timeoutMs = 4000, options = \{\}\)/);
   assert.match(desktopMain, /Runtime\.evaluate/);
   assert.match(desktopMain, /contents\.debugger\.sendCommand\("Runtime\.evaluate"/);
   assert.match(desktopMain, /all account windows can legitimately be[\s\S]*?on https:\/\/chatgpt\.com/);
@@ -3813,9 +3973,9 @@ test("GPT desktop read and stop bridges return bounded results when a window ren
   assert.match(desktopMain, /const GPT_INITIALIZATION_TIMEOUT_MS = 10_000/);
   assert.match(desktopMain, /\}\)\(\)`, GPT_INITIALIZATION_TIMEOUT_MS, null, `init:\$\{account\.id\}`/);
   assert.match(desktopMain, /const cdpBudget = Math\.min\(1500, Math\.max\(500, Math\.floor\(limit \* 0\.25\)\)\)/);
-  assert.match(desktopMain, /executeGptJavaScriptViaCdp\(contents, script, cdpBudget\)/);
+  assert.match(desktopMain, /executeGptJavaScriptViaCdp\(contents, script, cdpBudget, \{ readOnly: isolatedReadFallback \}\)/);
   assert.match(desktopMain, /gpt-cdp-fallback/);
-  assert.match(desktopMain, /if \(readHealth && readHealth\.consecutiveTimeouts > 0\)/);
+  assert.match(desktopMain, /if \(\(readHealth && readHealth\.consecutiveTimeouts > 0\) \|\| readonlyTimeouts\?\.has\(channel\)\)/);
   assert.match(desktopMain, /function noteGptBridgeSuccess\(account, channel\)/);
   assert.match(desktopMain, /gpt-bridge-timeout-deferred/);
   assert.match(statusBlock, /probeGptPageReadiness\(account, "status", 3000\)/);
@@ -4009,7 +4169,7 @@ test("GPT production attachments use the exact Electron WebContents native file 
 
 test("scheduled web cache cleanup never clears GPT production partitions", () => {
   assert.match(desktopMain, /async function clearReproducibleWebCaches\(reason = "manual", options = \{\}\)/);
-  assert.match(desktopMain, /const includeGpt = options\.includeGpt !== false/);
+  assert.match(desktopMain, /const includeGpt = options\.includeGpt === true/);
   assert.match(desktopMain, /clearReproducibleWebCaches\("scheduled-1h", \{ includeGpt: false \}\)/);
 });
 
@@ -4032,8 +4192,7 @@ test("GPT maintenance keeps a window closed to new work until its refresh promis
   assert.match(app, /const gptWindowRefreshInFlight = new Set\(\)/);
   assert.match(app, /gptWindowRefreshInFlight\.add\(key\)/);
   assert.match(app, /gptWindowRefreshInFlight\.delete\(key\)/);
-  assert.match(app, /if \(gptWindowRefreshInFlight\.has\(key\) \|\| gptAccountRefreshPromises\.has\(key\)\)/);
-  assert.match(app, /const workerBusy = gptWindowRefreshInFlight\.has\(key\)/);
+  assert.match(app, /if \(gptWindowRefreshInFlight\.has\(key\) \|\| gptAccountRefreshPromises\.has\(key\)\)\s*\{\s*return \{ ok: false, reason: "window-refreshing", accountId: key \}/);
 });
 
 test("native GPT maintenance defers navigation while a durable account task is active", () => {
@@ -4048,23 +4207,10 @@ test("native GPT maintenance defers navigation while a durable account task is a
   assert.match(block, /已延后网页刷新/);
 });
 
-test("GPT temporary cache maintenance respects manual mode and explicit window holds", () => {
-  const helperStart = app.indexOf("function gptWindowMaintenanceHeld");
-  const scheduleStart = app.indexOf("function scheduleGptTemporaryCacheMaintenance", helperStart);
-  const runStart = app.indexOf("async function runGptTemporaryCacheMaintenance", scheduleStart);
-  assert.ok(helperStart >= 0 && scheduleStart > helperStart && runStart > scheduleStart);
-  const helper = app.slice(helperStart, scheduleStart);
-  const schedule = app.slice(scheduleStart, runStart);
-  const run = app.slice(runStart, app.indexOf("function restoreGptTemporaryCacheMaintenanceTimers", runStart));
-  assert.match(helper, /!independentGptWindowMode\(settings\.mode\)/);
-  assert.match(helper, /workerState\.stoppedByUser/);
-  assert.match(helper, /runtime\.pausedByUser/);
-  assert.match(schedule, /gptWindowMaintenanceHeld\(key\)/);
-  assert.match(run, /reason: "user-hold"/);
-  assert.match(app, /const explicitUserHold = Boolean\(/);
-  assert.match(app, /已停止，不参与自动生产/);
-  assert.match(app, /nextRetryAt: null/);
-  assert.match(app, /scheduleGptTemporaryCacheMaintenance\(accountId, Date\.now\(\)\)/);
+test("GPT account cache has no scheduled per-account cleanup or page refresh", () => {
+  assert.doesNotMatch(app, /GPT_TEMPORARY_CACHE_STORAGE_KEY|scheduleGptTemporaryCacheMaintenance|runGptTemporaryCacheMaintenance|restoreGptTemporaryCacheMaintenanceTimers|clearTemporaryCache: true/);
+  assert.match(app, /maintenance\(\{ accountId: key, clearTemporaryCache: false, reason \}\)/);
+  assert.match(desktopMain, /const includeGpt = options\.includeGpt === true/);
 });
 
 test("a delayed native GPT show is hidden again after navigation leaves the production view", () => {
@@ -4234,7 +4380,7 @@ test("GPT worker recovers a healthy reloaded page whose old bridge task disappea
   assert.match(desktopMain, /pendingGptTask/);
   assert.match(desktopMain, /abortPendingGptTask\(account/);
   assert.match(desktopMain, /GPT_PAGE_RELOADED/);
-  assert.match(desktopPreload, /pageHealth\(accountId = ""\)/);
+  assert.match(desktopPreload, /pageHealth\(accountId = "", expectedTargetUrl = ""\)/);
   assert.match(desktopMain, /desktop:gpt-page-health/);
   assert.match(desktopMain, /startedAt: String\(account\?\.pageState\?\.startedAt/);
   assert.match(app, /pageHealth\(accountId\)/);
@@ -4408,16 +4554,19 @@ test("native GPT recovery restores durable user holds before touching idle windo
   assert.match(desktopMain, /function persistedGptUserHold\(accountId\)/);
   assert.match(desktopMain, /userRecoveryHold: persistedGptUserHold\(id\)/);
   assert.match(desktopMain, /if \(!account\.userRecoveryHold\) scheduleStalledGptPageRecovery\(account\)/);
-  assert.match(desktopMain, /reason=user-hold/);
-  assert.match(desktopMain, /if \(account\.userRecoveryHold\)[\s\S]{0,180}continue;/);
+  const watcher = desktopMain.slice(desktopMain.indexOf('function reloadAllGptViewsForExtensionChange() {'), desktopMain.indexOf('function watchExtensionForChanges() {'));
+  assert.equal(/\.reload\(|removeExtension\(|loadExtension\(/.test(watcher), false,
+    'file changes must preserve all pages, including a manually held page');
 });
 
-test("GPT idle view cleanup is account-scoped and never releases a busy production window", () => {
+test("GPT account views stay resident by default and explicit release remains account-scoped", () => {
   const releaseSection = desktopMain.match(/ipcMain\.handle\("desktop:gpt-release-idle"[\s\S]*?\n}\);/)?.[0] || "";
   assert.doesNotMatch(releaseSection, /if \(productionTaskActive\) return/);
   assert.match(releaseSection, /const accountBusy = productionTaskAccounts\.has\(id\)/);
   assert.match(releaseSection, /Boolean\(account\.pendingGptTask\)/);
   assert.match(desktopMain, /gpt-view-released/);
+  assert.doesNotMatch(app, /gptWorkbench\?\.releaseIdle/);
+  assert.doesNotMatch(html, /gptIdleUnloadMinutes|闲置网页释放/);
 });
 
 test("GPT image polling bounds DOM scans to recent turns and defers full-document fallback", () => {
@@ -4633,7 +4782,7 @@ test("shared controls expose visible pressed, focus and selected feedback", () =
   assert.match(app, /function showDistributionPanel\(panel\)/);
 });
 
-test("Electron runs a hourly work-hour-gated disposable web-cache cleanup without clearing account storage", () => {
+test("Electron startup and scheduled web-cache cleanup exclude GPT partitions by default", () => {
   assert.match(temporaryWebCacheSchedule, /TEMPORARY_WEB_CACHE_INTERVAL_MS = 1 \* 60 \* 60 \* 1000/);
   assert.match(temporaryWebCacheSchedule, /TEMPORARY_WEB_CACHE_STARTUP_GRACE_MS = 60 \* 1000/);
   assert.match(desktopMain, /function startTemporaryWebCacheCleanup\(\)/);
@@ -4641,22 +4790,21 @@ test("Electron runs a hourly work-hour-gated disposable web-cache cleanup withou
   assert.match(desktopMain, /temporaryWebCacheCleanupStartupGraceUntil/);
   assert.match(temporaryWebCacheSchedule, /outside-work-hours/);
   assert.match(temporaryWebCacheSchedule, /production-active/);
+  assert.match(desktopMain, /const includeGpt = options\.includeGpt === true/);
+  assert.match(desktopMain, /clearReproducibleWebCaches\("scheduled-1h", \{ includeGpt: false \}\)/);
   assert.match(desktopMain, /profileSession\.clearCache\(\)/);
   assert.match(desktopMain, /Never call clearStorageData\(\) here/);
   assert.match(desktopMain, /startTemporaryWebCacheCleanup\(\)/);
 });
 
-test("GPT hourly cache maintenance respects each window and the 02:00 work boundary", () => {
-  assert.match(app, /const GPT_TEMPORARY_CACHE_INTERVAL_MS = 3 \* 60 \* 60 \* 1000/);
-  assert.match(app, /function nextGptTemporaryCacheAllowedAt\(accountId, requestedAt = Date\.now\(\)\)/);
-  assert.match(app, /const nextAt = Math\.max\(now \+ 1000, nextGptTemporaryCacheAllowedAt\(key, requestedTarget\)\)/);
-  assert.match(app, /const workerBusy = gptWindowRefreshInFlight\.has\(key\)[\s\S]*?gptWindowWorkerPromises\.has\(key\)[\s\S]*?workerState\.autoRunning === true/);
-  assert.match(app, /const hasPendingWorkerTask = typeof window\.GptWindowWorkerState\?\.hasPending === "function"/);
-  assert.match(app, /\|\| hasPendingWorkerTask/);
-  assert.match(app, /reason: "outside-work-hours"/);
-  assert.match(app, /reason: "window-running"/);
-  assert.match(desktopMain, /account\.session\.clearCache\(\)/);
-  assert.match(desktopMain, /Never call clearStorageData\(\) here/);
+test("slot switching reuses the existing GPT WebContents without navigation", () => {
+  const ensure = desktopMain.match(/async function ensureGptAccount\(accountId = activeGptAccountId\)[\s\S]*?\n}\n/)?.[0] || "";
+  const show = desktopMain.match(/ipcMain\.handle\("desktop:gpt-show",[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(ensure, /if \(existing\?\.view && !existing\.view\.webContents\.isDestroyed\(\)\) return existing/);
+  assert.match(show, /const account = await ensureGptAccount\(accountId\)/);
+  assert.match(show, /view\.setVisible\(true\)/);
+  assert.doesNotMatch(show, /loadURL\(|reload\(|recreateGptAccountView\(/);
+  assert.doesNotMatch(app, /scheduleGptTemporaryCacheMaintenance|runGptTemporaryCacheMaintenance|restoreGptTemporaryCacheMaintenanceTimers|gptWorkbench\?\.releaseIdle/);
 });
 
 test("GPT 自动生产设置的全局子组使用紧凑两列且标题跨列", () => {
@@ -4829,10 +4977,11 @@ test("an unsent current-task plan draft cannot be resumed as a submitted workflo
   const uploadHandlerStart = gptSidebar.indexOf("async function handleUploadMaterial()");
   const waitPlanStart = gptSidebar.indexOf("async function handleWaitPlan()", uploadHandlerStart);
   const uploadHandler = gptSidebar.slice(uploadHandlerStart, waitPlanStart);
-  const submitIndex = uploadHandler.indexOf("await submitComposer();");
+  const submitIndex = uploadHandler.indexOf("await submitComposer(");
   const markSubmittedIndex = uploadHandler.indexOf("workflow.planSubmitted = true;", submitIndex);
   assert.ok(submitIndex >= 0 && markSubmittedIndex > submitIndex,
     "planSubmitted must be persisted only after the composer send succeeds");
+  assert.doesNotMatch(uploadHandler.slice(0, submitIndex), /workflow\.planSubmitted = true;/);
   assert.match(gptSidebar, /const pendingComposerDraft = composerDraftText\(\)/);
   assert.match(gptSidebar, /const pendingDraftBelongsToThisTask = isAutomationDraft\(pendingComposerDraft, entry\)/);
   assert.match(gptSidebar, /const currentPlanTurnAlreadySent = Boolean\(latestUserTurn/);
@@ -4964,18 +5113,20 @@ test("continuous production fresh-retries and defers an unresponsive plan withou
   assert.match(app, /gptTestQueue\.splice\(deferIndex, 0, deferredTask\)/);
 });
 
-test("extension hot reload is deferred while any GPT task is active", () => {
-  assert.match(desktopMain, /activeGptTaskAccounts/);
-  assert.match(desktopMain, /extensionReloadPending/);
-  assert.match(desktopMain, /gpt-extension-auto-reload-deferred/);
-  assert.match(desktopMain, /removeExtension\(extensionId\)/);
-  assert.match(desktopMain, /loadExtension\(extensionPath, \{ allowFileAccess: true \}\)/);
-  assert.match(desktopMain, /gpt-extension-registered/);
-});
-
-test("extension hot reload rechecks task ownership immediately before navigation", () => {
-  assert.match(desktopMain, /reason=task-started-during-reload/);
-  assert.match(desktopMain, /activeGptTaskAccounts\.has\(id\) \|\| account\.pendingGptTask/);
+test("extension file changes preserve live pages and defer update to a controlled load", async () => {
+  const start = desktopMain.indexOf('function reloadAllGptViewsForExtensionChange() {');
+  const end = desktopMain.indexOf('function watchExtensionForChanges() {', start);
+  assert.ok(start >= 0 && end > start);
+  const body = desktopMain.slice(start, end);
+  assert.equal(/\.reload\(|removeExtension\(|loadExtension\(/.test(body), false);
+  const log = [];
+  const run = new Function('appendDesktopLog', 'let extensionReloadPending=false;\n' + body
+    + '\nreturn {run:reloadAllGptViewsForExtensionChange,pending:()=>extensionReloadPending};')((...args) => log.push(args));
+  assert.equal(await run.run(), false);
+  assert.equal(await run.run(), false);
+  assert.equal(run.pending(), true);
+  assert.equal(log.length, 1);
+  assert.match(log[0][1], /pages-preserved=true/);
 });
 
 test("a verified package still completes source archive after a stale task abort", () => {
@@ -5448,6 +5599,15 @@ test.skip("fresh-session fixed-template queue opens every material in a new chat
   assert.match(app, /task\._submittedToGpt !== true[\s\S]{0,160}freshSessionFixedTemplateAttachments/);
   assert.match(desktopMain, /templateAttachments:\s*Array\.isArray\(task\.templateAttachments\)/);
   assert.match(gptSidebar, /approvedTemplateFiles[\s\S]*?!approvedTemplateFiles\.has\(normalized\)/);
+});
+
+test("production task carries prompt version and hash into dispatch and checkpoint schema", () => {
+  const taskBlock = app.slice(app.indexOf("function buildGptTestTask"), app.indexOf("function buildGptProductionQueue"));
+  assert.match(taskBlock, /promptVersion:\s*String\(options\.promptVersion \|\| GPT_CURRENT_MASTER_PROMPT_VERSION\)/);
+  assert.match(taskBlock, /promptHash:\s*String\(options\.promptHash \|\| TBGptPromptRegistry\.currentInitializationSha256/);
+  assert.match(desktopMain, /promptVersion:\s*String\(task\.promptVersion \|\| ""\)/);
+  assert.match(desktopMain, /promptHash:\s*String\(task\.promptHash \|\| ""\)/);
+  assert.match(server, /promptVersion:\s*String\(source\.promptVersion \|\| ""\)\.slice\(0, 80\)/);
 });
 
 test("saved fresh-session queues upgrade only unsent tasks and retain submitted checkpoints", () => {
@@ -6300,4 +6460,101 @@ test("manual, assistant and voice entry points share the registered workbench co
   assert.match(app, /dispatchWorkbenchCommand\(\{ actionId: "assistant\.text", source: "assistant"/);
   assert.match(app, /dispatchWorkbenchCommand\(\{ actionId: "assistant\.text", source: "voice"/);
   assert.match(app, /window\.workbenchControl = Object\.freeze/);
+});
+
+test("per-account GPT startup fails closed when stable-ID settings are missing", () => {
+  const start = app.indexOf("function gptWindowSettings(accountId = activeGptAccountId)");
+  const end = app.indexOf("function scheduleGptWindowScheduleWake", start);
+  assert.ok(start >= 0 && end > start);
+  const settings = app.slice(start, end);
+  assert.match(settings, /accountSettings\?\.mode \|\| account\?\.mode \|\| gptAutoSettings\.mode/);
+  assert.match(settings, /continuousAutoStart: accountSettings\?\.continuousAutoStart === true/);
+  assert.doesNotMatch(settings, /continuousAutoStart:\s*gptAutoSettings\.continuousAutoStart/);
+});
+
+test("CDP preview drops an old account response after the visible account changes", async () => {
+  let resolveFetch;
+  let requestUrl = "";
+  const revoked = [];
+  const img = {
+    hidden: false,
+    src: "blob:previous-account",
+    dataset: {},
+    removeAttribute(name) { if (name === "src") this.src = ""; }
+  };
+  const browserState = { textContent: "", dataset: {} };
+  const errorBox = { style: {} };
+  const errorText = { textContent: "" };
+  const targetA = "https://chatgpt.com/c/account-one";
+  const address = { value: targetA };
+  const elements = {
+    "#cdpLiveImg": img,
+    "#gptBrowserAddressInput": address,
+    "#gptEmbeddedState": browserState,
+    "#cdpFrameError": errorBox,
+    "#cdpFrameErrorText": errorText,
+    "#cdpStatusDot": { style: {} },
+    "#cdpCanvasWrapper": null
+  };
+  const context = {
+    activeGptAccountId: "account-1",
+    gptAccountSwitchEpoch: 4,
+    cdpIsFetchingFrame: false,
+    cdpCurrentBlobUrl: "blob:previous-account",
+    cdpFrameRequestSerial: 0,
+    cdpActiveFrameRequestId: 0,
+    cdpFrameFails: 0,
+    $(selector) { return elements[selector] || null; },
+    getCdpGatewayBase() { return "http://127.0.0.1:9440"; },
+    getCurrentInstanceCdpPort() { return 9431; },
+    fetch(url) { requestUrl = url; return new Promise(resolve => { resolveFetch = resolve; }); },
+    AbortSignal: { timeout() { return {}; } },
+    URL: { createObjectURL() { return "blob:old-account"; }, revokeObjectURL(url) { revoked.push(url); } },
+    Date: { now() { return 100; } }
+  };
+  const refreshStart = app.indexOf("async function refreshCdpLiveFrame(");
+  const refreshEnd = app.indexOf("\nlet cdpWakeBusy =", refreshStart);
+  assert.ok(refreshStart >= 0 && refreshEnd > refreshStart);
+  const refresh = vm.runInNewContext(`(${app.slice(refreshStart, refreshEnd).trim()}\n)`, context);
+  context.clearCdpLiveFrame = isolatedAppFunction("clearCdpLiveFrame", "invalidateCdpLiveFrameForAccountSwitch", context);
+  const invalidate = isolatedAppFunction("invalidateCdpLiveFrameForAccountSwitch", "refreshCdpLiveFrame", context);
+  const pending = refresh();
+  await Promise.resolve();
+  assert.match(requestUrl, /account=account-1/);
+  assert.match(requestUrl, /target=https%3A%2F%2Fchatgpt.com%2Fc%2Faccount-one/);
+
+  context.activeGptAccountId = "account-5";
+  context.gptAccountSwitchEpoch += 1;
+  address.value = "https://chatgpt.com/c/account-five";
+  invalidate();
+  resolveFetch({
+    ok: true,
+    headers: { get(name) {
+      return ({ "content-type": "image/jpeg", "X-Frame-Account-Id": "account-1", "X-Frame-Target-Url": targetA,
+        "X-Frame-Freshness": "fresh", "X-Viewport-Width": "1280", "X-Viewport-Height": "800" })[name];
+    } },
+    async blob() { return { account: "account-1" }; }
+  });
+  await pending;
+
+  assert.equal(img.src, "");
+  assert.equal(img.hidden, true);
+  assert.doesNotMatch(browserState.textContent, /画面已核验/);
+  assert.deepEqual(revoked, ["blob:previous-account"]);
+});
+
+test("CDP preview and old controls require account-bound native adapters", () => {
+  assert.match(cdpLivePreview, /expectedTargetUrl/);
+  assert.match(cdpLivePreview, /X-Frame-Account-Id/);
+  assert.match(cdpLivePreview, /ACCOUNT_BOUND_STATUS_UNAVAILABLE/);
+  assert.match(cdpLivePreview, /ACCOUNT_BOUND_ACTION_UNAVAILABLE/);
+  assert.doesNotMatch(cdpLivePreview, /cachedFrames/);
+  const captureStart = desktopMain.indexOf("async function captureGptFrameForPreview(");
+  const captureEnd = desktopMain.indexOf("const FRAME_CAPTURE_TIMEOUT_MS", captureStart);
+  const capture = desktopMain.slice(captureStart, captureEnd);
+  assert.match(capture, /gptAccounts\.get\(wanted\)/);
+  assert.match(capture, /wc\.getURL\(\) !== targetUrl/);
+  assert.doesNotMatch(capture, /activeGptAccount\(\)/);
+  assert.match(app, /invalidateCdpLiveFrameForAccountSwitch\(\)/);
+  assert.match(app, /requestSwitchEpoch === gptAccountSwitchEpoch/);
 });
