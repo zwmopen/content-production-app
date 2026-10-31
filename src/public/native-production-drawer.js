@@ -1,59 +1,74 @@
 /**
  * 内容制作原生抽屉与全屏视口交互控制器 (Native Production Drawer & Contextual Preview Controller)
- * 2026-10-20 重构实装：完全独立自包含、三模式动态联动、真机实盘数据驱动
+ * 2026-10-31 重构实装：基于《轮播母版迁移器 V4.8.8》与人机双轨 4 步流
  */
 (function() {
   'use strict';
 
   const state = {
-    lineId: 'cdp-a',
+    accountId: '',
+    accountName: '',
+    slot: '',
     port: window.location.port || '4331',
-    mode: '2_random_template',
-    fixedTemplateId: 'T51',
-    fixedTemplateName: '',
-    p1Url: '',
-    p2Url: '',
     templates: [],
     material: null,
-    isAutoRunning: false,
-    isPaused: false,
+    materialsList: [],
+    selectedTemplateId: 'T51',
+    selectedMaterialPath: '',
     drawerCollapsed: false,
-    searchTerm: '',
-    selectedCategory: 'all'
+    workflowState: '状态二 · 等待素材',
+    prompts: {
+      v488: '',
+      step1: '',
+      step2: '',
+      step3: ''
+    },
+    planItems: [],
+    generatedImages: [],
+    copywriting: {
+      xhs1: '',
+      xhs2: '',
+      dy: '',
+      multi: ''
+    },
+    activeCopyTab: 'xhs1',
+    isStepBusy: false
   };
 
-  function resolveLineId() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const paramLine = urlParams.get('lineId');
-    if (paramLine) return paramLine.toLowerCase();
-
-    const p = parseInt(window.location.port || '4331', 10);
-    if (p === 4331 || p === 9431) return 'cdp-a';
-    if (p === 4332 || p === 9432) return 'cdp-b';
-    if (p === 4333 || p === 9433) return 'cdp-c';
-    if (p === 4334 || p === 9434) return 'cdp-d';
-    return 'cdp-a';
-  }
-
   async function apiFetch(endpoint, options = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
     try {
       const res = await fetch(endpoint, {
         headers: { 'Content-Type': 'application/json' },
-        ...options
+        ...options,
+        signal: controller.signal
       });
       return await res.json();
     } catch (err) {
       console.warn(`[native-drawer] API call failed: ${endpoint}`, err);
       return { ok: false, error: err.message };
+    } finally {
+      clearTimeout(timeout);
     }
+  }
+
+  function showToast(message, type = 'info') {
+    if (window.showWorkbenchAssistantBubble) {
+      window.showWorkbenchAssistantBubble(message, { tone: type === 'error' ? 'danger' : (type === 'success' ? 'success' : 'info'), duration: 2500 });
+      return;
+    }
+    const toast = document.createElement('div');
+    toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1e293b;color:#f8fafc;padding:8px 16px;border-radius:6px;font-size:12px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.5);border:1px solid #3b82f6;';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2500);
   }
 
   // 1. 初始化数据加载
   async function init() {
-    state.lineId = resolveLineId();
     state.port = window.location.port || '4331';
 
-    // 读取本地折叠偏好
     try {
       const savedCollapsed = localStorage.getItem('pts_prod_drawer_collapsed');
       if (savedCollapsed === 'true') {
@@ -61,467 +76,558 @@
       }
     } catch (_) {}
 
-    // 并行拉取配置与数据
-    const [configData, catalogData, materialData, statusData] = await Promise.all([
-      apiFetch(`/api/pipeline-mode-config?lineId=${state.lineId}`),
+    renderDrawerCollapseState();
+    bindGlobalDrawerEvents();
+    bindWorkflowEvents();
+
+    // 并行加载提示词、模板目录与当前素材
+    await loadInitialData();
+
+    // 监听账号切换
+    window.addEventListener('tb-gpt-accounts-changed', selectAccount);
+    void selectAccount();
+
+    // 初始化计划面板
+    initPlanSectionAndModal();
+  }
+
+  async function loadInitialData() {
+    const [promptsRes, catalogRes, materialRes] = await Promise.all([
+      apiFetch('/api/production/prompts'),
       apiFetch('/api/templates/catalog'),
-      apiFetch('/api/materials/current-detail'),
-      apiFetch('/api/pipeline/producer-status')
+      apiFetch('/api/materials/current-detail')
     ]);
 
-    if (configData && configData.ok) {
-      state.mode = configData.mode || '2_random_template';
-      state.fixedTemplateId = configData.fixedTemplateId || '';
-      state.fixedTemplateName = configData.fixedTemplateName || '';
-      state.p1Url = configData.p1Url || '';
-      state.p2Url = configData.p2Url || '';
+    if (promptsRes && promptsRes.ok && promptsRes.prompts) {
+      state.prompts = promptsRes.prompts;
     }
 
-    if (catalogData && catalogData.ok && Array.isArray(catalogData.templates)) {
-      state.templates = catalogData.templates;
+    if (catalogRes && catalogRes.ok && Array.isArray(catalogRes.templates)) {
+      state.templates = catalogRes.templates;
+      renderTemplateSelector();
     }
 
-    if (materialData && materialData.ok) {
-      state.material = materialData;
-    }
-
-    if (statusData && statusData.ok) {
-      state.isAutoRunning = statusData.isRunning;
-      state.isPaused = statusData.isPaused;
-    }
-
-    // 绑定事件与首次渲染
-    bindEvents();
-    renderAll();
-
-    // 定期 5 秒轮询调度守护与状态
-    setInterval(pollStatus, 5000);
-  }
-
-  async function pollStatus() {
-    const statusData = await apiFetch('/api/pipeline/producer-status');
-    if (statusData && statusData.ok) {
-      if (state.isAutoRunning !== statusData.isRunning || state.isPaused !== statusData.isPaused) {
-        state.isAutoRunning = statusData.isRunning;
-        state.isPaused = statusData.isPaused;
-        renderAutoManualControls();
-      }
+    if (materialRes && materialRes.ok) {
+      state.material = materialRes;
+      renderMaterialInfo();
     }
   }
 
-  // 2. 界面总渲染
-  function renderAll() {
-    renderTopBar();
-    renderDrawerCollapseState();
-    renderModeCards();
-    renderDynamicSection();
-    renderMaterialSection();
-    renderAutoManualControls();
-  }
+  function renderTemplateSelector() {
+    const sel = document.getElementById('selStep1Template');
+    if (!sel) return;
+    sel.replaceChildren();
 
-  // 顶栏状态与徽章
-  function renderTopBar() {
-    const instLetter = state.lineId === 'cdp-b' ? 'B' : (state.lineId === 'cdp-c' ? 'C' : (state.lineId === 'cdp-d' ? 'D' : 'A'));
-    const instBadge = document.getElementById('topbarInstanceBadge');
-    if (instBadge) {
-      instBadge.textContent = `🟢 实例 ${instLetter} · (${state.port})`;
-    }
-
-    const modeIndicator = document.getElementById('topbarModeIndicator');
-    if (modeIndicator) {
-      let icon = '🎲';
-      let title = '2·随机母版 (推荐)';
-      if (state.mode === '1_replica_shuffle') {
-        icon = '🔀';
-        title = '1·复刻重组 (原版)';
-      } else if (state.mode === '3_fixed_template') {
-        icon = '📌';
-        title = `3·固定母版 [${state.fixedTemplateId || '未锁定'}]`;
-      }
-      modeIndicator.innerHTML = `<span class="mode-icon">${icon}</span><span class="mode-text">${title}</span>`;
-    }
-  }
-
-  // 抽屉折叠展开
-  function renderDrawerCollapseState() {
-    const grid = document.getElementById('gptProductionMainGrid');
-    const toggleBtn = document.getElementById('btnToggleProdDrawer');
-    if (grid) {
-      grid.classList.toggle('drawer-collapsed', state.drawerCollapsed);
-    }
-    if (toggleBtn) {
-      const arrow = toggleBtn.querySelector('.drawer-arrow');
-      if (arrow) arrow.textContent = state.drawerCollapsed ? '▶' : '◀';
-      toggleBtn.title = state.drawerCollapsed ? '点击展开右侧制作抽屉' : '点击收起右侧制作抽屉';
-    }
-  }
-
-  // 01 生产模式三卡片
-  function renderModeCards() {
-    const cards = document.querySelectorAll('#ptsModeCards .pts-mode-card');
-    cards.forEach(card => {
-      const cardMode = card.dataset.mode;
-      card.classList.toggle('active', cardMode === state.mode);
-    });
-  }
-
-  // 02 模式动态感知与联动面板
-  function renderDynamicSection() {
-    const p1 = document.getElementById('panelMode1Replica');
-    const p2 = document.getElementById('panelMode2Random');
-    const p3 = document.getElementById('panelMode3Fixed');
-
-    if (state.mode === '1_replica_shuffle') {
-      if (p1) p1.style.display = 'block';
-      if (p2) p2.style.display = 'none';
-      if (p3) p3.style.display = 'none';
-      renderRawMaterialThumbs();
-    } else if (state.mode === '2_random_template') {
-      if (p1) p1.style.display = 'none';
-      if (p2) p2.style.display = 'block';
-      if (p3) p3.style.display = 'none';
-      renderRandomPoolStatus();
-    } else {
-      if (p1) p1.style.display = 'none';
-      if (p2) p2.style.display = 'none';
-      if (p3) p3.style.display = 'block';
-      renderFixedTemplateView();
-    }
-  }
-
-  // 模式1：原素材缩略图网格
-  function renderRawMaterialThumbs() {
-    const grid = document.getElementById('rawMaterialThumbsGrid');
-    const countTag = document.getElementById('rawMaterialCountTag');
-    if (!grid) return;
-
-    grid.replaceChildren();
-    const imgs = state.material?.images || [];
-    if (countTag) countTag.textContent = `${imgs.length} 张照片`;
-
-    if (imgs.length === 0) {
-      grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #64748b; font-size: 11px; padding: 16px;">当前素材包内暂无可用实拍图片</div>';
-      return;
-    }
-
-    imgs.forEach(img => {
-      const item = document.createElement('div');
-      item.className = 'raw-thumb-item';
-      item.title = `点击放大：${img.name}`;
-      item.innerHTML = `<img src="${img.url}" alt="${img.name}" loading="lazy" />`;
-      item.addEventListener('click', () => openLightbox(img.url));
-      grid.appendChild(item);
-    });
-  }
-
-  // 模式2：随机池状态
-  function renderRandomPoolStatus() {
-    const textEl = document.getElementById('randomPoolRecentText');
-    if (textEl) {
-      textEl.textContent = `全库 89 套母版轮巡已就绪 · 每套自动派选高分母版`;
-    }
-  }
-
-  // 模式3：固定母版双图与模板列表
-  function renderFixedTemplateView() {
-    const nameEl = document.getElementById('fixedTemplateNameText');
-    const imgP1 = document.getElementById('ptsPreviewImgP1');
-    const imgP2 = document.getElementById('ptsPreviewImgP2');
-
-    let currentTpl = state.templates.find(t => t.id === state.fixedTemplateId);
-    if (!currentTpl && state.templates.length > 0) {
-      currentTpl = state.templates[0];
-      state.fixedTemplateId = currentTpl.id;
-      state.fixedTemplateName = currentTpl.name;
-      state.p1Url = currentTpl.p1Url;
-      state.p2Url = currentTpl.p2Url;
-    }
-
-    if (nameEl) {
-      nameEl.textContent = currentTpl ? `当前锁定：[${currentTpl.id}] ${currentTpl.name}` : '未锁定母版';
-    }
-
-    if (imgP1) {
-      imgP1.src = (currentTpl && currentTpl.p1Url) || state.p1Url || '';
-    }
-    if (imgP2) {
-      imgP2.src = (currentTpl && currentTpl.p2Url) || state.p2Url || '';
-    }
-
-    renderTemplateCardList();
-  }
-
-  // 渲染 89 套母版列表
-  function renderTemplateCardList() {
-    const listEl = document.getElementById('ptsTemplateList');
-    if (!listEl) return;
-
-    listEl.replaceChildren();
-
-    const search = state.searchTerm.toLowerCase().trim();
-    const cat = state.selectedCategory;
-
-    const filtered = state.templates.filter(t => {
-      if (cat !== 'all') {
-        const tCat = t.category || '';
-        if (cat === '精准流量·团建方案' && !tCat.includes('团建') && !tCat.includes('精准')) return false;
-        if (cat === '泛流量·个人攻略' && !tCat.includes('攻略') && !tCat.includes('泛流')) return false;
-        if (cat === '互动破冰·小游戏' && !tCat.includes('游戏')) return false;
-      }
-      if (search) {
-        const idMatch = (t.id || '').toLowerCase().includes(search);
-        const nameMatch = (t.name || '').toLowerCase().includes(search);
-        if (!idMatch && !nameMatch) return false;
-      }
-      return true;
+    state.templates.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = `[${t.id}] ${t.name || '方案母版'}`;
+      if (t.id === state.selectedTemplateId) opt.selected = true;
+      sel.appendChild(opt);
     });
 
-    if (filtered.length === 0) {
-      listEl.innerHTML = '<div style="text-align: center; color: #64748b; font-size: 11px; padding: 20px;">没有找到匹配的母版</div>';
-      return;
-    }
-
-    filtered.forEach(tpl => {
-      const item = document.createElement('div');
-      item.className = 'pts-tpl-item';
-      if (tpl.id === state.fixedTemplateId) {
-        item.classList.add('active');
-      }
-
-      item.innerHTML = `
-        <img class="pts-tpl-thumb" src="${tpl.p1Url}" alt="${tpl.id}" loading="lazy" />
-        <div class="pts-tpl-info">
-          <div class="pts-tpl-title" title="${tpl.name}">[${tpl.id}] ${tpl.name}</div>
-          <div class="pts-tpl-meta">
-            <span class="pts-tpl-id">${tpl.id}</span>
-            <span>${tpl.category || '方案母版'}</span>
-          </div>
-        </div>
-      `;
-
-      item.addEventListener('click', async () => {
-        state.fixedTemplateId = tpl.id;
-        state.fixedTemplateName = tpl.name;
-        state.p1Url = tpl.p1Url;
-        state.p2Url = tpl.p2Url;
-
-        // 重新渲染固定预览与高亮
-        renderFixedTemplateView();
-
-        // 立即向后端提交保存
-        await apiFetch('/api/pipeline-mode-config', {
-          method: 'POST',
-          body: JSON.stringify({
-            lineId: state.lineId,
-            mode: '3_fixed_template',
-            fixedTemplateId: tpl.id
-          })
-        });
-        renderTopBar();
-      });
-
-      listEl.appendChild(item);
-    });
+    updateStep1TemplatePreview();
   }
 
-  // 03 素材区域
-  function renderMaterialSection() {
-    const nameEl = document.getElementById('ptsSelectedMaterialName');
-    const pathEl = document.getElementById('ptsSelectedMaterialPath');
-    const badgeEl = document.getElementById('ptsMaterialCountBadge');
+  function updateStep1TemplatePreview() {
+    const currentTpl = state.templates.find(t => t.id === state.selectedTemplateId) || state.templates[0];
+    const p1Img = document.getElementById('step1P1Thumb');
+    const p2Img = document.getElementById('step1P2Thumb');
+    const metaEl = document.getElementById('step1TplMeta');
+
+    if (currentTpl) {
+      if (p1Img) {
+        p1Img.src = currentTpl.p1Url || '';
+        p1Img.onclick = () => openLightbox(currentTpl.p1Url);
+      }
+      if (p2Img) {
+        p2Img.src = currentTpl.p2Url || '';
+        p2Img.onclick = () => openLightbox(currentTpl.p2Url);
+      }
+      if (metaEl) {
+        metaEl.innerHTML = `<strong>${currentTpl.id} · ${currentTpl.name || '方案母版'}</strong><br><span style="font-size:10px;color:#64748b;">${currentTpl.category || '方案母版'} · 已加载 V4.8.8 提示词</span>`;
+      }
+    }
+  }
+
+  function renderMaterialInfo() {
+    const sel = document.getElementById('selStep2Material');
+    const countEl = document.getElementById('step2MaterialCountText');
+    const txtEl = document.getElementById('step2HasTxtText');
+    const mdEl = document.getElementById('step2HasMdText');
+
+    if (sel && sel.options.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = state.material?.path || '';
+      opt.textContent = state.material?.name || '当前选中素材包';
+      opt.selected = true;
+      sel.appendChild(opt);
+    }
 
     if (state.material) {
-      if (nameEl) nameEl.textContent = state.material.name || '未选定素材';
-      if (pathEl) {
-        pathEl.textContent = state.material.path || '';
-        pathEl.title = state.material.path || '';
-      }
-      if (badgeEl) badgeEl.textContent = `${state.material.count || 0} 张素材`;
+      if (countEl) countEl.textContent = `${state.material.count || (state.material.images ? state.material.images.length : 0)} 张实拍照片`;
+      if (txtEl) txtEl.textContent = state.material.hasTxt !== false ? '文案TXT: 存在' : '文案TXT: 缺失';
+      if (mdEl) mdEl.textContent = state.material.hasMd !== false ? '行程MD: 存在' : '行程MD: 缺失';
     }
   }
 
-  // 04 自动 / 手动控制与状态机
-  function renderAutoManualControls() {
-    const btnAuto = document.getElementById('btnSwitchAuto');
-    const btnManual = document.getElementById('btnSwitchManual');
-    const statusBadge = document.getElementById('ptsSendStatusBadge');
-    const hintText = document.getElementById('ptsSendHintText');
+  function selectAccount() {
+    const context = window.getGptProductionDrawerContext?.() || {};
+    const profiles = Array.isArray(context.profiles) ? context.profiles : [];
+    const index = profiles.findIndex(profile => profile.id === context.accountId);
+    state.accountId = index >= 0 ? context.accountId : '';
+    state.accountName = index >= 0 ? profiles[index].name || state.accountId : '';
+    state.slot = index >= 0 ? String.fromCharCode(97 + index) : ''; // 小写字母 a~f
 
-    const isRunning = state.isAutoRunning && !state.isPaused;
-
-    if (btnAuto) btnAuto.classList.toggle('active', isRunning);
-    if (btnManual) btnManual.classList.toggle('active', !isRunning);
-
-    if (statusBadge) {
-      statusBadge.textContent = isRunning ? '● 自动流水线运转中' : '⏸ 手动暂停';
-      statusBadge.style.color = isRunning ? '#34d399' : '#fbbf24';
-      statusBadge.style.background = isRunning ? 'rgba(16, 185, 129, 0.18)' : 'rgba(245, 158, 11, 0.18)';
-    }
-
-    if (hintText) {
-      hintText.textContent = isRunning
-        ? '流水线源源不断自动跑；点击“手动干预”可直接在画面中操作'
-        : '当前处于手动模式：已释放键盘鼠标，可直接在画面中点击/输入';
+    const badge = document.getElementById('ptsWorkflowStateBadge');
+    if (badge) {
+      badge.textContent = `${state.slot ? `[${state.slot}] ` : ''}${state.workflowState}`;
     }
   }
 
-  // 3. 事件绑定
-  function bindEvents() {
-    // 抽屉折叠 / 展开
-    const toggleBtn = document.getElementById('btnToggleProdDrawer');
-    const closeBtn = document.getElementById('btnCloseProdDrawer');
-    const handleToggleDrawer = () => {
+  // 绑定全局抽屉与展开折叠
+  function bindGlobalDrawerEvents() {
+    const btnToggle = document.getElementById('btnToggleProdDrawer');
+    const btnClose = document.getElementById('btnCloseProdDrawer');
+
+    const toggleCollapse = () => {
       state.drawerCollapsed = !state.drawerCollapsed;
       try { localStorage.setItem('pts_prod_drawer_collapsed', String(state.drawerCollapsed)); } catch (_) {}
       renderDrawerCollapseState();
     };
-    toggleBtn?.addEventListener('click', handleToggleDrawer);
-    closeBtn?.addEventListener('click', handleToggleDrawer);
 
-    // 三大核心生产模式卡片点击切换
-    const modeCards = document.querySelectorAll('#ptsModeCards .pts-mode-card');
-    modeCards.forEach(card => {
-      card.addEventListener('click', async () => {
-        const targetMode = card.dataset.mode;
-        if (!targetMode || targetMode === state.mode) return;
+    btnToggle?.addEventListener('click', toggleCollapse);
+    btnClose?.addEventListener('click', toggleCollapse);
 
-        state.mode = targetMode;
-        renderModeCards();
-        renderDynamicSection();
-        renderTopBar();
-
-        // 提交后端持久化
-        await apiFetch('/api/pipeline-mode-config', {
-          method: 'POST',
-          body: JSON.stringify({
-            lineId: state.lineId,
-            mode: state.mode,
-            fixedTemplateId: state.fixedTemplateId
-          })
-        });
-
-        // 联动旧兼容隐藏 input
-        const legacySelect = document.getElementById('gptContentTemplateMode');
-        if (legacySelect) {
-          legacySelect.value = state.mode;
-          legacySelect.dispatchEvent(new Event('change'));
-        }
-      });
-    });
-
-    // 自动持续生产 vs 手动干预二元开关
-    const btnAuto = document.getElementById('btnSwitchAuto');
-    const btnManual = document.getElementById('btnSwitchManual');
-
-    btnAuto?.addEventListener('click', async () => {
-      state.isAutoRunning = true;
-      state.isPaused = false;
-      renderAutoManualControls();
-      await apiFetch('/api/pipeline/producer-control', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'resume' })
-      });
-    });
-
-    btnManual?.addEventListener('click', async () => {
-      state.isPaused = true;
-      renderAutoManualControls();
-      await apiFetch('/api/pipeline/producer-control', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'pause' })
-      });
-    });
-
-    // 换一套素材
-    const btnRandomMat = document.getElementById('btnSidebarRandomMaterial');
-    btnRandomMat?.addEventListener('click', async () => {
-      const res = await apiFetch('/api/materials/switch-random', { method: 'POST' });
-      if (res && res.ok) {
-        state.material = res;
-        renderMaterialSection();
-        if (state.mode === '1_replica_shuffle') {
-          renderRawMaterialThumbs();
-        }
-      }
-    });
-
-    // 素材库挑选（调用本地资源管理器）
-    const btnPickMat = document.getElementById('btnSidebarPickMaterial');
-    btnPickMat?.addEventListener('click', async () => {
-      const target = state.material?.path || 'D:\\AICode\\项目推进\\projects\\江湖有旅人\\主项目\\01-素材库';
-      await apiFetch('/api/open', {
-        method: 'POST',
-        body: JSON.stringify({ path: target })
-      });
-    });
-
-    // 辅助动作：重试与跳过
-    const btnRetry = document.getElementById('btnSidebarRetryStep');
-    btnRetry?.addEventListener('click', async () => {
-      await apiFetch('/api/pipeline/producer-control', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'retry' })
-      });
-    });
-
-    const btnSkip = document.getElementById('btnSidebarSkipWork');
-    btnSkip?.addEventListener('click', async () => {
-      await apiFetch('/api/pipeline/producer-control', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'skip' })
-      });
-    });
-
-    // 模板搜索输入与分类选择
-    const searchInput = document.getElementById('ptsTemplateSearchInput');
-    searchInput?.addEventListener('input', (e) => {
-      state.searchTerm = e.target.value;
-      renderTemplateCardList();
-    });
-
-    const catSelect = document.getElementById('ptsTemplateCatSelect');
-    catSelect?.addEventListener('change', (e) => {
-      state.selectedCategory = e.target.value;
-      renderTemplateCardList();
-    });
-
-    // P1 / P2 双图预览点击放大
-    const p1Box = document.getElementById('ptsPreviewBoxP1');
-    const p2Box = document.getElementById('ptsPreviewBoxP2');
-    p1Box?.addEventListener('click', () => {
-      const src = document.getElementById('ptsPreviewImgP1')?.src;
-      if (src) openLightbox(src);
-    });
-    p2Box?.addEventListener('click', () => {
-      const src = document.getElementById('ptsPreviewImgP2')?.src;
-      if (src) openLightbox(src);
-    });
-
-    // Lightbox 关闭事件
+    // Lightbox 关闭
     const lightboxModal = document.getElementById('ptsLightboxModal');
-    const lightboxClose = document.getElementById('ptsLightboxCloseBtn');
     const lightboxBackdrop = document.getElementById('ptsLightboxBackdrop');
-    const handleCloseLightbox = () => {
-      if (lightboxModal) {
-        lightboxModal.classList.remove('active');
-        lightboxModal.style.display = 'none';
-      }
-    };
-    lightboxClose?.addEventListener('click', handleCloseLightbox);
-    lightboxBackdrop?.addEventListener('click', handleCloseLightbox);
+    const btnCloseLightbox = document.getElementById('btnCloseLightbox');
+    const closeLightbox = () => { if (lightboxModal) lightboxModal.style.display = 'none'; };
+    lightboxBackdrop?.addEventListener('click', closeLightbox);
+    btnCloseLightbox?.addEventListener('click', closeLightbox);
+  }
+
+  function renderDrawerCollapseState() {
+    const sidebar = document.getElementById('prodTemplateSidebar');
+    const grid = document.querySelector('.gpt-production-test-grid') || document.getElementById('gptProductionMainGrid');
+    const btnToggle = document.getElementById('btnToggleProdDrawer');
+
+    if (grid) grid.classList.toggle('drawer-collapsed', state.drawerCollapsed);
+    if (sidebar) sidebar.style.display = state.drawerCollapsed ? 'none' : 'flex';
+    if (btnToggle) {
+      btnToggle.setAttribute('aria-expanded', String(!state.drawerCollapsed));
+    }
   }
 
   function openLightbox(url) {
+    if (!url) return;
     const modal = document.getElementById('ptsLightboxModal');
-    const img = document.getElementById('ptsLightboxImg');
-    if (modal && img && url) {
+    const img = document.getElementById('ptsLightboxImage');
+    const caption = document.getElementById('ptsLightboxCaption');
+    if (modal && img) {
       img.src = url;
-      modal.classList.add('active');
+      if (caption) caption.textContent = url.split('/').pop() || '图片预览';
       modal.style.display = 'flex';
     }
   }
 
-  // 启动自初始化
+  // 绑定 4 步流事件
+  function bindWorkflowEvents() {
+    // 步骤 1：母版选择切换
+    const selTpl = document.getElementById('selStep1Template');
+    selTpl?.addEventListener('change', () => {
+      state.selectedTemplateId = selTpl.value;
+      updateStep1TemplatePreview();
+    });
+
+    // 步骤 1：发送母版学习
+    const btnLock = document.getElementById('btnStep1LockTemplate');
+    const step1Badge = document.getElementById('step1StatusBadge');
+    btnLock?.addEventListener('click', async () => {
+      if (state.isStepBusy) return;
+      state.isStepBusy = true;
+      if (step1Badge) {
+        step1Badge.textContent = '⏳ 学习锁定中...';
+        step1Badge.className = 'pts-step-status busy';
+      }
+      showToast('正在向当前 ChatGPT 窗口发送母版与 V4.8.8 提示词...', 'info');
+
+      const currentTpl = state.templates.find(t => t.id === state.selectedTemplateId);
+      const files = currentTpl?.files || [];
+      const res = await apiFetch('/api/production/step/execute', {
+        method: 'POST',
+        body: JSON.stringify({
+          promptText: state.prompts.v488,
+          files: files
+        })
+      });
+
+      state.isStepBusy = false;
+      if (res && res.ok) {
+        state.workflowState = '状态二 · 等待素材';
+        if (step1Badge) {
+          step1Badge.textContent = '✅ 已锁定';
+          step1Badge.className = 'pts-step-status locked';
+        }
+        showToast('母版学习指令已成功发送至 ChatGPT！', 'success');
+      } else {
+        if (step1Badge) {
+          step1Badge.textContent = '❌ 发送失败';
+          step1Badge.className = 'pts-step-status';
+        }
+        showToast(res?.error || '发送失败，请检查 ChatGPT 页面连接', 'error');
+      }
+    });
+
+    // 步骤 1：复制完整提示词
+    const btnCopyV488 = document.getElementById('btnStep1CopyPrompt');
+    btnCopyV488?.addEventListener('click', () => {
+      if (!state.prompts.v488) {
+        showToast('提示词正在加载中，请稍候', 'warning');
+        return;
+      }
+      navigator.clipboard.writeText(state.prompts.v488).then(() => {
+        showToast('已成功复制《轮播母版迁移器 V4.8.8》完整提示词至剪切板！', 'success');
+      });
+    });
+
+    // 步骤 2：派发素材出计划
+    const btnDispatch = document.getElementById('btnStep2Dispatch');
+    const step2Badge = document.getElementById('step2StatusBadge');
+    const planAccBody = document.getElementById('step2PlanAccBody');
+    const planContent = document.getElementById('step2PlanContent');
+    const planCountBadge = document.getElementById('step2PlanCountBadge');
+
+    btnDispatch?.addEventListener('click', async () => {
+      if (state.isStepBusy) return;
+      state.isStepBusy = true;
+      if (step2Badge) {
+        step2Badge.textContent = '⏳ 正在出计划...';
+        step2Badge.className = 'pts-step-status busy';
+      }
+      showToast('正在上传选题素材与派发指令，等待 GPT 梳理逐页迁移计划...', 'info');
+
+      const res = await apiFetch('/api/production/step/execute', {
+        method: 'POST',
+        body: JSON.stringify({
+          promptText: state.prompts.step1,
+          files: state.material?.files || []
+        })
+      });
+
+      if (res && res.ok) {
+        showToast('素材派发指令已发送，正在轮询计划结果...', 'info');
+        // 开启轮询计划
+        pollPlanResult();
+      } else {
+        state.isStepBusy = false;
+        if (step2Badge) {
+          step2Badge.textContent = '❌ 派发失败';
+          step2Badge.className = 'pts-step-status';
+        }
+        showToast(res?.error || '素材派发失败', 'error');
+      }
+    });
+
+    // 步骤 2：复制派发词
+    const btnCopyStep1 = document.getElementById('btnStep2CopyPrompt');
+    btnCopyStep1?.addEventListener('click', () => {
+      navigator.clipboard.writeText(state.prompts.step1).then(() => {
+        showToast('已复制《1. 和素材一起发》提示词至剪切板！', 'success');
+      });
+    });
+
+    // 步骤 2：展开/折叠计划折叠卡
+    const planAccHead = document.getElementById('step2PlanAccHead');
+    planAccHead?.addEventListener('click', () => {
+      if (!planAccBody) return;
+      planAccBody.style.display = planAccBody.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // 步骤 3：确认全量出图 (回复 1)
+    const btnConfirmGen = document.getElementById('btnStep3ConfirmGenerate');
+    const step3Badge = document.getElementById('step3StatusBadge');
+
+    btnConfirmGen?.addEventListener('click', async () => {
+      if (state.isStepBusy) return;
+      state.isStepBusy = true;
+      if (step3Badge) {
+        step3Badge.textContent = '⏳ 全量出图中...';
+        step3Badge.className = 'pts-step-status busy';
+      }
+      showToast('已发送确认出图指令（回复 1），GPT 正在一气呵成批量成图中...', 'info');
+
+      const res = await apiFetch('/api/production/step/execute', {
+        method: 'POST',
+        body: JSON.stringify({
+          promptText: state.prompts.step2
+        })
+      });
+
+      if (res && res.ok) {
+        pollImageResults();
+      } else {
+        state.isStepBusy = false;
+        if (step3Badge) {
+          step3Badge.textContent = '❌ 出图失败';
+          step3Badge.className = 'pts-step-status';
+        }
+        showToast(res?.error || '出图指令发送失败', 'error');
+      }
+    });
+
+    // 步骤 3：复制确认词
+    const btnCopyStep2 = document.getElementById('btnStep3CopyPrompt');
+    btnCopyStep2?.addEventListener('click', () => {
+      navigator.clipboard.writeText(state.prompts.step2).then(() => {
+        showToast('已复制《2. 出图阶段，确认计划》提示词至剪切板！', 'success');
+      });
+    });
+
+    // 步骤 4：生成五版文案
+    const btnGenCopy = document.getElementById('btnStep4GenerateCopy');
+    const step4Badge = document.getElementById('step4StatusBadge');
+    const copyPreview = document.getElementById('step4CopyPreview');
+
+    btnGenCopy?.addEventListener('click', async () => {
+      if (state.isStepBusy) return;
+      state.isStepBusy = true;
+      if (step4Badge) {
+        step4Badge.textContent = '⏳ 生成文案中...';
+        step4Badge.className = 'pts-step-status busy';
+      }
+      showToast('正在发送文案生成指令 (调用 teambuilding-copywriter 技能)...', 'info');
+
+      const res = await apiFetch('/api/production/step/execute', {
+        method: 'POST',
+        body: JSON.stringify({
+          promptText: state.prompts.step3
+        })
+      });
+
+      if (res && res.ok) {
+        pollCopyResults();
+      } else {
+        state.isStepBusy = false;
+        if (step4Badge) {
+          step4Badge.textContent = '❌ 文案失败';
+          step4Badge.className = 'pts-step-status';
+        }
+        showToast(res?.error || '文案指令发送失败', 'error');
+      }
+    });
+
+    // 步骤 4：复制文案词
+    const btnCopyStep3 = document.getElementById('btnStep4CopyPrompt');
+    btnCopyStep3?.addEventListener('click', () => {
+      navigator.clipboard.writeText(state.prompts.step3).then(() => {
+        showToast('已复制《3. 文案》提示词至剪切板！', 'success');
+      });
+    });
+
+    // 步骤 4：打开成品夹
+    const btnOpenFolder = document.getElementById('btnStep4OpenFolder');
+    btnOpenFolder?.addEventListener('click', () => {
+      showToast('成品库根目录：D:\\AICode\\项目推进\\projects\\江湖有旅人\\主项目\\03-成品库', 'info');
+    });
+
+    // 步骤 4：文案 Tab 切换
+    const copyTabs = document.getElementById('step4CopyTabs');
+    copyTabs?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.pts-tab-btn');
+      if (!btn) return;
+      copyTabs.querySelectorAll('.pts-tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.activeCopyTab = btn.dataset.tab;
+      updateCopyTextarea();
+    });
+  }
+
+  // 轮询逐页计划
+  async function pollPlanResult() {
+    let retries = 0;
+    const step2Badge = document.getElementById('step2StatusBadge');
+    const planAccBody = document.getElementById('step2PlanAccBody');
+    const planContent = document.getElementById('step2PlanContent');
+    const planCountBadge = document.getElementById('step2PlanCountBadge');
+
+    const timer = setInterval(async () => {
+      retries++;
+      if (retries > 60) {
+        clearInterval(timer);
+        state.isStepBusy = false;
+        if (step2Badge) step2Badge.textContent = '⚠️ 计划超时';
+        return;
+      }
+
+      const st = await apiFetch('/api/production/step/status');
+      if (st && st.ok && st.state) {
+        const text = st.state.lastText || '';
+        if (text.includes('计划') || text.includes('P1') || text.includes('封面')) {
+          if (!st.state.isGenerating) {
+            clearInterval(timer);
+            state.isStepBusy = false;
+            if (step2Badge) {
+              step2Badge.textContent = '✅ 计划就绪';
+              step2Badge.className = 'pts-step-status done';
+            }
+            if (planAccBody) planAccBody.style.display = 'block';
+            if (planContent) {
+              planContent.innerHTML = formatPlanText(text);
+            }
+            if (planCountBadge) planCountBadge.textContent = '已生成';
+            showToast('逐页迁移计划已生成！请核对后点击步骤3确认批量出图。', 'success');
+          }
+        }
+      }
+    }, 3000);
+  }
+
+  function formatPlanText(raw) {
+    const lines = raw.split('\n');
+    let html = '<div style="display:flex;flex-direction:column;gap:6px;">';
+    lines.forEach(line => {
+      const trimmed = line.trim();
+      if (/^[-*•]?\s*P\d+/i.test(trimmed) || trimmed.includes('封面') || trimmed.includes('内页')) {
+        html += `<div style="background:rgba(255,255,255,0.05);padding:6px 8px;border-radius:4px;border-left:3px solid #3b82f6;"><strong>${trimmed}</strong></div>`;
+      } else if (trimmed) {
+        html += `<div style="padding:2px 8px;color:#94a3b8;font-size:11px;">${trimmed}</div>`;
+      }
+    });
+    html += '</div>';
+    return html;
+  }
+
+  // 轮询批量成图
+  async function pollImageResults() {
+    let retries = 0;
+    const step3Badge = document.getElementById('step3StatusBadge');
+    const grid = document.getElementById('step3WaterfallGrid');
+    const countBadge = document.getElementById('step3ImageCountBadge');
+
+    const timer = setInterval(async () => {
+      retries++;
+      if (retries > 120) {
+        clearInterval(timer);
+        state.isStepBusy = false;
+        if (step3Badge) step3Badge.textContent = '⚠️ 出图完成或超时';
+        return;
+      }
+
+      const st = await apiFetch('/api/production/step/status');
+      if (st && st.ok && st.state) {
+        const imgs = st.state.images || [];
+        if (countBadge) countBadge.textContent = `${imgs.length} 张`;
+        if (imgs.length > 0 && grid) {
+          renderWaterfallImages(imgs);
+        }
+
+        if (!st.state.isGenerating && imgs.length >= 6) {
+          clearInterval(timer);
+          state.isStepBusy = false;
+          if (step3Badge) {
+            step3Badge.textContent = `✅ 出齐 ${imgs.length} 张`;
+            step3Badge.className = 'pts-step-status done';
+          }
+          showToast(`GPT 已全量出齐整套 ${imgs.length} 张独立竖图！请点击步骤 4 提取文案。`, 'success');
+        }
+      }
+    }, 3000);
+  }
+
+  function renderWaterfallImages(images) {
+    const grid = document.getElementById('step3WaterfallGrid');
+    if (!grid) return;
+    grid.replaceChildren();
+
+    images.forEach((imgUrl, idx) => {
+      const card = document.createElement('div');
+      card.className = 'pts-thumb-card';
+      card.title = `第 P${idx + 1} 页 (点击放大查看)`;
+      card.innerHTML = `
+        <span class="page-tag">P${idx + 1}</span>
+        <img src="${imgUrl}" alt="P${idx + 1}" loading="lazy" />
+      `;
+      card.addEventListener('click', () => openLightbox(imgUrl));
+      grid.appendChild(card);
+    });
+  }
+
+  // 轮询文案结果
+  async function pollCopyResults() {
+    let retries = 0;
+    const step4Badge = document.getElementById('step4StatusBadge');
+    const copyPreview = document.getElementById('step4CopyPreview');
+
+    const timer = setInterval(async () => {
+      retries++;
+      if (retries > 60) {
+        clearInterval(timer);
+        state.isStepBusy = false;
+        if (step4Badge) step4Badge.textContent = '⚠️ 文案超时';
+        return;
+      }
+
+      const st = await apiFetch('/api/production/step/status');
+      if (st && st.ok && st.state) {
+        const text = st.state.lastText || '';
+        if (text.includes('小红书') || text.includes('抖音') || text.includes('MULTI') || text.includes('文案.txt')) {
+          if (!st.state.isGenerating) {
+            clearInterval(timer);
+            state.isStepBusy = false;
+            if (step4Badge) {
+              step4Badge.textContent = '✅ 文案已就绪';
+              step4Badge.className = 'pts-step-status done';
+            }
+            if (copyPreview) copyPreview.style.display = 'block';
+            parseCopyText(text);
+            updateCopyTextarea();
+            showToast('五版文案与文案.txt已成功生成并落地！', 'success');
+          }
+        }
+      }
+    }, 3000);
+  }
+
+  function parseCopyText(raw) {
+    state.copywriting.multi = raw;
+    state.copywriting.xhs1 = extractSection(raw, '小红书1', '小红书2') || raw.slice(0, 800);
+    state.copywriting.xhs2 = extractSection(raw, '小红书2', '抖音') || raw.slice(400, 1200);
+    state.copywriting.dy = extractSection(raw, '抖音', 'MULTI') || raw.slice(800, 1600);
+  }
+
+  function extractSection(text, startKeyword, endKeyword) {
+    const startIdx = text.indexOf(startKeyword);
+    if (startIdx === -1) return '';
+    const endIdx = endKeyword ? text.indexOf(endKeyword, startIdx) : -1;
+    if (endIdx === -1) return text.slice(startIdx);
+    return text.slice(startIdx, endIdx).trim();
+  }
+
+  function updateCopyTextarea() {
+    const ta = document.getElementById('step4CopyTextarea');
+    if (!ta) return;
+    ta.value = state.copywriting[state.activeCopyTab] || state.copywriting.multi || '';
+  }
+
+  // 生产计划与批次模态框
+  function initPlanSectionAndModal() {
+    const planSelect = document.getElementById('ptsPlanSelect');
+    const btnRefresh = document.getElementById('btnRefreshPlanProgress');
+    planSelect?.addEventListener('change', async () => {
+      const fileName = planSelect.value;
+      await apiFetch('/api/production-realtime/switch', {
+        method: 'POST',
+        body: JSON.stringify({ fileName })
+      });
+    });
+    btnRefresh?.addEventListener('click', () => {
+      showToast('生产批次进度已刷新', 'info');
+    });
+  }
+
+  // DOM 就绪后启动
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
