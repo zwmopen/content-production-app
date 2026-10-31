@@ -23235,3 +23235,89 @@ body.is-embedded .gpt-production-test-grid.drawer-collapsed .cdp-canvas-wrapper,
   object-fit: cover !important;
   cursor: pointer !important;
 }
+
+
+/* ==============================================================
+   纯粹双视图架构：【操作面板】vs【网页版】（彻底根除层级重叠与显存占用）
+   严格遵循用户定标：面板打开时 GPT 网页彻底后台隐藏，零显存零显卡占用！
+   ============================================================== */
+
+/* 视图一：【操作面板模式】(body.production-panel-active) */
+body.production-panel-active #gptProductionMainGrid {
+  display: block !important;
+  width: 100% !important;
+  height: calc(100vh - 54px) !important;
+  position: relative !important;
+  overflow: hidden !important;
+  background: #0b0e14 !important;
+}
+
+/* 网页层必须彻底隐藏，绝不进行 DOM 绘制，释放 GPU 与显存 */
+body.production-panel-active #gptProductionBrowserPanel {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  left: -9999px !important;
+}
+
+/* 操作面板独占整个工作区，层次清晰，无任何重叠 */
+body.production-panel-active #prodTemplateSidebar {
+  display: flex !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+  box-shadow: none !important;
+  position: relative !important;
+  z-index: 50 !important;
+  background: #0d111a !important;
+}
+
+/* 视图二：【打开网页版模式】(body:not(.production-panel-active)) */
+body:not(.production-panel-active) #gptProductionMainGrid {
+  display: block !important;
+  width: 100% !important;
+  height: calc(100vh - 54px) !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+body:not(.production-panel-active) #gptProductionBrowserPanel {
+  display: flex !important;
+  width: 100% !important;
+  height: 100% !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+body:not(.production-panel-active) #prodTemplateSidebar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* 切换按钮质感高亮 */
+.pts-switch-view-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.25), rgba(79, 70, 229, 0.35)) !important;
+  border: 1px solid rgba(99, 102, 241, 0.5) !important;
+  color: #e0e7ff !important;
+  padding: 6px 14px !important;
+  border-radius: 6px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+}
+.pts-switch-view-btn:hover {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.5), rgba(79, 70, 229, 0.6)) !important;
+  border-color: #818cf8 !important;
+  color: #ffffff !important;
+  transform: translateY(-1px) !important;
+}

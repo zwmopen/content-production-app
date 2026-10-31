@@ -72,15 +72,12 @@
 
     try {
       const savedMode = localStorage.getItem('pts_view_mode');
-      if (savedMode === 'browser-view') {
-        state.viewMode = 'browser-view';
-      } else {
-        state.viewMode = 'big-panel'; // 默认为大面板工作台
-      }
-    } catch (_) {}
+      state.viewMode = savedMode === 'web' ? 'web' : 'panel'; // 默认进入操作面板
+    } catch (_) {
+      state.viewMode = 'panel';
+    }
 
     applyViewMode(state.viewMode, false);
-    renderDrawerCollapseState();
     bindGlobalDrawerEvents();
     bindWorkflowEvents();
 
@@ -189,75 +186,69 @@
     }
   }
 
-  // 模式切换与 BrowserView 显存优化控制器 (SOP 第 3/48/49 节)
-  function applyViewMode(mode, userInitiated = false) {
-    state.viewMode = mode === 'browser-view' ? 'browser-view' : 'big-panel';
+  // 纯粹双视图架构：【操作面板】vs【网页版】(彻底根除层级重叠与显存占用)
+  async function applyViewMode(mode, userInitiated = false) {
+    state.viewMode = mode === 'web' ? 'web' : 'panel';
     try { localStorage.setItem('pts_view_mode', state.viewMode); } catch (_) {}
 
-    const grid = document.querySelector('.gpt-production-test-grid') || document.getElementById('gptProductionMainGrid');
-    const sidebar = document.getElementById('prodTemplateSidebar');
-    const btnSwitchMode = document.getElementById('btnSwitchProdViewMode');
+    const btnSwitchMode = document.getElementById('btnSwitchViewMode') || document.getElementById('btnSwitchProdViewMode');
+    const modeIcon = document.getElementById('topbarModeIcon');
     const modeLabel = document.getElementById('topbarModeLabel');
     const modeTag = document.getElementById('topbarModeTag');
     const subBadge = document.getElementById('ptsSubModeBadge');
-    const headerSwitchBtn = document.getElementById('btnHeaderSwitchToWeb');
+    const headerSwitchBtn = document.getElementById('btnHeaderSwitchView') || document.getElementById('btnHeaderSwitchToWeb');
 
-    if (state.viewMode === 'big-panel') {
-      // 1. 进入大面板工作台：全宽占据，底层 BrowserView 隐入后台释放 GPU 显存
-      if (grid) {
-        grid.classList.add('big-panel-mode');
-        grid.classList.remove('drawer-collapsed');
-      }
-      state.drawerCollapsed = false;
-      if (sidebar) sidebar.style.display = 'flex';
+    if (state.viewMode === 'panel') {
+      // 1. 进入【操作面板模式】：操作面板全屏独占，GPT 网页完全转入后台隐藏模式，释放显存与显卡
+      document.body.classList.add('production-panel-active');
 
-      // 释放显存：通知 Electron 主进程隐藏 BrowserView，完全由后台纯 CDP 穿透驱动
+      // 强行关闭前台原生 BrowserView，纯靠后台 CDP 穿透静默驱动
       if (window.gptWorkbench?.hide) {
-        window.gptWorkbench.hide().catch(() => {});
+        await window.gptWorkbench.hide().catch(() => {});
       }
 
-      if (modeLabel) modeLabel.textContent = '大面板工作台';
+      if (modeIcon) modeIcon.textContent = '🌐';
+      if (modeLabel) modeLabel.textContent = '打开网页版';
       if (modeTag) {
-        modeTag.textContent = '纯CDP低显存';
+        modeTag.textContent = '后台零显存';
         modeTag.style.background = 'rgba(34, 197, 94, 0.2)';
         modeTag.style.color = '#4ade80';
       }
       if (subBadge) {
-        subBadge.textContent = '⚡ 后台纯CDP低显存模式 (网页后台渲染)';
+        subBadge.textContent = '⚡ 网页后台运行中 · 零显存占用 (纯CDP驱动)';
         subBadge.style.color = '#4ade80';
       }
       if (headerSwitchBtn) {
-        headerSwitchBtn.querySelector('span').textContent = '🌐 切换网页前台';
+        headerSwitchBtn.innerHTML = '<span>🌐 打开网页版</span>';
       }
 
       if (userInitiated) {
-        showToast('已切换至【大面板工作台】：网页转入后台低显存渲染，全自动化 CDP 驱动！', 'success');
+        showToast('已切换至【内容制作操作面板】：GPT 网页转入后台静默运行，零显卡与显存占用！', 'success');
       }
     } else {
-      // 2. 进入网页前台巡检模式：恢复 BrowserView 供人工操作与巡检
-      if (grid) {
-        grid.classList.remove('big-panel-mode');
-      }
+      // 2. 进入【网页版模式】：展示 ChatGPT 原生网页画面供人工查看与操作
+      document.body.classList.remove('production-panel-active');
 
-      // 唤醒并恢复 BrowserView
+      // 恢复前台原生 BrowserView
       restoreEmbeddedGptViewSafely();
 
-      if (modeLabel) modeLabel.textContent = '网页前台巡检';
+      if (modeIcon) modeIcon.textContent = '📊';
+      if (modeLabel) modeLabel.textContent = '打开操作面板';
       if (modeTag) {
-        modeTag.textContent = '前台渲染·人工接管';
+        modeTag.textContent = '前台网页中';
         modeTag.style.background = 'rgba(234, 179, 8, 0.2)';
         modeTag.style.color = '#fde047';
       }
       if (subBadge) {
-        subBadge.textContent = '🌐 网页前台巡检中 (前台渲染)';
+        subBadge.textContent = '🌐 网页版前台运行中';
         subBadge.style.color = '#fde047';
       }
       if (headerSwitchBtn) {
-        headerSwitchBtn.querySelector('span').textContent = '📊 返回大面板';
+        headerSwitchBtn.innerHTML = '<span>📊 打开操作面板</span>';
       }
 
       if (userInitiated) {
-        showToast('已切换至【网页前台巡检】：网页画面已呈现，允许人工直接介入排查！', 'info');
+        showToast('已切换至【GPT 网页版】：画面已显现，允许人工直接介入操作！', 'info');
       }
     }
   }
@@ -282,35 +273,16 @@
 
   // 绑定全局抽屉与展开折叠
   function bindGlobalDrawerEvents() {
-    const btnToggle = document.getElementById('btnToggleProdDrawer');
-    const btnClose = document.getElementById('btnCloseProdDrawer');
-    const btnSwitchMode = document.getElementById('btnSwitchProdViewMode');
-    const btnHeaderSwitch = document.getElementById('btnHeaderSwitchToWeb');
+    const btnSwitchMode = document.getElementById('btnSwitchViewMode') || document.getElementById('btnSwitchProdViewMode');
+    const btnHeaderSwitch = document.getElementById('btnHeaderSwitchView') || document.getElementById('btnHeaderSwitchToWeb');
 
-    const toggleCollapse = () => {
-      // 在大面板模式下，收起即切换为前台网页；在抽屉模式下，收起隐藏侧栏
-      if (state.viewMode === 'big-panel') {
-        applyViewMode('browser-view', true);
-      } else {
-        state.drawerCollapsed = !state.drawerCollapsed;
-        try { localStorage.setItem('pts_prod_drawer_collapsed', String(state.drawerCollapsed)); } catch (_) {}
-        renderDrawerCollapseState();
-      }
+    const toggleMode = () => {
+      const targetMode = state.viewMode === 'panel' ? 'web' : 'panel';
+      applyViewMode(targetMode, true);
     };
 
-    btnToggle?.addEventListener('click', toggleCollapse);
-    btnClose?.addEventListener('click', toggleCollapse);
-
-    // 模式切换
-    btnSwitchMode?.addEventListener('click', () => {
-      const targetMode = state.viewMode === 'big-panel' ? 'browser-view' : 'big-panel';
-      applyViewMode(targetMode, true);
-    });
-
-    btnHeaderSwitch?.addEventListener('click', () => {
-      const targetMode = state.viewMode === 'big-panel' ? 'browser-view' : 'big-panel';
-      applyViewMode(targetMode, true);
-    });
+    btnSwitchMode?.addEventListener('click', toggleMode);
+    btnHeaderSwitch?.addEventListener('click', toggleMode);
 
     // Lightbox 关闭
     const lightboxModal = document.getElementById('ptsLightboxModal');

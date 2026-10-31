@@ -490,19 +490,15 @@
               </div>
 
               <div class="topbar-right">
-                <button id="btnSwitchProdViewMode" class="topbar-mode-btn" type="button" title="切换模式：大面板工作台 (低显存) / 网页前台巡检 (人工接管)">
-                  <span class="mode-icon">📊</span>
-                  <span class="mode-label" id="topbarModeLabel">大面板工作台</span>
-                  <span class="mode-tag" id="topbarModeTag">后台纯CDP·低显存</span>
+                <!-- 核心视图双向切换：打开网页版 vs 打开操作面板 -->
+                <button id="btnSwitchViewMode" class="topbar-mode-btn" type="button" title="在【内容制作操作面板】与【GPT 网页版】之间自由切换">
+                  <span class="mode-icon" id="topbarModeIcon">🌐</span>
+                  <span class="mode-label" id="topbarModeLabel">打开网页版</span>
+                  <span class="mode-tag" id="topbarModeTag">后台零显存</span>
                 </button>
                 <button id="btnTopOpenDetachedWindow" class="topbar-detach-btn" type="button" title="独立大窗口打开当前账号（多窗口并排展示，同时收图、上传与下载）">
                   <span class="btn-icon">🪟</span>
                   <span class="btn-label">独立大窗口</span>
-                </button>
-                <button id="btnToggleProdDrawer" class="topbar-drawer-btn" type="button" title="展开/收起制作工具" aria-expanded="true" aria-controls="prodTemplateSidebar">
-                  <span class="drawer-icon">🎛️</span>
-                  <span class="drawer-label" id="topbarDrawerBtnLabel">工作台面板</span>
-                  <span class="drawer-arrow">◀</span>
                 </button>
               </div>
             </header>
@@ -568,15 +564,14 @@
                   <div class="pts-header-main">
                     <span class="pts-icon">🎨</span>
                     <div class="pts-header-title-box">
-                      <span class="pts-title">内容制作大面板工作台</span>
-                      <span class="pts-sub-mode-badge" id="ptsSubModeBadge">⚡ 后台纯CDP低显存模式 (网页后台渲染)</span>
+                      <span class="pts-title">内容制作操作面板</span>
+                      <span class="pts-sub-mode-badge" id="ptsSubModeBadge">⚡ 网页后台运行中 · 零显存占用 (纯CDP驱动)</span>
                     </div>
                   </div>
                   <div class="pts-header-actions">
-                    <button type="button" class="pts-action-btn pts-switch-web-btn" id="btnHeaderSwitchToWeb" title="切换到网页前台进行人工巡检（不影响后台正在生成的任务）">
-                      <span>🌐 切换网页前台</span>
+                    <button type="button" class="pts-switch-view-btn" id="btnHeaderSwitchView" title="打开 ChatGPT 原生网页版进行人工查看与操作（不打断后台正在运行的任务）">
+                      <span>🌐 打开网页版</span>
                     </button>
-                    <button class="pts-collapse-btn" id="btnCloseProdDrawer" type="button" title="收起大面板">◀</button>
                   </div>
                 </div>
 
