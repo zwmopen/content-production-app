@@ -170,12 +170,11 @@
       });
     }
 
-    // KPI 卡片点击事件：自动展开表格并筛选对应状态 (4阶直觉状态机)
-    bindKpiCardClick('kpiAwaitingConfirmation', '待确认出图');
-    bindKpiCardClick('kpiAwaitingCopy', '待补充正文/文案');
-    bindKpiCardClick('kpiCompleted', '完工');
-    bindKpiCardClick('kpiAwaitingMaterial', '母版已锁定');
-    bindKpiCardClick('kpiGenerating', '正在生成中');
+    // KPI 卡片点击事件：自动展开表格并筛选对应状态 (4阶直觉行动状态机：废弃单页调度，合并入待补充原料出计划)
+    bindKpiCardClick('kpiAwaitingConfirmation', '待确认计划出图');
+    bindKpiCardClick('kpiAwaitingMaterial', '等待补充原料出计划');
+    bindKpiCardClick('kpiAwaitingCopy', '待补充文案收尾');
+    bindKpiCardClick('kpiCompleted', '图文完工归档');
 
     // 三大生产指令按钮
     const btnCopy = document.getElementById('btnDispatchBatchCopy');
@@ -294,17 +293,16 @@
     }
 
     setNumText('kpiNumConfirmation', kpi.awaitingConfirmation !== undefined ? kpi.awaitingConfirmation : 124);
+    setNumText('kpiNumMaterial', kpi.awaitingMaterial !== undefined ? kpi.awaitingMaterial : 90);
     setNumText('kpiNumCopy', kpi.awaitingCopy !== undefined ? kpi.awaitingCopy : 12);
     setNumText('kpiNumCompleted', kpi.completed !== undefined ? kpi.completed : 48);
-    setNumText('kpiNumMaterial', (kpi.awaitingMaterial || 0) + (kpi.idle || 14));
-    setNumText('kpiNumGenerating', kpi.generating !== undefined ? kpi.generating : 76);
 
     // 更新按钮上的小字数量提示
     const btnCopy = document.getElementById('btnDispatchBatchCopy');
     if (btnCopy) {
       const small = btnCopy.querySelector('small');
       const count = kpi.awaitingCopy !== undefined ? kpi.awaitingCopy : 12;
-      if (small) small.textContent = `逐个去出 (${count}套待补充文案)`;
+      if (small) small.textContent = `逐个去出 (${count}套待补文案)`;
     }
 
     const btnWork = document.getElementById('btnDispatchBatchConfirm');
@@ -519,18 +517,14 @@
   function getStatusTagHtml(status) {
     status = status || '';
     let tagClass = 'mat-tag-gray';
-    if (status.includes('待确认出图')) {
+    if (status.includes('待确认') || status.includes('已出计划')) {
       tagClass = 'mat-tag-orange';
-    } else if (status.includes('待补充正文') || status.includes('缺文案')) {
+    } else if (status.includes('待补充文案') || status.includes('缺文案') || status.includes('待补充正文')) {
       tagClass = 'mat-tag-yellow';
-    } else if (status.includes('等待补充原料')) {
+    } else if (status.includes('等待补充原料') || status.includes('待补充原料')) {
       tagClass = 'mat-tag-blue';
-    } else if (status.includes('需要输出迁移计划') || status.includes('待排产')) {
-      tagClass = 'mat-tag-purple';
-    } else if (status.includes('完工')) {
+    } else if (status.includes('完工') || status.includes('归档')) {
       tagClass = 'mat-tag-green';
-    } else if (status.includes('空闲')) {
-      tagClass = 'mat-tag-gray';
     }
     return `<span class="mat-status-tag ${tagClass}">${escapeHtml(status)}</span>`;
   }

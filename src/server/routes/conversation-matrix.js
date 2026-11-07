@@ -63,55 +63,53 @@ function loadMatrixData() {
     awaitingConfirmation: 0,
     awaitingCopy: 0,
     awaitingMaterial: 0,
-    awaitingPlan: 0,
-    generating: 0,
-    completed: 0,
-    idle: 0,
-    other: 0
+    completed: 0
   };
 
   const accountBreakdowns = {
-    A: { total: 0, awaitingConfirmation: 0, awaitingCopy: 0, awaitingMaterial: 0, completed: 0, generating: 0, idle: 0 },
-    B: { total: 0, awaitingConfirmation: 0, awaitingCopy: 0, awaitingMaterial: 0, completed: 0, generating: 0, idle: 0 },
-    C: { total: 0, awaitingConfirmation: 0, awaitingCopy: 0, awaitingMaterial: 0, completed: 0, generating: 0, idle: 0 }
+    A: { total: 0, awaitingConfirmation: 0, awaitingCopy: 0, awaitingMaterial: 0, completed: 0 },
+    B: { total: 0, awaitingConfirmation: 0, awaitingCopy: 0, awaitingMaterial: 0, completed: 0 },
+    C: { total: 0, awaitingConfirmation: 0, awaitingCopy: 0, awaitingMaterial: 0, completed: 0 }
   };
 
   for (const acc of ['A', 'B', 'C']) {
     const list = raw[acc] || [];
     for (const item of list) {
-      const st = item.status || '模板已建立，暂无活跃主题';
+      let st = item.status || '等待补充原料出计划';
       const tp = item.topic || '';
       const group = item.group || '模板库';
       const msgCount = item.msgCount || 10;
       
-      let analysis = '';
-      if (st === '已出计划，待确认出图') {
-        analysis = tp ? `AI已输出逐页排版方案（主题「${tp}」），共 ${msgCount} 条历史消息；当前处于等待用户回复「1」确认出图阶段。` : `AI已针对当前任务输出逐页排版计划；正文末尾显示等待用户确认计划。`;
+      // 归一化为 4 阶直觉行动状态机（用户 2026-11-07 终审定标）
+      if (st.includes('待确认') || st.includes('已出计划')) {
+        st = '待确认计划出图';
+      } else if (st.includes('待补充正文') || st.includes('待补充文案') || st.includes('缺文案')) {
+        st = '待补充文案收尾';
+      } else if (st.includes('完工') || st.includes('归档')) {
+        st = '图文完工归档';
+      } else {
+        // 用户定标：只出单页出图的已经废弃（历史自动化残留），全部归入「等待补充原料出计划」重新出计划
+        st = '等待补充原料出计划';
+      }
+      
+      let analysis = item.analysis || '';
+      if (st === '待确认计划出图') {
+        if (!analysis) analysis = tp ? `AI已输出逐页排版方案（主题「${tp}」），共 ${msgCount} 条历史消息；当前等待确认回复「1」出图。` : `AI已针对当前任务输出逐页排版计划，等待确认计划出图。`;
         statusCounts.awaitingConfirmation++;
         accountBreakdowns[acc].awaitingConfirmation++;
-      } else if (st === '图已出，待补充正文/文案') {
-        analysis = tp ? `整套 3:4 原生竖版图片已由生图工具交付完毕（主题「${tp}」）；当前正文缺少正式正文与发布标签，需下发出文案指令。` : `图片生成已完毕，成图节点齐全；当前缺少配套发布文案，属于「缺文案」工单。`;
+      } else if (st === '待补充文案收尾') {
+        if (!analysis) analysis = tp ? `整套原生竖版图片已交付完毕（主题「${tp}」）；缺少正式正文与发布标签，需下发出文案指令收尾。` : `图片生成已完毕，缺少配套发布文案，等待出文案指令。`;
         statusCounts.awaitingCopy++;
         accountBreakdowns[acc].awaitingCopy++;
-      } else if (st === '图文已全部完工，待归档') {
-        analysis = tp ? `全套排版图片与小红书正文/标签均已交付（主题「${tp}」）；生产闭环，处于成品待归档或备用态。` : `会话历史中已包含整套图文成果与发布文案，全流程闭环完工。`;
+      } else if (st === '图文完工归档') {
+        if (!analysis) analysis = tp ? `全套排版图片与小红书正文/标签均已交付（主题「${tp}」）；生产闭环，本地已落盘归档。` : `会话历史中已包含整套图文成果与发布文案，全流程闭环完工。`;
         statusCounts.completed++;
         accountBreakdowns[acc].completed++;
-      } else if (st === '母版已锁定，等待补充原料') {
-        analysis = `会话已完成视觉母版学习与切片分析，母版规范（V4.8.8/V4.8.10）已锁定；当前处于状态二，等待注入新素材原料。`;
+      } else {
+        // 等待补充原料出计划
+        if (!analysis) analysis = `母版就绪或历史单页废弃残留，当前无在途任务，等待注入新素材原料重新出计划。`;
         statusCounts.awaitingMaterial++;
         accountBreakdowns[acc].awaitingMaterial++;
-      } else if (st === '已有原料，需要输出迁移计划') {
-        analysis = `用户已投递待迁移图文素材原料，尚未输出完整的逐页迁移排产表，需触发AI分析原料出计划。`;
-        statusCounts.awaitingPlan++;
-      } else if (st === '正在生成中（单页调度）') {
-        analysis = `用户已下发确认出图或调度指令，会话处于单页生图队列流转中。`;
-        statusCounts.generating++;
-        accountBreakdowns[acc].generating++;
-      } else {
-        analysis = `会话已定义母版结构，无未完结活跃生产主题，处于空闲待排产状态。`;
-        statusCounts.idle++;
-        accountBreakdowns[acc].idle++;
       }
 
       accountBreakdowns[acc].total++;
@@ -203,7 +201,7 @@ async function handle(req, res, pathname, parsed, ctx) {
 
     if (action === 'batch_copywriting') {
       const matrix = loadMatrixData();
-      const targetItems = matrix.items.filter(x => x.status === '图已出，待补充正文/文案');
+      const targetItems = matrix.items.filter(x => x.status === '待补充文案收尾' || x.status === '图已出，待补充正文/文案');
       ctx.sendJson(res, {
         ok: true,
         action: 'batch_copywriting',
@@ -216,7 +214,7 @@ async function handle(req, res, pathname, parsed, ctx) {
 
     if (action === 'batch_confirm_output') {
       const matrix = loadMatrixData();
-      const targetItems = matrix.items.filter(x => x.status === '已出计划，待确认出图');
+      const targetItems = matrix.items.filter(x => x.status === '待确认计划出图' || x.status === '已出计划，待确认出图');
       ctx.sendJson(res, {
         ok: true,
         action: 'batch_confirm_output',

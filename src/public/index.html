@@ -648,7 +648,7 @@
                       <div class="pts-matrix-label-left">
                         <span class="pts-badge-num">00</span>
                         <strong>会话资产大盘 & 自动化生产中枢</strong>
-                        <span class="pts-plan-badge" id="ptsMatrixTotalBadge">全量 219 条会话</span>
+                        <span class="pts-plan-badge" id="ptsMatrixTotalBadge">全量 274 条会话 (A:100 | B:61 | C:113)</span>
                       </div>
                       <div class="pts-matrix-label-right">
                         <button type="button" class="pts-mini-btn" id="btnTestToast" title="测试单套作品落地时的 Windows 电脑原生桌面通知与提示音">
@@ -657,7 +657,7 @@
                         <button type="button" class="pts-mini-btn" id="btnOpenSchedulerSettings" title="配置3小时配额看门狗、多模板轮巡策略、单套落地通知与重发补救">
                           ⚙️ 定时与补救设置
                         </button>
-                        <button type="button" class="pts-mini-btn" id="btnOpenExcelLedger" title="在本地打开 Excel 状态总表 (d:/AICode/GPT模板会话状态总览表.xlsx)">
+                        <button type="button" class="pts-mini-btn" id="btnOpenExcelLedger" title="在本地打开 Excel 状态总表 (data/matrix/GPT模板会话状态总览表.xlsx)">
                           📗 打开 Excel 总表
                         </button>
                         <button type="button" class="pts-mini-btn" id="btnRefreshMatrix" title="重新从后台同步最新会话状态">
@@ -669,12 +669,17 @@
                       </div>
                     </div>
 
-                    <!-- 4阶直觉行动状态卡片网格 (2026-11-07 纠偏升级) -->
+                    <!-- 4阶直觉行动状态卡片网格 (2026-11-07 纠偏升级：单页残留废弃，合并入待补充原料重新出计划) -->
                     <div class="pts-matrix-kpi-grid">
                       <div class="pts-kpi-card kpi-orange" id="kpiAwaitingConfirmation" title="点击筛选全部已就绪逐页排版计划、等待回复1开始出图的会话">
                         <div class="kpi-num" id="kpiNumConfirmation">124</div>
                         <div class="kpi-title">待确认计划出图</div>
                         <div class="kpi-desc">计划就绪 · 待出作品 (核心储备)</div>
+                      </div>
+                      <div class="pts-kpi-card kpi-blue" id="kpiAwaitingMaterial" title="点击筛选空闲或历史单页废弃残留会话，后续补充原料重新出新计划">
+                        <div class="kpi-num" id="kpiNumMaterial">90</div>
+                        <div class="kpi-title">等待补充原料出计划</div>
+                        <div class="kpi-desc">母版就绪/历史残留废弃 · 待补料重出计划</div>
                       </div>
                       <div class="pts-kpi-card kpi-yellow" id="kpiAwaitingCopy" title="点击筛选全部已完成图片生成、等待生成发布文案并落地收尾的会话">
                         <div class="kpi-num" id="kpiNumCopy">12</div>
@@ -686,36 +691,26 @@
                         <div class="kpi-title">图文完工归档</div>
                         <div class="kpi-desc">全套闭环 · 本地已落盘</div>
                       </div>
-                      <div class="pts-kpi-card kpi-blue" id="kpiAwaitingMaterial" title="点击筛选空闲或母版已锁定的会话，可随时注入新素材出计划">
-                        <div class="kpi-num" id="kpiNumMaterial">14</div>
-                        <div class="kpi-title">待补充原料出计划</div>
-                        <div class="kpi-desc">母版就绪 · 待投料排产</div>
-                      </div>
-                      <div class="pts-kpi-card kpi-purple" id="kpiGenerating" title="点击筛选正在生图队列中流转的会话">
-                        <div class="kpi-num" id="kpiNumGenerating">76</div>
-                        <div class="kpi-title">生图流转中</div>
-                        <div class="kpi-desc">单页调度 · 队列生成中</div>
-                      </div>
                     </div>
 
                     <!-- 三大核心自动化执行指令操作中枢 (满足用户核心自动化诉求) -->
                     <div class="pts-matrix-actions-bar">
                       <div class="pts-action-block">
-                        <button type="button" class="pts-dispatch-action-btn btn-action-copy" id="btnDispatchBatchCopy" title="筛选全部24套处于缺文案状态的会话，逐一执行文案生成指令">
+                        <button type="button" class="pts-dispatch-action-btn btn-action-copy" id="btnDispatchBatchCopy" title="筛选全部12套处于缺文案状态的会话，逐一执行文案生成指令">
                           <span class="btn-icon">📝</span>
                           <span class="btn-text">
                             <strong>一键批量出文案</strong>
-                            <small>逐个去出 (24套待补文案)</small>
+                            <small>逐个去出 (12套待补文案)</small>
                           </span>
                         </button>
                       </div>
 
                       <div class="pts-action-block">
-                        <button type="button" class="pts-dispatch-action-btn btn-action-work" id="btnDispatchBatchConfirm" title="筛选全部61套处于待确认计划状态的会话，自动发送1确认出图">
+                        <button type="button" class="pts-dispatch-action-btn btn-action-work" id="btnDispatchBatchConfirm" title="筛选全部124套处于待确认计划状态的会话，自动发送1确认出图">
                           <span class="btn-icon">🎯</span>
                           <span class="btn-text">
                             <strong>一键批量出作品</strong>
-                            <small>尽量去出 (61套待确认出图)</small>
+                            <small>尽量去出 (124套待确认出图)</small>
                           </span>
                         </button>
                       </div>
@@ -737,21 +732,19 @@
                         <div class="matrix-filter-left">
                           <input type="text" id="iptMatrixSearch" class="pts-matrix-search-input" placeholder="🔍 搜索主题、地名 (如千岛湖/安吉/桐庐)、账号 (如 upvote/A) 或会话名称..." />
                           <div class="matrix-account-pills" id="matrixAccountPills">
-                            <button type="button" class="mat-acc-btn active" data-acc="all">全部 (219)</button>
+                            <button type="button" class="mat-acc-btn active" data-acc="all">全部 (274)</button>
                             <button type="button" class="mat-acc-btn" data-acc="A">A · zwmrpg (100)</button>
                             <button type="button" class="mat-acc-btn" data-acc="B">B · upvote (61)</button>
-                            <button type="button" class="mat-acc-btn" data-acc="C">C · donnaparkerz (58)</button>
+                            <button type="button" class="mat-acc-btn" data-acc="C">C · donnaparkerz (113)</button>
                           </div>
                         </div>
                         <div class="matrix-filter-right">
                           <select id="selMatrixStatusFilter" class="pts-matrix-select">
-                            <option value="all">所有状态 (219)</option>
-                            <option value="待确认出图">已出计划，待确认出图 (61)</option>
-                            <option value="待补充正文/文案">图已出，待补充正文/文案 (24)</option>
-                            <option value="等待补充原料">母版已锁定，等待补充原料 (30)</option>
-                            <option value="需要输出迁移计划">已有原料，需要输出迁移计划 (60)</option>
-                            <option value="完工">图文已全部完工，待归档 (18)</option>
-                            <option value="空闲">模板已建立/空闲 (17)</option>
+                            <option value="all">所有状态 (274)</option>
+                            <option value="待确认计划出图">待确认计划出图 (124)</option>
+                            <option value="等待补充原料出计划">等待补充原料出计划 (90)</option>
+                            <option value="待补充文案收尾">待补充文案收尾 (12)</option>
+                            <option value="图文完工归档">图文完工归档 (48)</option>
                           </select>
                         </div>
                       </div>
@@ -2339,7 +2332,7 @@
   </div>
 
   <script src="/native-production-drawer.js?v=2.6.102-dev" defer></script>
-  <script src="/gpt-conversation-matrix-dashboard.js?v=1.0.1" defer></script>
+  <script src="/gpt-conversation-matrix-dashboard.js?v=2.8.2" defer></script>
   </body>
 </html>
 
