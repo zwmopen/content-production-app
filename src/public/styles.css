@@ -24639,3 +24639,157 @@ body:not(.production-panel-active) #prodTemplateSidebar {
   background: rgba(99, 102, 241, 0.35) !important;
   color: #fff !important;
 }
+
+/* ---------------- 通知徽章与交付动态浮层 ---------------- */
+.btn-notification-bell {
+  position: relative !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(239, 68, 68, 0.35) !important;
+  color: #fca5a5 !important;
+}
+
+.btn-notification-bell:hover {
+  background: rgba(239, 68, 68, 0.25) !important;
+  border-color: #ef4444 !important;
+  color: #fff !important;
+}
+
+.mat-badge-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  color: #fff !important;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 0 5px;
+  height: 16px;
+  min-width: 16px;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+  animation: matBadgePulse 2s infinite ease-in-out;
+  margin-left: 3px;
+}
+
+@keyframes matBadgePulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+
+.pts-notification-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 420px;
+  max-width: 92vw;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.7);
+  z-index: 99999;
+  color: #f1f5f9;
+  text-align: left;
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  animation: popoverFadeIn 0.18s ease-out;
+}
+
+@keyframes popoverFadeIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.pts-notification-popover .popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid #1e293b;
+}
+
+.pts-notification-popover .badge-sub {
+  font-size: 10px;
+  background: #1e293b;
+  color: #94a3b8;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+
+.pts-notification-popover .btn-text-action {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.pts-notification-popover .btn-text-action:hover {
+  color: #38bdf8;
+  text-decoration: underline;
+}
+
+.pts-notification-popover .popover-body {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notif-item-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 10px;
+  transition: border-color 0.15s ease;
+}
+
+.notif-item-card.is-unread {
+  border-left: 3px solid #f97316;
+  background: rgba(249, 115, 22, 0.05);
+}
+
+.notif-item-card:hover {
+  border-color: #475569;
+}
+
+.notif-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.notif-item-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #f8fafc;
+  margin-bottom: 4px;
+}
+
+.notif-item-specs {
+  font-size: 11px;
+  color: #94a3b8;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.notif-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pts-notification-popover .popover-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border-top: 1px solid #1e293b;
+  font-size: 11px;
+}

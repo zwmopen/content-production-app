@@ -650,7 +650,32 @@
                         <strong>会话资产大盘 & 自动化生产中枢</strong>
                         <span class="pts-plan-badge" id="ptsMatrixTotalBadge">全量 274 条会话 (A:100 | B:61 | C:113)</span>
                       </div>
-                      <div class="pts-matrix-label-right">
+                      <div class="pts-matrix-label-right" style="position: relative;">
+                        <!-- 交付提醒与小红点 (用户 2026-11-07 核心诉求) -->
+                        <div style="position: relative; display: inline-block;">
+                          <button type="button" class="pts-mini-btn btn-notification-bell" id="btnNotificationBell" title="点击查看最近每小时产出完工作品与交付单">
+                            🔔 交付提醒 <span id="matNotificationBadge" class="mat-badge-count">+1</span>
+                          </button>
+                          
+                          <!-- 交付动态浮层 Popover -->
+                          <div id="ptsNotificationPopover" class="pts-notification-popover" style="display: none;">
+                            <div class="popover-header">
+                              <div style="display: flex; align-items: center; gap: 6px;">
+                                <strong>🔔 作品交付实时动态</strong>
+                                <span class="badge-sub" id="popoverUnreadCountText">1 条新交付</span>
+                              </div>
+                              <button type="button" id="btnMarkAllNotificationsRead" class="btn-text-action">全部标为已读</button>
+                            </div>
+                            <div class="popover-body" id="ptsNotificationList">
+                              <!-- 动态渲染交付条目 -->
+                            </div>
+                            <div class="popover-footer">
+                              <span style="font-size: 11px; color: #64748b;">每小时自动闭环作品落盘即刻推送</span>
+                              <button type="button" id="btnTriggerTestHourlyFeishu" class="btn-text-action" style="color: #38bdf8;">📲 推送飞书卡片测试</button>
+                            </div>
+                          </div>
+                        </div>
+
                         <button type="button" class="pts-mini-btn" id="btnTestToast" title="测试单套作品落地时的 Windows 电脑原生桌面通知与提示音">
                           🔔 测试桌面通知
                         </button>
@@ -2332,7 +2357,7 @@
   </div>
 
   <script src="/native-production-drawer.js?v=2.6.102-dev" defer></script>
-  <script src="/gpt-conversation-matrix-dashboard.js?v=2.8.2" defer></script>
+  <script src="/gpt-conversation-matrix-dashboard.js?v=2.8.3" defer></script>
   </body>
 </html>
 

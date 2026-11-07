@@ -75,9 +75,14 @@
 
   function init() {
     bindEvents();
+    bindNotificationEvents();
     loadMatrixData();
+    fetchNotifications();
     // 30 秒自动轻量心跳同步
-    setInterval(loadMatrixData, 30000);
+    setInterval(() => {
+      loadMatrixData();
+      fetchNotifications();
+    }, 30000);
   }
 
   function bindEvents() {
@@ -610,6 +615,162 @@
       toast.style.opacity = '0';
       toast.style.transform = 'translateY(8px)';
     }, 3500);
+  }
+
+  // ----------------- 通知中心与交付动态浮层逻辑 (用户 2026-11-07 核心诉求) -----------------
+  let notificationState = {
+    unreadCount: 0,
+    list: []
+  };
+
+  function bindNotificationEvents() {
+    const btnBell = document.getElementById('btnNotificationBell');
+    const popover = document.getElementById('ptsNotificationPopover');
+    const btnMarkAll = document.getElementById('btnMarkAllNotificationsRead');
+    const btnTestFeishu = document.getElementById('btnTriggerTestHourlyFeishu');
+
+    if (btnBell && popover) {
+      btnBell.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isHidden = popover.style.display === 'none';
+        popover.style.display = isHidden ? 'block' : 'none';
+        if (isHidden && notificationState.unreadCount > 0) {
+          // 点击查看时立即标记已读并清除小红点
+          markNotificationsAsRead();
+        }
+      });
+
+      // 点击外部自动收起
+      document.addEventListener('click', (e) => {
+        if (!popover.contains(e.target) && !btnBell.contains(e.target)) {
+          popover.style.display = 'none';
+        }
+      });
+    }
+
+    if (btnMarkAll) {
+      btnMarkAll.addEventListener('click', () => {
+        markNotificationsAsRead();
+      });
+    }
+
+    if (btnTestFeishu) {
+      btnTestFeishu.addEventListener('click', () => {
+        btnTestFeishu.disabled = true;
+        btnTestFeishu.textContent = '正在推送到飞书...';
+        dispatchAction('push_test_feishu', {}, (res) => {
+          btnTestFeishu.disabled = false;
+          btnTestFeishu.textContent = '📲 推送飞书卡片测试';
+          showNotification(res.message || '已触发飞书卡片推送', 'success');
+          fetchNotifications();
+        });
+      });
+    }
+  }
+
+  function fetchNotifications() {
+    fetch('/api/production/notifications')
+      .then(r => r.json())
+      .then(res => {
+        if (!res || !res.ok) return;
+        notificationState = res.data || { unreadCount: 0, list: [] };
+        renderNotificationBadge();
+        renderNotificationList();
+      })
+      .catch(err => console.error('Failed to fetch notifications:', err));
+  }
+
+  function renderNotificationBadge() {
+    const badge = document.getElementById('matNotificationBadge');
+    const textUnread = document.getElementById('popoverUnreadCountText');
+    const count = notificationState.unreadCount || 0;
+
+    if (badge) {
+      if (count > 0) {
+        badge.style.display = 'inline-flex';
+        badge.textContent = `+${count}`;
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    if (textUnread) {
+      textUnread.textContent = count > 0 ? `${count} 条新交付` : '全部已读';
+    }
+  }
+
+  function renderNotificationList() {
+    const container = document.getElementById('ptsNotificationList');
+    if (!container) return;
+
+    const list = notificationState.list || [];
+    if (list.length === 0) {
+      container.innerHTML = '<div style="text-align: center; color: #64748b; padding: 24px; font-size: 12px;">暂无最近的作品交付记录</div>';
+      return;
+    }
+
+    const html = list.map(item => {
+      const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '刚刚';
+      const isUnread = !item.read;
+      const acc = item.accountLabel || `账号 ${item.account || 'A'}`;
+      const title = escapeHtml(item.title || item.topic || '小红书图文作品');
+      const specs = `${item.imagesCount || 10} 张原画 3:4 竖图 ＋ ${item.copyVersions || 5} 版文案`;
+      const folder = escapeHtml(item.folderPath || '');
+
+      return `
+        <div class="notif-item-card ${isUnread ? 'is-unread' : ''}">
+          <div class="notif-item-header">
+            <span style="font-size: 11px; color: #94a3b8; font-family: monospace;">⏰ ${timeStr} · ${acc}</span>
+            ${isUnread ? '<span style="font-size: 9px; background: #ea580c; color: #fff; padding: 1px 5px; border-radius: 4px;">NEW</span>' : ''}
+          </div>
+          <div class="notif-item-title">${title}</div>
+          <div class="notif-item-specs">
+            <span>🖼️ ${specs}</span>
+          </div>
+          <div class="notif-item-actions">
+            <button type="button" class="pts-mini-btn btn-open-work-folder" data-folder="${folder}" style="font-size: 10px; padding: 2px 8px;">
+              📁 打开本地成品
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = html;
+
+    // 绑定打开本地文件夹事件
+    container.querySelectorAll('.btn-open-work-folder').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const fPath = btn.getAttribute('data-folder');
+        fetch('/api/production/notifications/open-folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath: fPath })
+        })
+        .then(r => r.json())
+        .then(res => {
+          if (res.ok) showNotification('已在 Windows 中打开作品文件夹', 'success');
+          else showNotification(res.error || '无法打开文件夹', 'error');
+        });
+      });
+    });
+  }
+
+  function markNotificationsAsRead() {
+    fetch('/api/production/notifications/read', { method: 'POST' })
+      .then(r => r.json())
+      .then(res => {
+        if (res && res.ok) {
+          notificationState.unreadCount = 0;
+          if (notificationState.list) {
+            notificationState.list.forEach(it => it.read = true);
+          }
+          renderNotificationBadge();
+          renderNotificationList();
+        }
+      })
+      .catch(err => console.error('Failed to mark read:', err));
   }
 
   // 页面就绪后自启动

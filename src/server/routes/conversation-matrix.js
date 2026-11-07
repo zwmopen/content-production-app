@@ -8,6 +8,7 @@ const { exec } = require('child_process');
 const APP_ROOT = path.resolve(__dirname, '../../../');
 const INTERNAL_AUDITED_FILE = path.join(APP_ROOT, 'data/matrix/all_real_audited_274.json');
 const INTERNAL_EXCEL_PATH = path.join(APP_ROOT, 'data/matrix/GPT模板会话状态总览表.xlsx');
+const INTERNAL_NOTIFICATIONS_FILE = path.join(APP_ROOT, 'data/matrix/notifications.json');
 
 // 2. 外部兼容与兜底路径 (Fallback)
 const EXTERNAL_AUDITED_FILE_1 = 'd:/AICode/all_real_audited_274.json';
@@ -16,10 +17,13 @@ const EXTERNAL_AUDITED_FILE_BACKUP = 'd:/AICode/all_real_audited_219.json';
 const EXTERNAL_EXCEL_PATH_1 = 'd:/AICode/GPT模板会话状态总览表.xlsx';
 const EXTERNAL_EXCEL_PATH_2 = 'D:/AICode/运行数据/江湖有旅人/内容生产App/GPT模板会话状态总台账.xlsx';
 
+const LARK_CLI = 'D:\\AICode\\工具开发\\toolchains\\npm-global\\node_modules\\@larksuite\\cli\\scripts\\run.js';
+const FEISHU_CHAT_ID = 'oc_bb67c9036e6b14da9bb7be9336dfa9c0';
+
 let schedulerState = {
   enabled: false,
-  intervalHours: 3,
-  batchSizePerAccount: 3,
+  intervalHours: 1, // 默认为每小时跑一趟闭环一套作品
+  batchSizePerAccount: 1,
   lastRunAt: null,
   nextRunAt: null,
   timerId: null,
@@ -30,6 +34,66 @@ function getActiveExcelPath() {
   if (fs.existsSync(INTERNAL_EXCEL_PATH)) return INTERNAL_EXCEL_PATH;
   if (fs.existsSync(EXTERNAL_EXCEL_PATH_1)) return EXTERNAL_EXCEL_PATH_1;
   return EXTERNAL_EXCEL_PATH_2;
+}
+
+// ----------------- 通知中心数据存取 -----------------
+function loadNotifications() {
+  if (fs.existsSync(INTERNAL_NOTIFICATIONS_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(INTERNAL_NOTIFICATIONS_FILE, 'utf8'));
+    } catch (_) {}
+  }
+  return { unreadCount: 0, list: [] };
+}
+
+function saveNotifications(data) {
+  try {
+    fs.mkdirSync(path.dirname(INTERNAL_NOTIFICATIONS_FILE), { recursive: true });
+    fs.writeFileSync(INTERNAL_NOTIFICATIONS_FILE, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Failed to save notifications:', e.message);
+  }
+}
+
+function addNotification(notif) {
+  const store = loadNotifications();
+  store.unreadCount = (store.unreadCount || 0) + 1;
+  store.list = store.list || [];
+  store.list.unshift(notif);
+  if (store.list.length > 50) store.list = store.list.slice(0, 50); // 最多保留 50 条历史通知
+  saveNotifications(store);
+  return store;
+}
+
+// 飞书即时富文本卡片推送
+function sendFeishuNotification(info) {
+  if (!fs.existsSync(LARK_CLI)) {
+    console.warn('Lark CLI not found at', LARK_CLI);
+    return Promise.resolve(false);
+  }
+  const title = info.title || '单套小红书图文作品已闭环落盘';
+  const topic = info.topic || '上海露营逃离城市计划';
+  const account = info.accountLabel || 'C · donnaparkerz';
+  const imagesCount = info.imagesCount || 10;
+  const copyVersions = info.copyVersions || 5;
+  const folder = (info.folderPath || '').replace(/\\/g, '/');
+  const timeStr = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+  const md = `🎉 **【每小时生产闭环】单套图文作品已成功交付落盘！**\n\n---\n* **生成主题**：${topic}\n* **生产账号**：${account}\n* **作品规格**：1086×1448 原生竖版大图 × ${imagesCount} 张 ＋ ${copyVersions} 版完整文案\n* **落盘目录**：\`${folder}\`\n* **完成时间**：${timeStr}\n\n👉 *提示：大盘控制台右上角红点已更新，点击「🔔交付动态」可一键在电脑中打开成品文件夹。*`;
+  
+  const escapedMd = md.replace(/"/g, '\\"');
+  const cmd = `node "${LARK_CLI}" im +messages-send --as bot --chat-id ${FEISHU_CHAT_ID} --markdown "${escapedMd}"`;
+  return new Promise((resolve) => {
+    exec(cmd, (err, stdout) => {
+      if (err) {
+        console.error('Feishu push error:', err.message);
+        resolve(false);
+      } else {
+        console.log('Feishu push success:', stdout.trim());
+        resolve(true);
+      }
+    });
+  });
 }
 
 function loadMatrixData() {
@@ -136,7 +200,8 @@ function loadMatrixData() {
       accountBreakdowns,
       statusCounts,
       excelPath: getActiveExcelPath(),
-      scheduler: schedulerState
+      scheduler: schedulerState,
+      notifications: loadNotifications()
     },
     items: allItems
   };
@@ -165,12 +230,52 @@ $notify.Dispose()
 }
 
 async function handle(req, res, pathname, parsed, ctx) {
+  // 1. 获取大盘全量矩阵状态
   if (pathname === '/api/production/conversation-matrix' && req.method === 'GET') {
     const data = loadMatrixData();
     ctx.sendJson(res, { ok: true, data });
     return true;
   }
 
+  // 2. 获取未读通知与交付动态列表
+  if (pathname === '/api/production/notifications' && req.method === 'GET') {
+    const notifs = loadNotifications();
+    ctx.sendJson(res, { ok: true, data: notifs });
+    return true;
+  }
+
+  // 3. 标记所有通知为已读 (消除红点)
+  if (pathname === '/api/production/notifications/read' && req.method === 'POST') {
+    const store = loadNotifications();
+    store.unreadCount = 0;
+    if (Array.isArray(store.list)) {
+      store.list.forEach(item => item.read = true);
+    }
+    saveNotifications(store);
+    ctx.sendJson(res, { ok: true, message: '已全部标记为已读，小红点已清除', data: store });
+    return true;
+  }
+
+  // 4. 打开本地作品文件夹
+  if (pathname === '/api/production/notifications/open-folder' && req.method === 'POST') {
+    const body = JSON.parse(await ctx.getBody(req, 100000) || '{}');
+    const folderPath = body.folderPath || 'D:/AICode/项目推进/projects/江湖有旅人/主项目/03-成品库';
+    if (!fs.existsSync(folderPath)) {
+      ctx.sendJson(res, { ok: false, error: '本地文件夹路径不存在: ' + folderPath });
+      return true;
+    }
+    const winPath = folderPath.replace(/\//g, '\\');
+    exec(`explorer "${winPath}"`, (err) => {
+      if (err) {
+        ctx.sendJson(res, { ok: false, error: err.message });
+      } else {
+        ctx.sendJson(res, { ok: true, message: '已在 Windows 资源管理器打开本地成品目录' });
+      }
+    });
+    return true;
+  }
+
+  // 5. 生产指令派发
   if (pathname === '/api/production/dispatch/action' && req.method === 'POST') {
     const body = JSON.parse(await ctx.getBody(req, 100000) || '{}');
     const { action, convId, account } = body;
@@ -191,11 +296,40 @@ async function handle(req, res, pathname, parsed, ctx) {
       schedulerState.enabled = !schedulerState.enabled;
       if (schedulerState.enabled) {
         schedulerState.lastRunAt = new Date().toISOString();
-        schedulerState.nextRunAt = new Date(Date.now() + 3 * 3600 * 1000).toISOString();
+        schedulerState.nextRunAt = new Date(Date.now() + (schedulerState.intervalHours || 1) * 3600 * 1000).toISOString();
       } else {
         schedulerState.nextRunAt = null;
       }
       ctx.sendJson(res, { ok: true, scheduler: schedulerState });
+      return true;
+    }
+
+    if (action === 'push_test_feishu') {
+      const folderPath = 'D:/AICode/项目推进/projects/江湖有旅人/主项目/03-成品库/上海成品/上海/2026-11-07T0524-小红书图文-T90_81 精·方案·上海露营逃离城市计划';
+      sendFeishuNotification({
+        title: 'T90_81 精·方案·上海露营逃离城市计划',
+        topic: '上海露营逃离城市计划',
+        accountLabel: 'C · donnaparkerz',
+        imagesCount: 10,
+        copyVersions: 5,
+        folderPath: folderPath
+      }).then((ok) => {
+        // 同步在应用内产生一条未读通知红点
+        addNotification({
+          id: 'notif_' + Date.now(),
+          timestamp: new Date().toISOString(),
+          account: 'C',
+          accountLabel: 'C · donnaparkerz',
+          title: 'T90_81 精·方案·上海露营逃离城市计划',
+          topic: '上海露营逃离城市计划',
+          imagesCount: 10,
+          copyVersions: 5,
+          folderPath: folderPath,
+          read: false
+        });
+        sendWindowsToast('🎉 飞书通知推送成功', '已向飞书生产群发送卡片并增加大盘未读交付动态！');
+        ctx.sendJson(res, { ok: true, message: '已成功向飞书群推送作品完成卡片，大盘已新增未读小红点！' });
+      });
       return true;
     }
 
@@ -248,8 +382,8 @@ async function handle(req, res, pathname, parsed, ctx) {
     }
 
     if (action === 'update_scheduler_settings') {
-      if (body.intervalHours !== undefined) schedulerState.intervalHours = Number(body.intervalHours) || 3;
-      if (body.batchSizePerAccount !== undefined) schedulerState.batchSizePerAccount = Number(body.batchSizePerAccount) || 3;
+      if (body.intervalHours !== undefined) schedulerState.intervalHours = Number(body.intervalHours) || 1;
+      if (body.batchSizePerAccount !== undefined) schedulerState.batchSizePerAccount = Number(body.batchSizePerAccount) || 1;
       if (body.enableToastNotification !== undefined) schedulerState.enableToastNotification = !!body.enableToastNotification;
       if (body.enableFeishuNotification !== undefined) schedulerState.enableFeishuNotification = !!body.enableFeishuNotification;
       ctx.sendJson(res, { ok: true, scheduler: schedulerState, message: '定时操作与通知参数设置已更新并生效' });
@@ -274,4 +408,4 @@ async function handle(req, res, pathname, parsed, ctx) {
   return false;
 }
 
-module.exports = { handle, loadMatrixData, sendWindowsToast };
+module.exports = { handle, loadMatrixData, sendWindowsToast, sendFeishuNotification, addNotification, loadNotifications };
