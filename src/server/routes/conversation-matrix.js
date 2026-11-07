@@ -17,6 +17,76 @@ const EXTERNAL_AUDITED_FILE_BACKUP = 'd:/AICode/all_real_audited_219.json';
 const EXTERNAL_EXCEL_PATH_1 = 'd:/AICode/GPT模板会话状态总览表.xlsx';
 const EXTERNAL_EXCEL_PATH_2 = 'D:/AICode/运行数据/江湖有旅人/内容生产App/GPT模板会话状态总台账.xlsx';
 
+// 3. 本地成品库路径与账号映射根目录
+const LOCAL_FINISHED_PRODUCTS_ROOT = 'D:/AICode/项目推进/projects/江湖有旅人/主项目/03-成品库';
+const ACCOUNT_ROOT_MAP = {
+  A: path.join(LOCAL_FINISHED_PRODUCTS_ROOT, 'A手动制作').replace(/\\/g, '/'),
+  B: path.join(LOCAL_FINISHED_PRODUCTS_ROOT, '桐庐成品').replace(/\\/g, '/'),
+  C: path.join(LOCAL_FINISHED_PRODUCTS_ROOT, '上海成品').replace(/\\/g, '/'),
+  DEFAULT: LOCAL_FINISHED_PRODUCTS_ROOT.replace(/\\/g, '/')
+};
+
+let cachedProductDirs = null;
+let lastDirsCacheTime = 0;
+
+function getProductDirsCache() {
+  const now = Date.now();
+  if (cachedProductDirs && (now - lastDirsCacheTime < 60000)) {
+    return cachedProductDirs;
+  }
+  const results = [];
+  function scan(dir, depth) {
+    if (depth > 2) return;
+    try {
+      const list = fs.readdirSync(dir, { withFileTypes: true });
+      for (const d of list) {
+        if (!d.isDirectory() || d.name.startsWith('.')) continue;
+        const full = path.join(dir, d.name).replace(/\\/g, '/');
+        results.push({ name: d.name, path: full });
+        scan(full, depth + 1);
+      }
+    } catch (_) {}
+  }
+  if (fs.existsSync(LOCAL_FINISHED_PRODUCTS_ROOT)) {
+    scan(LOCAL_FINISHED_PRODUCTS_ROOT, 0);
+  }
+  cachedProductDirs = results;
+  lastDirsCacheTime = now;
+  return results;
+}
+
+function resolveItemFolder(item, acc) {
+  const allDirs = getProductDirsCache();
+  const topic = (item.topic || '').trim();
+  const title = (item.title || '').trim();
+
+  let matched = null;
+  if (topic && topic.length >= 3) {
+    matched = allDirs.find(d => d.name.includes(topic) || topic.includes(d.name));
+  }
+  if (!matched && title && title.length >= 4) {
+    const cleanTitle = title.replace(/[0-9]+|精·方案·|模板学习回执|素材接收与学习回执/g, '').trim();
+    if (cleanTitle.length >= 3) {
+      matched = allDirs.find(d => d.name.includes(cleanTitle) || cleanTitle.includes(d.name));
+    }
+  }
+
+  if (matched) {
+    return {
+      folderPath: matched.path,
+      folderName: matched.name,
+      hasSpecificFolder: true
+    };
+  }
+
+  const fallbackPath = ACCOUNT_ROOT_MAP[acc] || ACCOUNT_ROOT_MAP.DEFAULT;
+  return {
+    folderPath: fallbackPath,
+    folderName: path.basename(fallbackPath),
+    hasSpecificFolder: false
+  };
+}
+
 const LARK_CLI = 'D:\\AICode\\工具开发\\toolchains\\npm-global\\node_modules\\@larksuite\\cli\\scripts\\run.js';
 const FEISHU_CHAT_ID = 'oc_bb67c9036e6b14da9bb7be9336dfa9c0';
 
@@ -149,8 +219,8 @@ function loadMatrixData() {
         st = '待确认计划出图';
       } else if (st.includes('待补充正文') || st.includes('待补充文案') || st.includes('缺文案')) {
         st = '待补充文案收尾';
-      } else if (st.includes('完工') || st.includes('归档')) {
-        st = '图文完工归档';
+      } else if (st.includes('完工') || st.includes('归档') || st.includes('成品库') || st.includes('已落地')) {
+        st = '已落地成品库';
       } else {
         // 用户定标：只出单页出图的已经废弃（历史自动化残留），全部归入「等待补充原料出计划」重新出计划
         st = '等待补充原料出计划';
@@ -165,8 +235,8 @@ function loadMatrixData() {
         if (!analysis) analysis = tp ? `整套原生竖版图片已交付完毕（主题「${tp}」）；缺少正式正文与发布标签，需下发出文案指令收尾。` : `图片生成已完毕，缺少配套发布文案，等待出文案指令。`;
         statusCounts.awaitingCopy++;
         accountBreakdowns[acc].awaitingCopy++;
-      } else if (st === '图文完工归档') {
-        if (!analysis) analysis = tp ? `全套排版图片与小红书正文/标签均已交付（主题「${tp}」）；生产闭环，本地已落盘归档。` : `会话历史中已包含整套图文成果与发布文案，全流程闭环完工。`;
+      } else if (st === '已落地成品库') {
+        if (!analysis) analysis = tp ? `全套排版图片与小红书正文/标签均已交付（主题「${tp}」）；生产闭环，本地 03-成品库 物理已存。` : `会话历史中已包含整套图文成果与发布文案，全流程闭环完工，本地物理已存成品库。`;
         statusCounts.completed++;
         accountBreakdowns[acc].completed++;
       } else {
@@ -177,6 +247,8 @@ function loadMatrixData() {
       }
 
       accountBreakdowns[acc].total++;
+
+      const folderInfo = resolveItemFolder(item, acc);
 
       allItems.push({
         convId: item.convId,
@@ -189,7 +261,10 @@ function loadMatrixData() {
         topic: tp,
         group,
         msgCount,
-        analysis
+        analysis,
+        folderPath: folderInfo.folderPath,
+        folderName: folderInfo.folderName,
+        hasSpecificFolder: folderInfo.hasSpecificFolder
       });
     }
   }
@@ -256,21 +331,34 @@ async function handle(req, res, pathname, parsed, ctx) {
     return true;
   }
 
-  // 4. 打开本地作品文件夹
+  // 4. 打开本地作品文件夹 (智能定位具体作品或账号根目录)
   if (pathname === '/api/production/notifications/open-folder' && req.method === 'POST') {
     const body = JSON.parse(await ctx.getBody(req, 100000) || '{}');
-    const folderPath = body.folderPath || 'D:/AICode/项目推进/projects/江湖有旅人/主项目/03-成品库';
-    if (!fs.existsSync(folderPath)) {
-      ctx.sendJson(res, { ok: false, error: '本地文件夹路径不存在: ' + folderPath });
+    let targetPath = body.folderPath;
+    let isSpecific = true;
+
+    if (!targetPath || !fs.existsSync(targetPath)) {
+      isSpecific = false;
+      const acc = body.account || 'A';
+      targetPath = ACCOUNT_ROOT_MAP[acc] || ACCOUNT_ROOT_MAP.DEFAULT;
+      if (!fs.existsSync(targetPath)) {
+        targetPath = LOCAL_FINISHED_PRODUCTS_ROOT;
+      }
+    }
+
+    if (!fs.existsSync(targetPath)) {
+      ctx.sendJson(res, { ok: false, error: '本地成品库根目录不存在: ' + targetPath });
       return true;
     }
-    const winPath = folderPath.replace(/\//g, '\\');
-    exec(`explorer "${winPath}"`, (err) => {
-      if (err) {
-        ctx.sendJson(res, { ok: false, error: err.message });
-      } else {
-        ctx.sendJson(res, { ok: true, message: '已在 Windows 资源管理器打开本地成品目录' });
-      }
+
+    const winPath = targetPath.replace(/\//g, '\\');
+    exec(`start "" "${winPath}"`, (err) => {
+      // 在 Windows 中 start 命令正常打开目录；若有特殊错误则优雅捕获
+      const folderName = path.basename(winPath);
+      const msg = isSpecific
+        ? `已在 Windows 资源管理器打开专属作品成品文件夹：${folderName}`
+        : `该作品尚未落盘，已为您打开【${body.accountName || ('账号' + (body.account || ''))}】成品库根目录：${folderName}`;
+      ctx.sendJson(res, { ok: true, isSpecific, folderPath: winPath, folderName, message: msg });
     });
     return true;
   }

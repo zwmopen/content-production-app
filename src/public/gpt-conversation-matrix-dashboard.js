@@ -179,7 +179,7 @@
     bindKpiCardClick('kpiAwaitingConfirmation', '待确认计划出图');
     bindKpiCardClick('kpiAwaitingMaterial', '等待补充原料出计划');
     bindKpiCardClick('kpiAwaitingCopy', '待补充文案收尾');
-    bindKpiCardClick('kpiCompleted', '图文完工归档');
+    bindKpiCardClick('kpiCompleted', '已落地成品库');
 
     // 三大生产指令按钮
     const btnCopy = document.getElementById('btnDispatchBatchCopy');
@@ -494,12 +494,18 @@
       const notesEscaped = escapeHtml(it.notes || it.analysis || '');
       const itemUrl = it.url || it.href || '#';
       const convId = it.id || it.convId || '';
+      const folderPath = it.folderPath || '';
+      const folderName = it.folderName || '';
+      const hasSpecific = !!it.hasSpecificFolder;
+      const folderTooltip = hasSpecific
+        ? `在电脑中打开专属成品文件夹: ${folderName}`
+        : `在电脑中打开成品库根目录: ${folderName} (该作品尚未落盘)`;
 
       return `
-        <tr>
+        <tr data-conv-id="${escapeHtml(convId)}">
           <td>${accBadgeHtml}</td>
           <td title="${titleEscaped}">
-            <div style="font-weight: 600; color: #f1f5f9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 210px;">
+            <div style="font-weight: 600; color: #f1f5f9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px;">
               ${titleEscaped}
             </div>
             <div style="font-size: 9px; color: #64748b; font-family: monospace;">${convId ? convId.slice(0, 8) + '...' : ''}</div>
@@ -508,15 +514,61 @@
           <td>${topicText}</td>
           <td style="color: #94a3b8; font-size: 10px; line-height: 1.4;">${notesEscaped}</td>
           <td style="text-align: center;">
-            <a href="${escapeHtml(itemUrl)}" target="_blank" class="mat-action-link-btn" title="在新标签页中打开该 ChatGPT 对话">
-              🔗 直达
-            </a>
+            <div class="mat-action-btns-group">
+              <a href="${escapeHtml(itemUrl)}" target="_blank" class="mat-action-link-btn" title="在新标签页中打开该 ChatGPT 对话">
+                🔗 直达
+              </a>
+              <button type="button" class="mat-action-folder-btn btn-open-local-folder" 
+                data-folder="${escapeHtml(folderPath)}" 
+                data-conv-id="${escapeHtml(convId)}"
+                data-acc="${escapeHtml(it.account || 'A')}"
+                data-has-specific="${hasSpecific ? '1' : '0'}"
+                title="${escapeHtml(folderTooltip)}">
+                📁 ${hasSpecific ? '成品' : '目录'}
+              </button>
+            </div>
           </td>
         </tr>
       `;
     }).join('');
 
     tbody.innerHTML = rowsHtml;
+
+    // 绑定表格每行「打开本地成品」按钮点击事件并触发高亮
+    tbody.querySelectorAll('.btn-open-local-folder').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const tr = btn.closest('tr');
+        if (tr) {
+          tbody.querySelectorAll('tr.is-active-opened').forEach(r => r.classList.remove('is-active-opened'));
+          tr.classList.add('is-active-opened');
+        }
+
+        const folderPath = btn.getAttribute('data-folder');
+        const acc = btn.getAttribute('data-acc');
+        const hasSpecific = btn.getAttribute('data-has-specific') === '1';
+
+        btn.disabled = true;
+        fetch('/api/production/notifications/open-folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath, account: acc })
+        })
+        .then(r => r.json())
+        .then(res => {
+          btn.disabled = false;
+          if (res.ok) {
+            showNotification(res.message || '已在系统资源管理器打开本地成品目录', 'success');
+          } else {
+            showNotification(res.error || '无法打开文件夹', 'error');
+          }
+        })
+        .catch(err => {
+          btn.disabled = false;
+          showNotification('请求失败: ' + err.message, 'error');
+        });
+      });
+    });
   }
 
   function getStatusTagHtml(status) {
@@ -528,7 +580,7 @@
       tagClass = 'mat-tag-yellow';
     } else if (status.includes('等待补充原料') || status.includes('待补充原料')) {
       tagClass = 'mat-tag-blue';
-    } else if (status.includes('完工') || status.includes('归档')) {
+    } else if (status.includes('完工') || status.includes('归档') || status.includes('成品库') || status.includes('已落地')) {
       tagClass = 'mat-tag-green';
     }
     return `<span class="mat-status-tag ${tagClass}">${escapeHtml(status)}</span>`;

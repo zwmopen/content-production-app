@@ -24640,6 +24640,45 @@ body:not(.production-panel-active) #prodTemplateSidebar {
   color: #fff !important;
 }
 
+.mat-action-folder-btn {
+  background: rgba(16, 185, 129, 0.12) !important;
+  border: 1px solid rgba(16, 185, 129, 0.35) !important;
+  color: #6ee7b7 !important;
+  padding: 3px 8px !important;
+  border-radius: 4px !important;
+  font-size: 10px !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+  transition: all 0.15s ease !important;
+  font-family: inherit;
+}
+
+.mat-action-folder-btn:hover {
+  background: rgba(16, 185, 129, 0.3) !important;
+  color: #fff !important;
+  border-color: #10b981 !important;
+}
+
+.mat-action-btns-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-content: center;
+}
+
+/* 激活打开本地成品的高亮行 (用户 2026-11-07 体验需求) */
+#ptsMatrixTable tbody tr.is-active-opened {
+  background: rgba(59, 130, 246, 0.16) !important;
+  box-shadow: inset 3px 0 0 #3b82f6, inset 0 0 12px rgba(59, 130, 246, 0.2) !important;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+#ptsMatrixTable tbody tr.is-active-opened td:first-child {
+  border-left: 3px solid #3b82f6 !important;
+}
+
 /* ---------------- 通知徽章与交付动态浮层 ---------------- */
 .btn-notification-bell {
   position: relative !important;
