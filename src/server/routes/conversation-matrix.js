@@ -4,11 +4,17 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 
-const AUDITED_FILE_1 = 'd:/AICode/all_real_audited_274.json';
-const AUDITED_FILE_BACKUP = 'd:/AICode/all_real_audited_219.json';
-const AUDITED_FILE_2 = 'D:/AICode/运行数据/江湖有旅人/内容生产App/all_real_audited_274.json';
-const EXCEL_PATH_1 = 'd:/AICode/GPT模板会话状态总览表.xlsx';
-const EXCEL_PATH_2 = 'D:/AICode/运行数据/江湖有旅人/内容生产App/GPT模板会话状态总台账.xlsx';
+// 1. 应用自包含内部数据路径 (Priority 1: 确保应用与数据独立成套，便于打包推送与跨电脑直接运行)
+const APP_ROOT = path.resolve(__dirname, '../../../');
+const INTERNAL_AUDITED_FILE = path.join(APP_ROOT, 'data/matrix/all_real_audited_274.json');
+const INTERNAL_EXCEL_PATH = path.join(APP_ROOT, 'data/matrix/GPT模板会话状态总览表.xlsx');
+
+// 2. 外部兼容与兜底路径 (Fallback)
+const EXTERNAL_AUDITED_FILE_1 = 'd:/AICode/all_real_audited_274.json';
+const EXTERNAL_AUDITED_FILE_2 = 'D:/AICode/运行数据/江湖有旅人/内容生产App/all_real_audited_274.json';
+const EXTERNAL_AUDITED_FILE_BACKUP = 'd:/AICode/all_real_audited_219.json';
+const EXTERNAL_EXCEL_PATH_1 = 'd:/AICode/GPT模板会话状态总览表.xlsx';
+const EXTERNAL_EXCEL_PATH_2 = 'D:/AICode/运行数据/江湖有旅人/内容生产App/GPT模板会话状态总台账.xlsx';
 
 let schedulerState = {
   enabled: false,
@@ -20,16 +26,27 @@ let schedulerState = {
   history: []
 };
 
+function getActiveExcelPath() {
+  if (fs.existsSync(INTERNAL_EXCEL_PATH)) return INTERNAL_EXCEL_PATH;
+  if (fs.existsSync(EXTERNAL_EXCEL_PATH_1)) return EXTERNAL_EXCEL_PATH_1;
+  return EXTERNAL_EXCEL_PATH_2;
+}
+
 function loadMatrixData() {
   let raw = null;
-  if (fs.existsSync(AUDITED_FILE_1)) {
-    try { raw = JSON.parse(fs.readFileSync(AUDITED_FILE_1, 'utf8')); } catch (_) {}
+  // 优先加载应用内嵌自包含数据
+  if (fs.existsSync(INTERNAL_AUDITED_FILE)) {
+    try { raw = JSON.parse(fs.readFileSync(INTERNAL_AUDITED_FILE, 'utf8')); } catch (_) {}
   }
-  if (!raw && fs.existsSync(AUDITED_FILE_2)) {
-    try { raw = JSON.parse(fs.readFileSync(AUDITED_FILE_2, 'utf8')); } catch (_) {}
+  // 外部路径回退兼容
+  if (!raw && fs.existsSync(EXTERNAL_AUDITED_FILE_1)) {
+    try { raw = JSON.parse(fs.readFileSync(EXTERNAL_AUDITED_FILE_1, 'utf8')); } catch (_) {}
   }
-  if (!raw && fs.existsSync(AUDITED_FILE_BACKUP)) {
-    try { raw = JSON.parse(fs.readFileSync(AUDITED_FILE_BACKUP, 'utf8')); } catch (_) {}
+  if (!raw && fs.existsSync(EXTERNAL_AUDITED_FILE_2)) {
+    try { raw = JSON.parse(fs.readFileSync(EXTERNAL_AUDITED_FILE_2, 'utf8')); } catch (_) {}
+  }
+  if (!raw && fs.existsSync(EXTERNAL_AUDITED_FILE_BACKUP)) {
+    try { raw = JSON.parse(fs.readFileSync(EXTERNAL_AUDITED_FILE_BACKUP, 'utf8')); } catch (_) {}
   }
   if (!raw) {
     return { summary: { total: 0 }, items: [] };
@@ -120,7 +137,7 @@ function loadMatrixData() {
       total: allItems.length,
       accountBreakdowns,
       statusCounts,
-      excelPath: fs.existsSync(EXCEL_PATH_1) ? EXCEL_PATH_1 : EXCEL_PATH_2,
+      excelPath: getActiveExcelPath(),
       scheduler: schedulerState
     },
     items: allItems
@@ -161,7 +178,7 @@ async function handle(req, res, pathname, parsed, ctx) {
     const { action, convId, account } = body;
 
     if (action === 'open_excel') {
-      const p = fs.existsSync(EXCEL_PATH_1) ? EXCEL_PATH_1 : EXCEL_PATH_2;
+      const p = getActiveExcelPath();
       exec(`start "" "${p}"`, (err) => {
         if (err) {
           ctx.sendJson(res, { ok: false, error: err.message });
