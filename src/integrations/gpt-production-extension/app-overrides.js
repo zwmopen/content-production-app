@@ -19,6 +19,7 @@
   const DEFAULT_API_ROOT = 'http://127.0.0.1:4327';
   const SAVE_ENDPOINT = '/api/extension/save-generated-image';
   const REQUEST_TIMEOUT = 60000;
+  const DEFAULT_DOWNLOAD_ROOT = 'C:\\Users\\z\\Downloads';
 
   function resolveApiRoot() {
     try {
@@ -30,9 +31,9 @@
 
   function resolveDownloadRoot() {
     try {
-      return String(localStorage.getItem('tb-manual-download-root') || '');
+      return String(localStorage.getItem('tb-manual-download-root') || DEFAULT_DOWNLOAD_ROOT);
     } catch {
-      return '';
+      return DEFAULT_DOWNLOAD_ROOT;
     }
   }
 

@@ -445,9 +445,9 @@ const WORKPKG_CONFIG_FILE = process.env.TEAMBUILDING_WORKPKG_CONFIG_FILE || path
 // falling back to DATA_ROOT/work-package made that persisted (and valid) path
 // fail the server-side authorization check after a restart.
 const DOWNLOAD_ROOT = process.env.TEAMBUILDING_DOWNLOAD_ROOT
-  || (CONTENT_ONLY_MODE ? "D:\\Download" : WORKPKG_SCRIPT_ROOT);
+  || (CONTENT_ONLY_MODE ? "C:\\Users\\z\\Downloads" : WORKPKG_SCRIPT_ROOT);
 const PUBLISH_ROOT = process.env.TEAMBUILDING_PUBLISH_ROOT
-  || path.join(PROJECT_ROOT, "成品库（GPT+本地脚本制作）", "发布空间");
+  || path.join(PROJECT_ROOT, "03-成品库", "发布空间");
 const DEVICE_TRANSFER_ROOT = process.env.DEVICE_TRANSFER_SKILL_ROOT
   || "D:\\AICode\\AI\\skills\\技能包\\技能\\device-folder-transfer";
 const DEVICE_REGISTRY_FILE = path.join(DEVICE_TRANSFER_ROOT, "references", "device-registry.json");
@@ -2168,7 +2168,7 @@ function runExtensionWorkPackage(body = {}) {
   }
   const requestedDownloadRoot = String(body.downloadRoot || "").trim();
   const requestedProductRoot = String(body.productRoot || "").trim();
-  const normalProductRoot = path.join(PROJECT_ROOT, "成品库（GPT+本地脚本制作）");
+  const normalProductRoot = path.join(PROJECT_ROOT, "03-成品库");
   const workspaceSettings = getWorkspaceSettings();
   const configuredProductRoot = String(workspaceSettings?.workPackage?.libraryPath || "").trim();
   const isAcceptancePath = (value) => /(?:^|[\\/])(?:_测试验收|验收)(?:[\\/]|$)/i.test(value);

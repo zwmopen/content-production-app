@@ -5565,7 +5565,7 @@ async function hydrateGptBrowserProfiles() {
 }
 
 function loadGptAutoSettings() {
-  const defaultDownloadRoot = "D:\\Download";
+  const defaultDownloadRoot = "C:\\Users\\z\\Downloads";
   const defaultProductRoot = "D:\\AICode\\项目推进\\projects\\江湖有旅人\\主项目\\03-成品库";
   const normalizeProductionPath = (value, fallback) => {
     const path = String(value || "").trim();
