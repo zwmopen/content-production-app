@@ -10181,3 +10181,154 @@ module.exports = {
   syncHistoricalDedupLedger,
   safeName
 };
+// Read-only index for the drawer's fourth mode. It never creates a task,
+// uploads a file, or mutates the unified template library.
+async function getSupplementTemplateLibrary() {
+  const configuredTemplateRoot = getPageSettings().production.templateRoot;
+  const templateRoot = path.resolve(configuredTemplateRoot || path.join(PROJECT_ROOT, "02-模板库"));
+  const registryPath = path.join(templateRoot, "templates-registry.json");
+  let registry;
+  try {
+    registry = JSON.parse((await fs.promises.readFile(registryPath, "utf8")).replace(/^\uFEFF/, ""));
+  } catch (error) {
+    return { ok: false, code: "TEMPLATE_REGISTRY_INVALID", error: `统一模板注册表无法读取：${error.message}`, registryPath, templates: [], total: 0 };
+  }
+  const realRoot = await fs.promises.realpath(templateRoot);
+  const templates = (await Promise.all((Array.isArray(registry.templates) ? registry.templates : [])
+    .filter((item) => item && item.enabled !== false)
+    .map(async (item) => {
+      const rawFolder = String(item.localPath || item.localFolderPath || "").trim();
+      const folder = rawFolder ? path.resolve(rawFolder) : "";
+      let folderInRoot = false;
+      try { folderInRoot = Boolean(folder && isPathInside(realRoot, await fs.promises.realpath(folder))
+        && (await fs.promises.stat(folder)).isDirectory()); } catch (_) {}
+      const images = Array.isArray(item.images) ? item.images.filter(Boolean).slice(0, 30) : [];
+      return {
+        templateId: String(item.templateId || item.id || "").trim(),
+        name: String(item.name || item.templateId || item.id || "").trim(),
+        category: String(item.category || item.folderGroup || "").trim(),
+        folderGroup: String(item.folderGroup || "").trim(),
+        relPath: String(item.relPath || "").trim(),
+        localPath: folderInRoot ? folder : "",
+        localFolderExists: folderInRoot,
+        imageCount: Number(item.imageCount || images.length || 0),
+        images,
+        description: String(item.description || "").trim()
+      };
+    })))
+    .filter((item) => item.templateId && item.name);
+  return { ok: true, source: "templates-registry.json", registryPath, templateRoot,
+    total: templates.length, updatedAt: registry.updatedAt || null, templates };
+}
+
+function deleteTemplateGalleryRecord(input = {}) {
+  const templateId = String(input.templateId || "").trim().toUpperCase();
+  const submittedPath = String(input.path || "").trim();
+  if (input.confirmed !== true) throw new Error("没有收到删除确认，操作已取消");
+  if (!/^[A-Z][A-Z0-9_-]{0,31}$/.test(templateId)) throw new Error("模板编号格式无效");
+  if (!submittedPath) throw new Error("缺少模板本地路径");
+
+  const galleryRoot = path.resolve(TEMPLATE_PROJECT_LEDGER_OPEN_ROOT);
+  const registryPath = path.join(galleryRoot, "templates-registry.json");
+  if (!exists(galleryRoot) || !fs.statSync(galleryRoot).isDirectory() || !exists(registryPath) || !isAllowedFile(registryPath)) {
+    throw new Error("模板仓库或登记表不可用");
+  }
+  let registry;
+  try {
+    registry = JSON.parse(fs.readFileSync(registryPath, "utf8").replace(/^\uFEFF/, ""));
+  } catch (error) {
+    throw new Error(`模板登记表无法读取：${String(error?.message || "JSON 格式错误").slice(0, 160)}`);
+  }
+  if (!Array.isArray(registry?.templates)) throw new Error("模板登记表缺少 templates 列表");
+  const matching = registry.templates.filter((item) => String(item?.templateId || item?.id || "").trim().toUpperCase() === templateId);
+  if (matching.length !== 1) throw new Error(matching.length ? "登记表中模板编号重复，已阻止删除" : "模板已不在登记表中，请刷新页面");
+
+  const entry = matching[0];
+  const registeredPath = String(entry.localPath || "").trim();
+  if (!registeredPath) throw new Error("登记表没有该模板的本地目录");
+  const target = path.resolve(registeredPath);
+  if (path.resolve(submittedPath).toLowerCase() !== target.toLowerCase()) throw new Error("模板路径与登记表不一致，请刷新页面后重试");
+  if (!exists(target)) throw new Error("模板目录已不存在，请刷新模板库");
+
+  const targetStat = fs.lstatSync(target);
+  if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) throw new Error("只能删除真实模板文件夹，不能删除文件或链接");
+  const realRoot = fs.realpathSync(galleryRoot);
+  const realTarget = fs.realpathSync(target);
+  const relative = path.relative(realRoot, realTarget);
+  const segments = relative.split(path.sep);
+  if (!isPathInside(realRoot, realTarget)
+      || realTarget.toLowerCase() === realRoot.toLowerCase()
+      || segments.length !== 2
+      || segments.some((segment) => !segment || segment.startsWith(".") || segment.startsWith("_") || segment === "90")
+      || !isAllowedFile(realTarget)) {
+    throw new Error("目录不在模板库允许删除的单个模板层级内");
+  }
+
+  const originalRegistry = registry;
+  const nextRegistry = {
+    ...registry,
+    updatedAt: new Date().toISOString(),
+    templates: registry.templates.filter((item) => String(item?.templateId || item?.id || "").trim().toUpperCase() !== templateId)
+  };
+  writeJsonAtomicallySync(registryPath, nextRegistry);
+  try {
+    trashEditableWorkspaceDirectory(realTarget);
+  } catch (error) {
+    try {
+      writeJsonAtomicallySync(registryPath, originalRegistry);
+    } catch (rollbackError) {
+      throw new Error(`目录移入回收站失败，且登记表回滚失败：${String(rollbackError?.message || "写入失败").slice(0, 120)}`);
+    }
+    throw new Error(`目录没有移入回收站，登记表已恢复：${String(error?.message || "操作失败").slice(0, 160)}`);
+  }
+  return { ok: true, templateId, name: String(entry.name || templateId), path: realTarget, recoverable: true, removedFromRegistry: true };
+}
+
+  if (pathname === "/api/template-library/supplement" && req.method === "GET") {
+    return sendExtensionJson(req, res, await getSupplementTemplateLibrary());
+  }
+
+  if (pathname === "/api/template-gallery/delete" && req.method === "POST") {
+    try {
+      const body = JSON.parse(await getBody(req, 64_000) || "{}");
+      return sendExtensionJson(req, res, deleteTemplateGalleryRecord(body));
+    } catch (error) {
+      const status = Number(error?.httpStatus) || 400;
+      return sendExtensionJson(req, res, { ok: false, error: String(error?.message || "模板删除失败").slice(0, 260) }, status);
+    }
+  }
+
+  // 模板仓库页面通过 4327 打开时，图片仍按模板库相对路径引用；把这些只读资源映射回本机模板根目录。
+  // 路径必须落在模板库根目录内，避免把静态文件入口变成任意文件读取。
+  const templateAssetPrefixes = ["/团建类模板/", "/个人攻略类模板/", "/小游戏类模板/"];
+  if (templateAssetPrefixes.some((prefix) => pathname.startsWith(prefix))) {
+    let relative = "";
+    try {
+      relative = decodeURIComponent(pathname).replace(/^\/+/, "");
+    } catch {
+      return send(res, 400, "invalid template asset path", "text/plain; charset=utf-8");
+    }
+    const target = path.resolve(TEMPLATE_PROJECT_LEDGER_OPEN_ROOT, relative);
+    if (!isAllowedFile(target) || !isPathInside(TEMPLATE_PROJECT_LEDGER_OPEN_ROOT, target)
+      || !exists(target) || fs.statSync(target).isDirectory()) {
+      return send(res, 404, "template asset not found", "text/plain; charset=utf-8");
+    }
+    res.writeHead(200, { "Content-Type": contentType(target), "Cache-Control": "no-store" });
+    return fs.createReadStream(target).pipe(res);
+  }
+
+  if (pathname === "/template-gallery" || pathname === "/template-gallery/") {
+    const file = path.join(TEMPLATE_PROJECT_LEDGER_OPEN_ROOT, "模板仓库.html");
+    if (!exists(file)) return send(res, 404, "模板库页面不存在", "text/plain; charset=utf-8");
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    return fs.createReadStream(file).pipe(res);
+  }
+
+  if (pathname === "/template-gallery/panel" || pathname === "/template-gallery/panel/") {
+    const file = path.join(TEMPLATE_PROJECT_LEDGER_OPEN_ROOT, "团建类模板", "_模板可视化面板", "模板仓库.html");
+    if (!exists(file)) return send(res, 404, "模板可视化面板不存在", "text/plain; charset=utf-8");
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    return fs.createReadStream(file).pipe(res);
+  }
+
+  getSupplementTemplateLibrary,

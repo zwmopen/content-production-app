@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const childProcess = require("child_process");
+const crypto = require("crypto");
 const os = require("os");
 const materialDownloadRoute = require("./material-download");
 const xhsTemplateCollector = require("../../lib/xhs-template-collector");
@@ -38,8 +39,16 @@ const TEMPLATE_REPOSITORY_HTML = process.env.TEAMBUILDING_TEMPLATE_REPOSITORY_HT
   || path.join(TEMPLATE_REPOSITORY_ROOT, "模板仓库.html");
 const TEMPLATE_COLLECTOR_LEDGER = process.env.TEAMBUILDING_TEMPLATE_COLLECTOR_LEDGER
   || path.join(TEMPLATE_REPOSITORY_ROOT, "采集", "聚光作品采集索引.json");
+const TEMPLATE_COLLECTOR_BRIDGE_URL = String(process.env.TEAMBUILDING_TEMPLATE_COLLECTOR_BRIDGE_URL
+  || "http://127.0.0.1:8766").replace(/\/$/, "");
+const TEMPLATE_COLLECTOR_BRIDGE_ROOT = process.env.TEAMBUILDING_XHS_DOWNLOADER_ROOT
+  || path.resolve(__dirname, "..", "..", "..", "..", "xhs-dl");
 const TEMPLATE_PROJECT_LEDGER_HTML = process.env.TEAMBUILDING_TEMPLATE_PROJECT_HTML
   || path.join(TEMPLATE_REPOSITORY_PROJECT_ROOT, "02-模板库", "模板仓库.html");
+const TEMPLATE_GALLERY_REGISTRY = path.join(TEMPLATE_REPOSITORY_PROJECT_ROOT, "02-模板库", "templates-registry.json");
+const TEMPLATE_GALLERY_ROOT = path.join(TEMPLATE_REPOSITORY_PROJECT_ROOT, "02-模板库");
+const TEMPLATE_GALLERY_TEAMBUILDING_ROOT = path.join(TEMPLATE_GALLERY_ROOT, "团建类模板");
+const TEMPLATE_GALLERY_BUILD_SCRIPT = path.join(TEMPLATE_GALLERY_ROOT, "scripts", "build_template_gallery.py");
 const DEVICE_TRANSFER_SKILL_ROOT = process.env.DEVICE_TRANSFER_SKILL_ROOT
   || path.join(MAINTENANCE_SKILL_ROOT, DEVICE_TRANSFER_SKILL_ID);
 const DEVICE_TRANSFER_SCRIPT = path.join(DEVICE_TRANSFER_SKILL_ROOT, "scripts", "send_to_device.py");
@@ -833,6 +842,24 @@ function templateRepositoryEntry() {
   };
 }
 
+function readTemplateGalleryMetadata() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(TEMPLATE_GALLERY_REGISTRY, "utf8"));
+    const templates = Array.isArray(parsed?.templates) ? parsed.templates : [];
+    return {
+      path: TEMPLATE_GALLERY_REGISTRY,
+      records: templates.map((item) => ({
+        id: String(item?.id || item?.templateId || ""),
+        updatedAt: String(item?.updatedAt || ""),
+        mtime: String(item?.mtime || ""),
+        addedAt: String(item?.addedAt || "")
+      })).filter((item) => item.id)
+    };
+  } catch {
+    return { path: TEMPLATE_GALLERY_REGISTRY, records: [] };
+  }
+}
+
 function readTemplateCollectorLedger() {
   if (!exists(TEMPLATE_COLLECTOR_LEDGER)) return { schemaVersion: 1, records: [] };
   try {
@@ -865,19 +892,32 @@ function isAllowedXhsUrl(value) {
 }
 
 function normalizeTemplateCollectorRequest(body = {}) {
+  const explicitSourceUrl = String(body.sourceUrl || body.shareUrl || "").trim().slice(0, 2000);
+  const rawText = String(body.text || "").trim();
+  const textUrl = !explicitSourceUrl
+    ? (rawText.match(/https?:\/\/[^\s<>"'，。！？；、：,;\)\]}）】》]+/i)?.[0] || "").replace(/[），。！？；;,)\]}）】》]+$/g, "")
+    : "";
+  const inputUrl = explicitSourceUrl || textUrl;
+  const textId = /^[a-f0-9]{24}$/i.test(rawText) ? rawText : "";
+  const urlNoteId = xhsTemplateCollector.parseNoteIdFromHref(inputUrl);
   const normalized = xhsTemplateCollector.normalizeCollectorInput({
     ...body,
+    noteId: body.noteId || urlNoteId || textId,
+    sourceUrl: inputUrl || body.sourceUrl || body.shareUrl || "",
     stats: body.stats || body
   });
-  const sourceUrl = String(body.sourceUrl || body.shareUrl || "").trim().slice(0, 2000);
-  if (!normalized.noteId) throw Object.assign(new Error("聚光卡片没有可识别的 24 位笔记 ID"), { code: "TEMPLATE_COLLECTOR_NOTE_ID_INVALID" });
-  if (sourceUrl && !isAllowedXhsUrl(sourceUrl)) {
+  if (inputUrl && !isAllowedXhsUrl(inputUrl)) {
     throw Object.assign(new Error("来源链接必须是小红书或 xhslink.cn 公开链接"), { code: "TEMPLATE_COLLECTOR_SOURCE_URL_INVALID" });
   }
+  if (!normalized.noteId && !inputUrl) {
+    throw Object.assign(new Error("请输入 24 位笔记 ID，或粘贴小红书公开分享链接"), { code: "TEMPLATE_COLLECTOR_INPUT_INVALID" });
+  }
+  const sourceUrl = inputUrl || normalized.canonicalUrl;
+  if (!sourceUrl) throw Object.assign(new Error("没有可供下载器尝试的笔记地址"), { code: "TEMPLATE_COLLECTOR_SOURCE_URL_INVALID" });
   return {
     ...normalized,
-    sourceUrl: sourceUrl || normalized.canonicalUrl,
-    sourceUrlProvided: Boolean(sourceUrl),
+    sourceUrl,
+    sourceUrlProvided: Boolean(inputUrl),
     sourcePageUrl: normalized.sourcePageUrl || "",
     requestedAt: now()
   };
@@ -888,7 +928,8 @@ function collectorStatusLabel(status) {
     queued: "已加入下载队列",
     running: "正在下载",
     downloaded: "已下载并登记",
-    candidate_ready: "已入模板待分析",
+    candidate_ready: "已入模板库·待确认",
+    blocked: "采集器已暂停，等待恢复",
     needs_source_link: "待补真实小红书链接",
     download_failed: "下载失败，可补链后重试"
   })[status] || "已登记";
@@ -909,6 +950,12 @@ function publicCollectorRecord(record) {
     sourceUrl: record.sourceUrl || "",
     sourceLinkStatus: record.sourceLinkStatus || "",
     intakePath: record.intakePath || "",
+    bridgeJobId: record.bridgeJobId || "",
+    progress: Number.isFinite(Number(record.progress)) ? Number(record.progress) : null,
+    step: record.step || "",
+    error: record.error && typeof record.error === "object"
+      ? { code: String(record.error.code || ""), message: String(record.error.message || "").slice(0, 240) }
+      : null,
     createdAt: record.createdAt || "",
     updatedAt: record.updatedAt || ""
   };
@@ -925,8 +972,9 @@ function updateTemplateCollectorRecord(task, result, error = null) {
   const record = findTemplateCollectorRecord(ledger, collector.dedupeKey);
   if (!record) return null;
   const status = error
-    ? (!collector.sourceUrlProvided ? "needs_source_link" : "download_failed")
-    : result?.status === "candidate_ready" ? "candidate_ready"
+    ? "download_failed"
+    : result?.status === "blocked" ? "blocked"
+      : result?.status === "candidate_ready" ? "candidate_ready"
       : result?.status === "download_failed" ? "download_failed"
         : result?.status === "sync_incomplete" ? "downloaded"
           : "downloaded";
@@ -936,7 +984,14 @@ function updateTemplateCollectorRecord(task, result, error = null) {
     taskId: task.id,
     updatedAt: now(),
     intakePath: result?.intakePath || record.intakePath || "",
-    error: error ? { code: error.code || "TEMPLATE_COLLECTOR_FAILED", message: String(error.message || "下载失败").slice(0, 240) } : null
+    bridgeJobId: result?.download?.bridgeJobId || result?.bridgeJobId || record.bridgeJobId || "",
+    progress: Number.isFinite(Number(task.progress)) ? Number(task.progress) : record.progress,
+    step: task.steps?.find((item) => item.state === "running")?.label || result?.nextStep || record.step || "",
+    error: error
+      ? { code: error.code || "TEMPLATE_COLLECTOR_FAILED", message: String(error.message || "下载失败").slice(0, 240) }
+      : (["blocked", "download_failed"].includes(status) && result?.download?.error
+        ? { code: result.download.bridgeStatus === "blocked" ? "COLLECTOR_BRIDGE_BLOCKED" : "TEMPLATE_COLLECTOR_FAILED", message: String(result.download.error).slice(0, 240) }
+        : null)
   });
   writeTemplateCollectorLedger(ledger);
   return record;
@@ -954,13 +1009,14 @@ function createTemplateCollectorTask(input, collector, ctx) {
     updatedAt: now(),
     steps: nativeSteps(skill),
     input: { text: input.sourceUrl },
-    collector
+    collector,
+    persistCollectorLedger: false
   };
   tasks.set(task.id, task);
   while (tasks.size > MAX_TASKS) tasks.delete(tasks.keys().next().value);
   executeNativeTask(task, ctx).catch((error) => {
     updateTask(task, { state: "failed", error: { code: error.code || "SKILL_EXECUTION_FAILED", message: "模板采集任务异常结束，未宣称下载完成。" } });
-    updateTemplateCollectorRecord(task, null, error);
+    if (task.persistCollectorLedger !== false) updateTemplateCollectorRecord(task, null, error);
   });
   return task;
 }
@@ -1133,33 +1189,239 @@ async function runMaterialIngestionSkill(task) {
   };
 }
 
-async function runTemplateRepositoryDownload(text, outputDir) {
-  const download = materialDownloadRoute.catalog()[0] || {};
-  if (!download.available || !download.script) {
-    return { ok: false, code: "DOWNLOAD_SKILL_UNAVAILABLE", error: "万能下载器 V2 不可用" };
+async function requestTemplateCollectorBridge(pathname, options = {}, timeoutMs = 15_000) {
+  if (typeof fetch !== "function") {
+    return { ok: false, code: "COLLECTOR_BRIDGE_FETCH_UNAVAILABLE", error: "当前 Node 运行时没有可用的 HTTP fetch" };
   }
-  const runRoot = path.join(TEMPLATE_REPOSITORY_PROJECT_ROOT, "04-技能库", "运行记录", "skill-runs", "template-repository");
-  fs.mkdirSync(runRoot, { recursive: true });
-  const inputFile = path.join(runRoot, `input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-  fs.writeFileSync(inputFile, text, "utf8");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const result = await runChild(process.env.TB_PYTHON || process.env.PYTHON || "python", [
-      download.script, "--file", inputFile, "--output", outputDir, "--mode", "cautious", "--timeout", "300"
-    ], {
-      cwd: download.sourceRoot,
-      env: { PYTHONIOENCODING: "utf-8", PYTHONPATH: [download.sourceRoot, process.env.PYTHONPATH || ""].filter(Boolean).join(path.delimiter) }
+    const response = await fetch(`${TEMPLATE_COLLECTOR_BRIDGE_URL}${pathname}`, {
+      ...options,
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) }
     });
-    const payload = parseProcessJson(result.stdout);
-    const success = Number(payload?.success || 0);
-    const failed = Number(payload?.failed || 0);
-    return {
-      ok: result.ok && failed === 0 && success > 0,
-      code: result.ok ? (failed ? "DOWNLOAD_PARTIAL" : "OK") : "DOWNLOAD_PROCESS_FAILED",
-      payload: payload || { error: result.stderr || result.error || "下载器没有返回 JSON" }
-    };
+    const text = await response.text();
+    let payload = null;
+    try { payload = text ? JSON.parse(text) : null; } catch { payload = { error: text.slice(0, 500) }; }
+    return response.ok
+      ? { ok: true, status: response.status, payload }
+      : { ok: false, status: response.status, code: payload?.code || "COLLECTOR_BRIDGE_HTTP_ERROR", error: payload?.error || `采集桥接器 HTTP ${response.status}`, payload };
+  } catch (error) {
+    return { ok: false, code: error?.name === "AbortError" ? "COLLECTOR_BRIDGE_TIMEOUT" : (error?.cause?.code || error?.code || "COLLECTOR_BRIDGE_UNAVAILABLE"), error: String(error?.message || "采集桥接器无响应").slice(0, 360) };
   } finally {
-    try { fs.rmSync(inputFile, { force: true }); } catch {}
+    clearTimeout(timer);
   }
+}
+
+let templateCollectorBridgeStartPromise = null;
+async function ensureTemplateCollectorBridge() {
+  if (templateCollectorBridgeStartPromise) return templateCollectorBridgeStartPromise;
+  templateCollectorBridgeStartPromise = (async () => {
+    const script = path.join(TEMPLATE_COLLECTOR_BRIDGE_ROOT, "collector_bridge_api.py");
+    if (!exists(script)) throw Object.assign(new Error(`万能采集器 API 启动脚本不存在：${script}`), { code: "COLLECTOR_BRIDGE_SCRIPT_MISSING" });
+    const port = Number(new URL(TEMPLATE_COLLECTOR_BRIDGE_URL).port || 8766);
+    let childError = null;
+    let child;
+    try {
+      child = childProcess.spawn(process.env.TEAMBUILDING_COLLECTOR_PYTHON || "python", [script, "--host", "127.0.0.1", "--port", String(port)], {
+        cwd: TEMPLATE_COLLECTOR_BRIDGE_ROOT,
+        windowsHide: true,
+        detached: process.platform === "win32",
+        env: {
+          ...process.env,
+          XHS_DL_CLAIM_DIR: process.env.XHS_DL_CLAIM_DIR
+            || path.join(TEMPLATE_COLLECTOR_BRIDGE_ROOT, "runtime", "download_claims")
+        },
+        stdio: "ignore"
+      });
+      child.once("error", (error) => { childError = error; });
+      child.unref();
+    } catch (error) {
+      throw Object.assign(new Error(`万能采集器 API 启动失败：${error.message}`), { code: error.code || "COLLECTOR_BRIDGE_START_FAILED" });
+    }
+    const deadline = Date.now() + 15_000;
+    let lastProbe = null;
+    while (Date.now() < deadline) {
+      if (childError) throw Object.assign(new Error(`万能采集器 API 启动失败：${childError.message}`), { code: childError.code || "COLLECTOR_BRIDGE_START_FAILED" });
+      lastProbe = await requestTemplateCollectorBridge("/api/v1/status", {}, 1800);
+      if (lastProbe.ok && lastProbe.payload?.api_online !== false) return lastProbe;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    throw Object.assign(new Error(`万能采集器 API 未能在 15 秒内启动：${lastProbe?.error || "健康检查超时"}`), { code: "COLLECTOR_BRIDGE_START_TIMEOUT" });
+  })().finally(() => { templateCollectorBridgeStartPromise = null; });
+  return templateCollectorBridgeStartPromise;
+}
+
+function updateTemplateCollectorBridgeTask(task, bridgeJob) {
+  if (!task || !bridgeJob) return;
+  const links = Array.isArray(bridgeJob.links) ? bridgeJob.links : [];
+  const total = Math.max(1, links.length || Number(bridgeJob.result?.total || 1));
+  const terminal = new Set(["completed", "failed", "blocked", "validated"]);
+  const finished = links.filter((link) => terminal.has(String(link?.status || ""))).length;
+  const current = links.find((link) => String(link?.status || "") === "running") || links.find((link) => !terminal.has(String(link?.status || "")));
+  const bridgeStatus = String(bridgeJob.status || "queued");
+  let progress = 20 + Math.round((finished / total) * 60);
+  if (bridgeStatus === "completed" || bridgeStatus === "partial") progress = 82;
+  if (bridgeStatus === "blocked" || bridgeStatus === "failed") progress = 42;
+  const detail = current?.error
+    ? `桥接器：${String(current.error).slice(0, 180)}`
+    : current?.status === "running"
+      ? `桥接器正在处理：${String(current.title_hint || current.url || "当前链接").slice(0, 120)}`
+      : `桥接器状态：${bridgeStatus}（${finished}/${total}）`;
+  updateTask(task, { progress, result: { ...(task.result || {}), bridgeJobId: bridgeJob.job_id || "", bridgeStatus, bridgeProgress: progress } });
+  const step = task.steps?.[1];
+  if (step) setStep(task, step.id, terminal.has(bridgeStatus) ? (bridgeStatus === "completed" || bridgeStatus === "partial" ? "completed" : "failed") : "running", detail);
+}
+
+function templateCollectorBridgePayload(bridgeJob, outputDir) {
+  const links = Array.isArray(bridgeJob?.links) ? bridgeJob.links : [];
+  const items = links.map((link) => {
+    const metadata = link?.metadata && typeof link.metadata === "object" ? link.metadata : {};
+    const assets = Array.isArray(link?.assets) ? link.assets : [];
+    const imageCount = Number(metadata.images_count || metadata.image_count || assets.filter((asset) => asset?.kind === "image").length || 0);
+    const saveDir = String(metadata.target_dir || (assets[0]?.path ? path.dirname(String(assets[0].path)) : ""));
+    return {
+      url: String(link?.url || ""),
+      success: link?.success === true || link?.status === "completed",
+      title: String(metadata.title || link?.title_hint || ""),
+      note_id: String(metadata.note_id || ""),
+      save_dir: saveDir,
+      image_count: imageCount,
+      stats: {
+        likes: String(metadata.stats?.likes || metadata.likes || ""),
+        collections: String(metadata.stats?.collections || metadata.collections || metadata.favorites || ""),
+        comments: String(metadata.stats?.comments || metadata.comments || "")
+      },
+      media_format: imageCount ? "image" : "",
+      assets: assets.map((asset) => ({
+        index: Number.isInteger(Number(asset?.index)) ? Number(asset.index) : null,
+        name: String(asset?.name || ""),
+        kind: String(asset?.kind || ""),
+        size: Number(asset?.size || 0)
+      })),
+      error: String(link?.error || "")
+    };
+  });
+  const success = items.filter((item) => item.success).length;
+  const failed = items.length - success;
+  const firstError = items.find((item) => item.error)?.error || String(bridgeJob?.error || "");
+  return {
+    bridgeJobId: String(bridgeJob?.job_id || ""),
+    bridgeStatus: String(bridgeJob?.status || ""),
+    success,
+    failed,
+    total: items.length,
+    output_dir: outputDir,
+    items,
+    error: firstError
+  };
+}
+
+async function runTemplateRepositoryDownload(text, outputDir, task = null) {
+  const capabilities = await requestTemplateCollectorBridge("/api/v1/capabilities");
+  if (!capabilities.ok) {
+    return { ok: false, code: capabilities.code, payload: { error: capabilities.error || "采集桥接器不可用" } };
+  }
+  const authentication = capabilities.payload?.authentication && typeof capabilities.payload.authentication === "object"
+    ? { ...capabilities.payload.authentication }
+    : {};
+  const submitted = await requestTemplateCollectorBridge("/api/v1/jobs", {
+    method: "POST",
+    body: JSON.stringify({
+      text,
+      client: { name: "template-gallery", version: "1" },
+      conversation_id: `template-gallery-${Date.now()}`,
+      options: {
+        image_format: "keep",
+        max_images: 30,
+        template_library: true,
+        // 只有用户明确提交带 xsec_token 的分享长链，才允许单次手动绕过
+        // 后台暂停标记；ID/普通链接在未暂停时会直接尝试公开笔记页。
+        manual_override: /[?&]xsec_token=[^&\s]+/i.test(text)
+      }
+    })
+  }, 30_000);
+  if (!submitted.ok || !submitted.payload?.job_id) {
+    return { ok: false, code: submitted.code || "COLLECTOR_BRIDGE_SUBMIT_FAILED", payload: { error: submitted.error || "采集任务没有进入桥接器" } };
+  }
+
+  let bridgeJob = submitted.payload;
+  updateTemplateCollectorBridgeTask(task, bridgeJob);
+  const deadline = Date.now() + 15 * 60 * 1000;
+  while (Date.now() < deadline) {
+    const status = await requestTemplateCollectorBridge(`/api/v1/jobs/${encodeURIComponent(bridgeJob.job_id)}`, {}, 30_000);
+    if (!status.ok || !status.payload) {
+      return { ok: false, code: status.code || "COLLECTOR_BRIDGE_STATUS_FAILED", payload: { error: status.error || "采集任务状态读取失败", bridgeJobId: bridgeJob.job_id } };
+    }
+    bridgeJob = status.payload;
+    updateTemplateCollectorBridgeTask(task, bridgeJob);
+    if (["completed", "partial", "blocked", "failed"].includes(String(bridgeJob.status || ""))) break;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  if (!["completed", "partial", "blocked", "failed"].includes(String(bridgeJob.status || ""))) {
+    return { ok: false, code: "COLLECTOR_BRIDGE_TIMEOUT", payload: { ...templateCollectorBridgePayload(bridgeJob, outputDir), error: "采集桥接任务超过 15 分钟，已停止等待" } };
+  }
+  const payload = templateCollectorBridgePayload(bridgeJob, outputDir);
+  payload.authentication = authentication;
+  const status = String(bridgeJob.status || "");
+  return {
+    ok: status === "completed" && payload.success > 0 && payload.failed === 0,
+    code: status === "blocked" ? "COLLECTOR_BRIDGE_BLOCKED" : (status === "failed" ? "COLLECTOR_BRIDGE_FAILED" : (payload.failed ? "DOWNLOAD_PARTIAL" : "OK")),
+    payload
+  };
+}
+
+async function fetchTemplateCollectorAssets(downloadPayload = {}) {
+  const jobId = String(downloadPayload.bridgeJobId || "");
+  if (!/^[A-Za-z0-9_-]{8,120}$/.test(jobId)) {
+    throw Object.assign(new Error("采集回执缺少有效任务编号，无法取回已下载图片"), { code: "COLLECTOR_ASSET_JOB_INVALID" });
+  }
+  const allowedExtensions = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".avif", ".mp4", ".mov", ".webm", ".txt", ".md"]);
+  const assets = [];
+  let totalBytes = 0;
+  for (const item of Array.isArray(downloadPayload.items) ? downloadPayload.items : []) {
+    for (const asset of Array.isArray(item?.assets) ? item.assets : []) {
+      const index = Number(asset?.index);
+      if (!Number.isInteger(index) || index < 0) continue;
+      const originalName = path.basename(String(asset.name || `asset-${index + 1}`));
+      const extension = path.extname(originalName).toLowerCase();
+      if (!allowedExtensions.has(extension)) continue;
+      const expectedSize = Number(asset.size || 0);
+      if (expectedSize > 100 * 1024 * 1024) {
+        throw Object.assign(new Error(`采集文件过大，已停止写入：${originalName}`), { code: "COLLECTOR_ASSET_TOO_LARGE" });
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      let response;
+      try {
+        response = await fetch(`${TEMPLATE_COLLECTOR_BRIDGE_URL}/api/v1/jobs/${encodeURIComponent(jobId)}/files/${index}`, {
+          signal: controller.signal,
+          cache: "no-store"
+        });
+      } catch (error) {
+        throw Object.assign(new Error(`读取采集文件失败：${originalName}（${String(error?.message || "本机 API 无响应").slice(0, 180)}）`), { code: "COLLECTOR_ASSET_FETCH_FAILED" });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!response.ok) {
+        throw Object.assign(new Error(`读取采集文件失败：${originalName}（HTTP ${response.status}）`), { code: "COLLECTOR_ASSET_FETCH_FAILED" });
+      }
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length) {
+        throw Object.assign(new Error(`采集文件为空：${originalName}`), { code: "COLLECTOR_ASSET_EMPTY" });
+      }
+      if (bytes.length > 100 * 1024 * 1024 || totalBytes + bytes.length > 350 * 1024 * 1024) {
+        throw Object.assign(new Error("本次采集素材超过本地收件箱安全容量，已停止写入"), { code: "COLLECTOR_ASSET_BUNDLE_TOO_LARGE" });
+      }
+      totalBytes += bytes.length;
+      assets.push({ name: originalName, kind: String(asset.kind || "media"), size: bytes.length, bytes });
+    }
+  }
+  if (!assets.length) {
+    throw Object.assign(new Error("下载器回执没有可复制的图片/视频文件，不能标记为采集成功"), { code: "COLLECTOR_ASSET_NONE" });
+  }
+  return assets;
 }
 
 async function syncTemplateRepository() {
@@ -1184,7 +1446,11 @@ function saveTemplateIntake(task, input, extra = {}) {
   fs.mkdirSync(TEMPLATE_REPOSITORY_INTAKE_ROOT, { recursive: true });
   const folder = path.join(TEMPLATE_REPOSITORY_INTAKE_ROOT, task.id);
   fs.mkdirSync(folder, { recursive: true });
+  const downloadedAssets = Array.isArray(extra.downloadedAssets) ? extra.downloadedAssets : [];
+  const manifestExtra = { ...extra };
+  delete manifestExtra.downloadedAssets;
   const savedImages = [];
+  const savedAssets = [];
   input.files.forEach((file, index) => {
     const match = file.dataUrl.match(/^data:image\/([a-z0-9+.-]+);base64,(.+)$/i);
     if (!match) return;
@@ -1193,7 +1459,56 @@ function saveTemplateIntake(task, input, extra = {}) {
     const target = path.join(folder, name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_"));
     fs.writeFileSync(target, Buffer.from(match[2], "base64"));
     savedImages.push(path.basename(target));
+    savedAssets.push({ name: path.basename(target), kind: "image", size: fs.statSync(target).size });
   });
+  const downloadFolder = path.join(folder, "downloaded");
+  if (downloadedAssets.length) fs.mkdirSync(downloadFolder, { recursive: true });
+  const downloadedImageDigests = new Set();
+  downloadedAssets.forEach((asset, index) => {
+    if (!Buffer.isBuffer(asset?.bytes) || !asset.bytes.length) return;
+    const original = path.basename(String(asset.name || `来源素材-${index + 1}`));
+    const ext = path.extname(original).toLowerCase();
+    const isImage = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".avif"].includes(ext);
+    const digest = isImage ? crypto.createHash("sha256").update(asset.bytes).digest("hex") : "";
+    const duplicateImage = Boolean(digest && downloadedImageDigests.has(digest));
+    if (digest && !duplicateImage) downloadedImageDigests.add(digest);
+    const safeStem = path.basename(original, ext).replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").slice(0, 100) || `来源素材-${index + 1}`;
+    const filename = `${String(index + 1).padStart(2, "0")}-${safeStem}${ext}`;
+    const relativeFolder = duplicateImage ? path.join("downloaded", ".duplicate-source-images") : "downloaded";
+    const target = path.join(folder, relativeFolder, filename);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, asset.bytes);
+    const relative = path.join(relativeFolder, filename).replace(/\\/g, "/");
+    const kind = duplicateImage ? "duplicate-image" : String(asset.kind || "media");
+    savedAssets.push({ name: relative, kind, size: asset.bytes.length });
+    if (isImage && !duplicateImage) savedImages.push(relative);
+  });
+  const downloadItems = Array.isArray(manifestExtra.download?.items) ? manifestExtra.download.items : [];
+  const downloadedItem = downloadItems.find((item) => item?.success) || {};
+  const sourceTitle = String(downloadedItem.title || manifestExtra.collector?.title || "").trim();
+  const noteId = String(manifestExtra.collector?.noteId || "").trim();
+  const collectorStats = manifestExtra.collector?.stats || {};
+  const downloadedStats = downloadedItem.stats || {};
+  const sourceStats = {
+    likes: String(collectorStats.likes || downloadedStats.likes || ""),
+    collections: String(collectorStats.collections || downloadedStats.collections || ""),
+    comments: String(collectorStats.comments || downloadedStats.comments || "")
+  };
+  const template = {
+    id: noteId ? `XHS-${noteId}` : `XHS-${task.id}`,
+    name: sourceTitle || `小红书模板待分析${noteId ? `-${noteId}` : ""}`,
+    sourceTitle,
+    sourcePlatform: "小红书",
+    sourceUrl: String(manifestExtra.collector?.sourceUrl || input.urls[0] || ""),
+    sourcePageUrl: String(manifestExtra.collector?.sourcePageUrl || ""),
+    stats: sourceStats,
+    project: "江湖有旅人",
+    category: "待确认",
+    localPath: folder,
+    imageCount: savedImages.length,
+    status: "pending-analysis",
+    tags: ["小红书", "待确认"]
+  };
   const manifest = {
     schemaVersion: 1,
     status: "pending-analysis",
@@ -1201,12 +1516,253 @@ function saveTemplateIntake(task, input, extra = {}) {
     skillId: TEMPLATE_REPOSITORY_SKILL_ID,
     source: { inputText: input.text, links: input.urls, paths: extra.acceptedPaths || [], rejectedPaths: extra.rejectedPaths || [] },
     images: savedImages,
+    media: savedAssets,
     tags: ["待确认"],
     templateDescription: "待分析：等待模板名称、封面/内页结构和可确认视觉特征。",
-    ...extra
+    ...manifestExtra,
+    template
   };
   fs.writeFileSync(path.join(folder, "intake.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  return { folder, manifestPath: path.join(folder, "intake.json"), savedImages };
+  fs.writeFileSync(path.join(folder, "template.json"), `${JSON.stringify({ schemaVersion: 1, template }, null, 2)}\n`, "utf8");
+  return {
+    folder,
+    manifestPath: path.join(folder, "intake.json"),
+    templatePath: path.join(folder, "template.json"),
+    savedImages,
+    savedAssets,
+    sourceTitle,
+    template,
+    manifest
+  };
+}
+
+function writeTemplateGalleryJsonAtomically(filePath, value) {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.renameSync(tempPath, filePath);
+}
+
+function safeTemplateGalleryFolderPart(value, fallback = "小红书待确认") {
+  const normalized = String(value || "")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim()
+    .slice(0, 72);
+  return normalized && normalized !== "." && normalized !== ".." ? normalized : fallback;
+}
+
+function isInsideRealDirectory(root, target) {
+  const rootResolved = path.resolve(root);
+  const targetResolved = path.resolve(target);
+  const relative = path.relative(rootResolved, targetResolved);
+  return Boolean(relative && !relative.startsWith(".." + path.sep) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function galleryImageExtension(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".avif"].includes(ext) ? ext : ".png";
+}
+
+function sortCollectedImagePaths(paths) {
+  return [...paths].sort((left, right) => {
+    const leftName = path.basename(String(left || ""));
+    const rightName = path.basename(String(right || ""));
+    const leftCover = /封面|cover/i.test(leftName) ? 0 : 1;
+    const rightCover = /封面|cover/i.test(rightName) ? 0 : 1;
+    if (leftCover !== rightCover) return leftCover - rightCover;
+    const leftNumber = Number((leftName.match(/^(\d+)/) || [])[1] || 9999);
+    const rightNumber = Number((rightName.match(/^(\d+)/) || [])[1] || 9999);
+    return leftNumber - rightNumber || leftName.localeCompare(rightName, "zh-CN");
+  });
+}
+
+function uniqueCollectedImagePaths(paths) {
+  const seen = new Set();
+  return paths.filter(source => {
+    try {
+      const digest = crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex");
+      if (seen.has(digest)) return false;
+      seen.add(digest);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function copyCollectedTemplateToGallery(intake, template, targetFolder) {
+  const intakeRoot = path.resolve(intake.folder);
+  if (!isInsideRealDirectory(TEMPLATE_REPOSITORY_INTAKE_ROOT, intakeRoot)) {
+    throw new Error("采集收件箱路径不在允许范围内");
+  }
+  if (!exists(intakeRoot) || !fs.statSync(intakeRoot).isDirectory()) {
+    throw new Error("采集收件箱目录不存在");
+  }
+  const targetRoot = path.resolve(targetFolder);
+  if (!isInsideRealDirectory(TEMPLATE_GALLERY_TEAMBUILDING_ROOT, targetRoot)) {
+    throw new Error("模板入库目录不在团建模板库范围内");
+  }
+  fs.mkdirSync(targetRoot, { recursive: true });
+  const sourceImages = uniqueCollectedImagePaths(sortCollectedImagePaths(Array.isArray(intake.savedImages) ? intake.savedImages : [])
+    .map(relative => {
+      const cleanRelative = String(relative || "").replace(/^[/\\]+/, "");
+      const source = path.resolve(intakeRoot, cleanRelative);
+      return isInsideRealDirectory(intakeRoot, source) && exists(source) && fs.statSync(source).isFile() ? source : "";
+    })
+    .filter(Boolean));
+  if (!sourceImages.length) throw new Error("采集结果没有可入库的图片");
+
+  const imageNames = [];
+  sourceImages.forEach((source, index) => {
+    const sourceName = path.basename(source, path.extname(source));
+    const kind = index === 0 ? "封面" : "内页";
+    const targetName = `${String(index + 1).padStart(2, "0")}-${kind}-${safeTemplateGalleryFolderPart(sourceName, `采集图${index + 1}`).slice(0, 72)}${galleryImageExtension(source)}`;
+    const target = path.join(targetRoot, targetName);
+    fs.copyFileSync(source, target);
+    imageNames.push(targetName);
+  });
+
+  const currentImages = fs.readdirSync(targetRoot, { withFileTypes: true })
+    .filter(entry => entry.isFile() && /^\d{2}-(封面|内页)-.+\.(jpe?g|png|webp|gif|heic|avif)$/i.test(entry.name))
+    .map(entry => entry.name);
+  const staleImages = currentImages.filter(name => !imageNames.includes(name));
+  if (staleImages.length) {
+    const duplicateRoot = path.join(targetRoot, ".duplicate-source-images");
+    fs.mkdirSync(duplicateRoot, { recursive: true });
+    staleImages.forEach(name => {
+      const source = path.join(targetRoot, name);
+      let destination = path.join(duplicateRoot, name);
+      if (exists(destination)) destination = path.join(duplicateRoot, `${Date.now()}-${name}`);
+      fs.renameSync(source, destination);
+    });
+  }
+
+  for (const name of ["intake.json", "template.json"]) {
+    const source = path.join(intakeRoot, name);
+    if (exists(source) && fs.statSync(source).isFile()) fs.copyFileSync(source, path.join(targetRoot, name));
+  }
+  const localPath = targetRoot.replace(/\\/g, "/");
+  const relPath = path.relative(TEMPLATE_GALLERY_ROOT, targetRoot).replace(/\\/g, "/");
+  const updatedAt = now();
+  const galleryTemplate = {
+    templateId: String(template.id || "").trim(),
+    id: String(template.id || "").trim(),
+    name: String(template.name || template.id || "小红书待确认模板").trim(),
+    category: "团建类模板",
+    folderGroup: "待确认采集",
+    layout: "待分析",
+    layoutType: "pending_analysis",
+    addedAt: updatedAt.slice(0, 10),
+    mtime: updatedAt,
+    updatedAt,
+    enabled: true,
+    localPath,
+    localFolderPath: targetRoot,
+    relPath,
+    p1: imageNames[0] || "",
+    p2: imageNames[1] || imageNames[0] || "",
+    cover: imageNames[0] ? `${relPath}/${imageNames[0]}` : "",
+    inner: imageNames[1] ? `${relPath}/${imageNames[1]}` : (imageNames[0] ? `${relPath}/${imageNames[0]}` : ""),
+    imageCount: imageNames.length,
+    images: imageNames.map(name => `${relPath}/${name}`),
+    textCount: 0,
+    description: "小红书采集成功，等待确认封面、内页结构和分类",
+    tags: ["小红书", "待分析", "待确认"],
+    flowType: "精准流量",
+    contentType: "团建方案",
+    stats: template.stats || {},
+    sourceTitle: template.sourceTitle || template.name || "",
+    sourceUrl: template.sourceUrl || "",
+    sourcePlatform: "小红书",
+    status: "pending-analysis",
+    metadataStatus: "待确认"
+  };
+  const targetTemplate = {
+    schemaVersion: 1,
+    status: "pending-analysis",
+    createdAt: updatedAt,
+    template: { ...template, localPath: targetRoot, status: "pending-analysis", imageCount: imageNames.length }
+  };
+  fs.writeFileSync(path.join(targetRoot, "template.json"), `${JSON.stringify(targetTemplate, null, 2)}\n`, "utf8");
+  return { galleryTemplate, targetRoot, imageNames, updatedAt };
+}
+
+function rebuildTemplateGallery() {
+  if (!exists(TEMPLATE_GALLERY_BUILD_SCRIPT)) throw new Error("模板库生成脚本不存在");
+  const python = process.env.TEAMBUILDING_PYTHON || "python.exe";
+  const result = childProcess.spawnSync(python, [TEMPLATE_GALLERY_BUILD_SCRIPT], {
+    cwd: TEMPLATE_GALLERY_ROOT,
+    windowsHide: true,
+    encoding: "utf8",
+    timeout: 120000,
+    maxBuffer: 2 * 1024 * 1024
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`模板库页面生成失败：${String(result.error?.message || result.stderr || result.stdout || "未知错误").trim().slice(0, 320)}`);
+  }
+  return { ok: true, output: String(result.stdout || "").trim().slice(-500) };
+}
+
+function registerCollectedTemplateInGallery(intake) {
+  const template = intake?.template || {};
+  const templateId = String(template.id || "").trim().toUpperCase();
+  if (!/^XHS-[A-F0-9]{24}$/i.test(templateId)) throw new Error("采集结果缺少有效的小红书模板编号");
+  if (!exists(TEMPLATE_GALLERY_ROOT) || !exists(TEMPLATE_GALLERY_TEAMBUILDING_ROOT)) {
+    throw new Error("项目模板库目录不存在");
+  }
+  if (!exists(TEMPLATE_GALLERY_REGISTRY)) throw new Error("项目模板登记表不存在");
+  let registry;
+  try { registry = JSON.parse(fs.readFileSync(TEMPLATE_GALLERY_REGISTRY, "utf8").replace(/^\uFEFF/, "")); }
+  catch (error) { throw new Error(`项目模板登记表无法读取：${error.message}`); }
+  if (!Array.isArray(registry.templates)) throw new Error("项目模板登记表缺少 templates 列表");
+  const existingIndex = registry.templates.findIndex(item => String(item?.templateId || item?.id || "").trim().toUpperCase() === templateId);
+  if (existingIndex >= 0) {
+    const existing = registry.templates[existingIndex];
+    const existingPath = String(existing.localPath || existing.localFolderPath || "").trim();
+    if (existingPath && exists(existingPath)) {
+      let existingRoot = path.resolve(existingPath);
+      const folderPart = safeTemplateGalleryFolderPart(`${templateId} ${template.name || "小红书待确认模板"}`);
+      const preferredRoot = path.join(TEMPLATE_GALLERY_TEAMBUILDING_ROOT, folderPart);
+      const sourceImages = uniqueCollectedImagePaths(sortCollectedImagePaths(Array.isArray(intake.savedImages) ? intake.savedImages : [])
+        .map(relative => {
+          const source = path.resolve(intake.folder, String(relative || "").replace(/^[/\\]+/, ""));
+          return isInsideRealDirectory(intake.folder, source) && exists(source) && fs.statSync(source).isFile() ? source : "";
+        }).filter(Boolean));
+      if (sourceImages.length && isInsideRealDirectory(TEMPLATE_GALLERY_TEAMBUILDING_ROOT, existingRoot)) {
+        let previousRoot = "";
+        if (existingRoot.toLowerCase() !== preferredRoot.toLowerCase() && !exists(preferredRoot)) {
+          previousRoot = existingRoot;
+          fs.renameSync(existingRoot, preferredRoot);
+          existingRoot = preferredRoot;
+        }
+        let copied;
+        try {
+          copied = copyCollectedTemplateToGallery(intake, template, existingRoot);
+        } catch (error) {
+          if (previousRoot && exists(existingRoot) && !exists(previousRoot)) fs.renameSync(existingRoot, previousRoot);
+          throw error;
+        }
+        const galleryEntry = { ...existing, ...copied.galleryTemplate, templateId: existing.templateId || templateId, id: existing.id || templateId };
+        registry.templates[existingIndex] = galleryEntry;
+        registry.totalCount = registry.templates.length;
+        registry.updatedAt = copied.updatedAt;
+        writeTemplateGalleryJsonAtomically(TEMPLATE_GALLERY_REGISTRY, registry);
+        const rebuilt = rebuildTemplateGallery();
+        return { ok: true, alreadyRegistered: true, templateId, path: existingRoot, imageCount: copied.imageNames.length, rebuilt: rebuilt.ok, repaired: true };
+      }
+    }
+    registry.templates.splice(existingIndex, 1);
+  }
+  const folderPart = safeTemplateGalleryFolderPart(`${templateId} ${template.name || "小红书待确认模板"}`);
+  const targetFolder = path.join(TEMPLATE_GALLERY_TEAMBUILDING_ROOT, folderPart);
+  const copied = copyCollectedTemplateToGallery(intake, template, targetFolder);
+  registry.templates.push(copied.galleryTemplate);
+  registry.totalCount = registry.templates.length;
+  registry.updatedAt = copied.updatedAt;
+  writeTemplateGalleryJsonAtomically(TEMPLATE_GALLERY_REGISTRY, registry);
+  const rebuilt = rebuildTemplateGallery();
+  return { ok: true, alreadyRegistered: false, templateId, path: copied.targetRoot, imageCount: copied.imageNames.length, rebuilt: rebuilt.ok };
 }
 
 async function runTemplateRepositorySkill(task) {
@@ -1219,48 +1775,79 @@ async function runTemplateRepositorySkill(task) {
   setStep(task, task.steps[0]?.id, "completed", `${input.urls.length} 个链接 · ${validated.accepted.length} 个本地路径 · ${input.files.length} 张图片`);
   updateTask(task, { progress: 18 });
   let download = null;
+  let downloadedAssets = [];
   if (input.urls.length) {
     setStep(task, task.steps[1]?.id, "running", "正在调用万能下载器（谨慎频率）");
-    download = await runTemplateRepositoryDownload(input.text, TEMPLATE_REPOSITORY_MATERIAL_ROOT);
-    if (!download.ok && Number(download.payload?.success || 0) === 0) {
-      const intake = saveTemplateIntake(task, input, { acceptedPaths: validated.accepted, rejectedPaths: validated.rejected, download: download.payload || null, collector });
-      setStep(task, task.steps[1]?.id, "failed", download.payload?.error || "下载没有成功，已保留待分析记录");
-      return { status: "download_failed", intakePath: intake.manifestPath, download: download.payload || download, nextStep: "请检查链接是否公开可访问或下载器状态，再重试同一任务。" };
+    download = await runTemplateRepositoryDownload(input.text, TEMPLATE_REPOSITORY_MATERIAL_ROOT, task);
+    if (Number(download.payload?.success || 0) > 0) {
+      try {
+        downloadedAssets = await fetchTemplateCollectorAssets(download.payload);
+      } catch (error) {
+        download = {
+          ...download,
+          ok: false,
+          code: error.code || "COLLECTOR_ASSET_COPY_FAILED",
+          payload: { ...(download.payload || {}), success: 0, error: String(error.message || "采集素材复制失败").slice(0, 360) }
+        };
+      }
     }
-    setStep(task, task.steps[1]?.id, "completed", `成功 ${Number(download.payload?.success || 0)} · 失败 ${Number(download.payload?.failed || 0)}`);
+    if (!download.ok && Number(download.payload?.success || 0) === 0) {
+      setStep(task, task.steps[1]?.id, "failed", download.payload?.error || "下载没有成功，未写入待分析目录");
+      const blocked = download.code === "COLLECTOR_BRIDGE_BLOCKED" || download.payload?.bridgeStatus === "blocked";
+      const needsLogin = download.payload?.authentication?.cookies_used === false;
+      return {
+        status: blocked ? "blocked" : "download_failed",
+        download: download.payload || download,
+        nextStep: blocked
+          ? "采集器当前因小红书公开链接/登录状态暂停；恢复桥接器后可在原记录上重试。"
+          : needsLogin
+            ? "模板页已接通万能采集器，但这条公开链接没有返回图片；当前采集器未配置小红书登录 Cookie。请粘贴小红书可公开访问的分享长链（含有效访问参数），或在万能采集器登录后重试。"
+            : "模板页已接通万能采集器，但这条链接没有返回图片；请检查笔记是否仍可公开访问后重试。"
+      };
+    }
+    const imageCount = downloadedAssets.filter((asset) => [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".avif"].includes(path.extname(asset.name).toLowerCase())).length;
+    setStep(task, task.steps[1]?.id, "completed", `实际取回 ${downloadedAssets.length} 个文件，其中 ${imageCount} 张图片；下载链接成功 ${Number(download.payload?.success || 0)} · 失败 ${Number(download.payload?.failed || 0)}`);
   } else {
     setStep(task, task.steps[1]?.id, "completed", "没有链接，使用本地输入/粘贴图片");
   }
-  setStep(task, task.steps[2]?.id, "running", "写入模板仓库待分析收件箱");
+  setStep(task, task.steps[2]?.id, "running", "复制原图、文案和来源信息到模板仓库待分析收件箱");
   const intake = saveTemplateIntake(task, input, {
     acceptedPaths: validated.accepted,
     rejectedPaths: validated.rejected,
     download: download?.payload || null,
     collector,
-    downloadedFolders: (download?.payload?.items || []).filter((item) => item.success && item.save_dir).map((item) => item.save_dir)
+    downloadedFolders: (download?.payload?.items || []).filter((item) => item.success && item.save_dir).map((item) => item.save_dir),
+    downloadedAssets
   });
-  setStep(task, task.steps[2]?.id, "completed", `${intake.savedImages.length} 张粘贴图片已保存；来源证据已保留`);
-  setStep(task, task.steps[3]?.id, "running", "刷新来源项目模板索引与 template.json");
-  const sync = await syncTemplateRepository();
-  if (sync.ok) {
-    setStep(task, task.steps[3]?.id, "completed", "来源项目模板库已同步");
-    setStep(task, task.steps[4]?.id, "completed", "全局模板仓库已同步");
+  setStep(task, task.steps[2]?.id, "completed", `${intake.savedImages.length} 张图片、${intake.savedAssets.length} 个来源文件已写入待分析目录`);
+  let galleryRegistration = { ok: false, skipped: true, reason: "本地输入等待人工确认" };
+  if (collector?.noteId) {
+    setStep(task, task.steps[3]?.id, "running", "同步到项目模板库，标记为待确认");
+    galleryRegistration = registerCollectedTemplateInGallery(intake);
+    setStep(task, task.steps[3]?.id, "completed", `已写入模板库：${galleryRegistration.path}`);
+    setStep(task, task.steps[4]?.id, "completed", "已显示在模板库最新列表；来源分类和视觉标签仍待确认");
   } else {
-    setStep(task, task.steps[3]?.id, "failed", "来源或全局同步脚本未全部完成");
-    setStep(task, task.steps[4]?.id, "waiting", "请修复脚本后重试，不覆盖原始素材");
+    setStep(task, task.steps[3]?.id, "completed", `待分析 template.json 已写入：${intake.templatePath}`);
+    setStep(task, task.steps[4]?.id, "completed", "来源分类和视觉标签待确认；本地输入保留在待分析收件箱");
   }
   setStep(task, task.steps[5]?.id, "completed", validated.rejected.length ? `${validated.rejected.length} 个路径未采用，已显示缺口` : "模板名、视觉标签和预览仍以证据为准");
+  const partialFailure = Number(download?.payload?.failed || 0);
   return {
-    status: sync.ok ? "candidate_ready" : "sync_incomplete",
+    status: "candidate_ready",
     intakePath: intake.manifestPath,
+    templatePath: intake.templatePath,
     repositoryPath: templateRepositoryEntry().path,
     repositoryLabel: templateRepositoryEntry().label,
     acceptedPaths: validated.accepted,
     rejectedPaths: validated.rejected,
     savedImages: intake.savedImages,
+    savedAssets: intake.savedAssets,
     downloaded: download?.payload || null,
-    sync,
-    nextStep: "打开模板仓库 HTML 查看缺口；补充模板名或 GPT 分享链接后，再由同一技能更新 template.json。"
+    galleryRegistration,
+    sync: { ok: true, stage: "template-gallery" },
+    nextStep: partialFailure
+      ? `已采集的文件已进入模板仓库待分析；另有 ${partialFailure} 条下载失败，请检查原链接后重试。`
+      : "实图、来源信息已进入待分析收件箱，并已在模板库以“待确认”状态显示；确认分类后可继续完善。"
   };
 }
 
@@ -1667,9 +2254,17 @@ async function executeNativeTask(task, ctx) {
   setStep(task, task.steps[0]?.id, "running");
   try {
     const result = await runNativeSkill(task.skillId, { ...ctx, task });
-    if (task.collector) updateTemplateCollectorRecord(task, result);
+    if (task.collector && task.persistCollectorLedger !== false) updateTemplateCollectorRecord(task, result);
     if (task.skillId === TEMPLATE_REPOSITORY_SKILL_ID && result?.status === "download_failed") {
       return updateTask(task, { state: "failed", progress: 42, result });
+    }
+    if (task.skillId === TEMPLATE_REPOSITORY_SKILL_ID && result?.status === "blocked") {
+      return updateTask(task, {
+        state: "blocked",
+        progress: 42,
+        result,
+        error: { code: "COLLECTOR_BRIDGE_BLOCKED", message: result.nextStep || "采集桥接器当前暂停，未宣称下载完成。" }
+      });
     }
     if (task.skillId === TEMPLATE_REPOSITORY_SKILL_ID && result?.status === "sync_incomplete") {
       return updateTask(task, { state: "needs_user", progress: 88, result });
@@ -1685,7 +2280,7 @@ async function executeNativeTask(task, ctx) {
     }
     return updateTask(task, { state: "completed", progress: 100, result });
   } catch (error) {
-    if (task.collector) updateTemplateCollectorRecord(task, null, error);
+    if (task.collector && task.persistCollectorLedger !== false) updateTemplateCollectorRecord(task, null, error);
     const message = String(error?.message || "技能运行失败").slice(0, 360);
     const failedStep = task.steps.find((step) => step.state === "running") || task.steps[0];
     if (failedStep) Object.assign(failedStep, { state: "failed", detail: message });
@@ -1712,16 +2307,81 @@ async function handle(req, res, pathname, parsed, ctx) {
     getAutomaticDistributionMonitorState,
     registeredDevices, DEVICE_PRESENCE_FILE, DISTRIBUTION_AUTOMATION_LOG_FILE
   } = ctx;
+  if (pathname === "/api/template-collector/collect" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(getBody, req, 64_000);
+      const collector = normalizeTemplateCollectorRequest(body);
+      let bridgeProbe = await requestTemplateCollectorBridge("/api/v1/capabilities", {}, 3000);
+      if (!bridgeProbe.ok && ["ECONNREFUSED", "COLLECTOR_BRIDGE_UNAVAILABLE", "COLLECTOR_BRIDGE_TIMEOUT"].includes(bridgeProbe.code)) {
+        try { bridgeProbe = await ensureTemplateCollectorBridge(); }
+        catch (error) { bridgeProbe = { ok: false, code: error.code || "COLLECTOR_BRIDGE_START_FAILED", error: error.message }; }
+      }
+      if (!bridgeProbe.ok) {
+        const error = Object.assign(new Error(`万能采集器 API 未连接：${bridgeProbe.error || "本机下载器无响应"}`), {
+          code: bridgeProbe.code || "COLLECTOR_BRIDGE_UNAVAILABLE",
+          httpStatus: 503
+        });
+        throw error;
+      }
+      const active = [...tasks.values()].find((task) => task.collector?.dedupeKey === collector.dedupeKey
+        && ["queued", "running"].includes(task.state));
+      const task = active || createTemplateCollectorTask(collector, collector, { requestConversionService, getConversionSnapshot });
+      const payload = {
+        ok: true,
+        status: active ? "already_running" : "started",
+        message: "已连接万能采集器；下载和写入模板待分析目录完成后会通知结果。",
+        task: publicTask(task)
+      };
+      if (sendExtensionJson) sendExtensionJson(req, res, payload, 202);
+      else send(res, 202, JSON.stringify(payload), "application/json; charset=utf-8");
+      return true;
+    } catch (error) {
+      const payload = { ok: false, error: error.message, code: error.code || "TEMPLATE_COLLECTOR_REQUEST_INVALID" };
+      const status = Number(error.httpStatus) || 400;
+      if (sendExtensionJson) sendExtensionJson(req, res, payload, status);
+      else send(res, status, JSON.stringify(payload), "application/json; charset=utf-8");
+      return true;
+    }
+  }
   if (pathname === "/api/template-collector/ledger" && req.method === "GET") {
     const ledger = readTemplateCollectorLedger();
+    const records = [...ledger.records].sort((a, b) => {
+      const bt = Date.parse(b.updatedAt || b.createdAt || "") || 0;
+      const at = Date.parse(a.updatedAt || a.createdAt || "") || 0;
+      return (bt - at) || String(b.noteId || "").localeCompare(String(a.noteId || ""));
+    });
+    const bridgeProbe = await requestTemplateCollectorBridge("/api/v1/status", {}, 3000);
+    const bridgeStatus = bridgeProbe.ok && bridgeProbe.payload?.collector ? {
+      available: true,
+      paused: Boolean(bridgeProbe.payload.collector.pause?.paused),
+      pauseReason: String(bridgeProbe.payload.collector.pause?.reason || ""),
+      queueCount: Number(bridgeProbe.payload.collector.queue_count || 0),
+      worker: String(bridgeProbe.payload.bridge?.worker || "")
+    } : {
+      available: false,
+      paused: false,
+      pauseReason: bridgeProbe.error || "采集桥接器不可用",
+      queueCount: 0,
+      worker: ""
+    };
     const payload = {
       ok: true,
       path: TEMPLATE_COLLECTOR_LEDGER,
+      intakeRoot: TEMPLATE_REPOSITORY_INTAKE_ROOT,
+      repository: templateRepositoryEntry(),
+      bridge: bridgeStatus,
       total: ledger.records.length,
-      records: ledger.records.slice(-200).reverse().map(publicCollectorRecord)
+      records: records.slice(0, 200).map(publicCollectorRecord)
     };
     if (sendExtensionJson) sendExtensionJson(req, res, payload);
     else sendJson(res, payload);
+    return true;
+  }
+  if (pathname === "/api/template-gallery/metadata" && req.method === "GET") {
+    const metadata = readTemplateGalleryMetadata();
+    // 模板仓库既可能以 4327 页面打开，也可能直接双击 file:// HTML；两种入口都需要本机 CORS。
+    if (sendExtensionJson) sendExtensionJson(req, res, { ok: true, ...metadata, generatedAt: now() });
+    else sendJson(res, { ok: true, ...metadata, generatedAt: now() });
     return true;
   }
   if (pathname === "/api/template-collector/queue" && req.method === "POST") {
@@ -1730,10 +2390,10 @@ async function handle(req, res, pathname, parsed, ctx) {
       const collector = normalizeTemplateCollectorRequest(body);
       const ledger = readTemplateCollectorLedger();
       const existing = findTemplateCollectorRecord(ledger, collector.dedupeKey);
-      const canRetry = existing && ["needs_source_link", "download_failed"].includes(existing.status)
-        && collector.sourceUrlProvided;
+      const canRetry = existing && ["needs_source_link", "download_failed", "blocked"].includes(existing.status)
+        && (collector.sourceUrlProvided || existing.status === "needs_source_link" || existing.sourceUrl === collector.sourceUrl);
       if (existing && !canRetry) {
-        const payload = { ok: true, status: existing.status === "candidate_ready" ? "candidate_ready" : "already_registered", record: publicCollectorRecord(existing) };
+      const payload = { ok: true, status: existing.status === "candidate_ready" ? "candidate_ready" : "already_registered", record: publicCollectorRecord(existing) };
         if (sendExtensionJson) sendExtensionJson(req, res, payload);
         else sendJson(res, payload);
         return true;
@@ -1753,26 +2413,33 @@ async function handle(req, res, pathname, parsed, ctx) {
         stats: collector.stats,
         sourcePageUrl: collector.sourcePageUrl || record.sourcePageUrl,
         sourceUrl: collector.sourceUrl,
-        sourceLinkStatus: collector.sourceUrlProvided ? "provided" : "derived_from_card_id",
+        sourceLinkStatus: collector.sourceUrlProvided ? "provided" : "derived_from_note_id",
         status: "queued",
         statusLabel: collectorStatusLabel("queued"),
         updatedAt: now(),
         error: null
       });
       if (!existing) ledger.records.push(record);
-      // 聚光卡片只提供稳定 noteId，没有 xsec_token/短链时不启动一次注定
-      // 无法取图的下载进程；先登记缺口，用户补入真实公开链接后再按同一
-      // dedupeKey 重试，避免按钮显示成功却留下空下载任务。
-      if (!collector.sourceUrlProvided) {
+      // ID-only requests are converted to the canonical note page and attempted.
+      // The worker reports a real download/login failure instead of falsely
+      // requiring a token before the downloader has had a chance to try.
+      const bridgeProbe = await requestTemplateCollectorBridge("/api/v1/capabilities", {}, 3000);
+      if (!bridgeProbe.ok) {
+        const message = `采集 API 未连接：${bridgeProbe.error || "本机采集桥没有响应"}`;
         Object.assign(record, {
-          status: "needs_source_link",
-          statusLabel: collectorStatusLabel("needs_source_link"),
-          taskId: ""
+          status: "blocked",
+          statusLabel: "采集 API 未连接",
+          taskId: "",
+          bridgeJobId: "",
+          progress: 0,
+          step: "等待采集 API",
+          error: message,
+          updatedAt: now()
         });
         writeTemplateCollectorLedger(ledger);
-        const payload = { ok: true, status: "needs_source_link", record: publicCollectorRecord(record) };
-        if (sendExtensionJson) sendExtensionJson(req, res, payload, 202);
-        else send(res, 202, JSON.stringify(payload), "application/json; charset=utf-8");
+        const payload = { ok: false, status: "blocked", error: message, record: publicCollectorRecord(record) };
+        if (sendExtensionJson) sendExtensionJson(req, res, payload, 503);
+        else send(res, 503, JSON.stringify(payload), "application/json; charset=utf-8");
         return true;
       }
       writeTemplateCollectorLedger(ledger);
@@ -2129,6 +2796,7 @@ module.exports = {
   normalizeTemplateCollectorRequest,
   publicCollectorRecord,
   collectorStatusLabel,
+  registerCollectedTemplateInGallery,
   validateTemplateRepositoryPaths,
   materialDownloadCatalog: materialDownloadRoute.catalog,
   publicTask,
